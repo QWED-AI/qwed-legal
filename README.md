@@ -9,7 +9,7 @@
     <i>Deadline math • Clause contradictions • Liability calculations</i>
   </p>
 
-  [![PyPI version](https://img.shields.io/pypi/v/qwed-legal)](https://pypi.org/project/qwed-legal/)
+  [![PyPI version](https://img.shields.io/pypi/v/qwed-legal?cacheSeconds=60)](https://pypi.org/project/qwed-legal/)
   [![Tests](https://github.com/QWED-AI/qwed-legal/actions/workflows/ci.yml/badge.svg)](https://github.com/QWED-AI/qwed-legal/actions)
   [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
