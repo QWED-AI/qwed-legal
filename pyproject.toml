@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qwed-legal"
+version = "0.1.0"
+description = "🏛️ Verification guards for legal contracts - Date calculations, clause consistency, liability verification"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "Rahul Dass", email = "rahul@qwedai.com" }
+]
+keywords = [
+    "legal",
+    "ai",
+    "verification",
+    "contracts",
+    "llm",
+    "hallucination",
+    "law",
+    "compliance"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Legal Industry",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Office/Business",
+]
+dependencies = [
+    "z3-solver>=4.12.0",
+    "python-dateutil>=2.8.0",
+    "sympy>=1.12",
+    "holidays>=0.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/QWED-AI/qwed-legal"
+Documentation = "https://docs.qwedai.com/legal"
+Repository = "https://github.com/QWED-AI/qwed-legal"
+Issues = "https://github.com/QWED-AI/qwed-legal/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qwed_legal"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
