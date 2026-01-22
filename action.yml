@@ -1,0 +1,80 @@
+name: 'QWED Legal Verification'
+description: 'Verify legal contracts for deadline calculations, clause contradictions, and liability errors'
+author: 'QWED-AI'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  mode:
+    description: 'Verification mode: deadline, liability, clause, citation, or all'
+    required: true
+    default: 'all'
+  
+  signing_date:
+    description: 'Contract signing date (for deadline verification)'
+    required: false
+  
+  term:
+    description: 'Deadline term (e.g., "30 business days")'
+    required: false
+  
+  claimed_deadline:
+    description: 'Deadline claimed by LLM'
+    required: false
+  
+  contract_value:
+    description: 'Contract value (for liability verification)'
+    required: false
+  
+  cap_percentage:
+    description: 'Liability cap percentage'
+    required: false
+  
+  claimed_cap:
+    description: 'Liability cap claimed by LLM'
+    required: false
+  
+  clauses:
+    description: 'JSON array of clause strings (for clause verification)'
+    required: false
+  
+  citation:
+    description: 'Legal citation to verify (for citation verification)'
+    required: false
+  
+  country:
+    description: 'Country code for holiday calculations (default: US)'
+    required: false
+    default: 'US'
+  
+  state:
+    description: 'State code for regional holidays (optional)'
+    required: false
+
+outputs:
+  verified:
+    description: 'Whether all verifications passed'
+  
+  results:
+    description: 'JSON string with detailed verification results'
+  
+  message:
+    description: 'Human-readable summary message'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  args:
+    - ${{ inputs.mode }}
+    - ${{ inputs.signing_date }}
+    - ${{ inputs.term }}
+    - ${{ inputs.claimed_deadline }}
+    - ${{ inputs.contract_value }}
+    - ${{ inputs.cap_percentage }}
+    - ${{ inputs.claimed_cap }}
+    - ${{ inputs.clauses }}
+    - ${{ inputs.citation }}
+    - ${{ inputs.country }}
+    - ${{ inputs.state }}
