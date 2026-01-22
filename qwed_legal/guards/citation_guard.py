@@ -5,7 +5,7 @@ Catches hallucinated case names, fake docket numbers, and invalid citation forma
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional
 import re
 
 
@@ -154,7 +154,7 @@ class CitationGuard:
         valid = len(issues) == 0
         
         if valid:
-            message = f"✅ VALID: Citation format is correct."
+            message = "✅ VALID: Citation format is correct."
         else:
             message = f"⚠️ ISSUES: {'; '.join(issues)}"
         

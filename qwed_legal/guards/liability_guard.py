@@ -6,7 +6,7 @@ Catches percentage miscalculations, cap verification errors, and multi-tier liab
 
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional, List
+from typing import List
 
 
 @dataclass

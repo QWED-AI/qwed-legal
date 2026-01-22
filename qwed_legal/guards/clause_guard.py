@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import re
 
-from z3 import Solver, Bool, And, Or, Not, Implies, sat, unsat, unknown
+from z3 import Solver, Bool, sat, unsat
 
 
 @dataclass

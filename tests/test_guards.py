@@ -1,7 +1,6 @@
 """Tests for QWED-Legal guards."""
 
 import pytest
-from datetime import datetime
 
 from qwed_legal import LegalGuard, DeadlineGuard, LiabilityGuard, ClauseGuard, CitationGuard
 

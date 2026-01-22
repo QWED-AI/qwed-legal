@@ -98,7 +98,7 @@ class DeadlineGuard:
         verified = diff <= tolerance_days
         
         if verified:
-            message = f"✅ VERIFIED: Deadline calculation is correct."
+            message = "✅ VERIFIED: Deadline calculation is correct."
         else:
             message = (
                 f"❌ ERROR: Deadline mismatch. "
