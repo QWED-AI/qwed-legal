@@ -8,12 +8,14 @@ Catches date calculation errors, contradictory clauses, and liability miscalcula
 from qwed_legal.guards.deadline_guard import DeadlineGuard
 from qwed_legal.guards.liability_guard import LiabilityGuard
 from qwed_legal.guards.clause_guard import ClauseGuard
+from qwed_legal.guards.citation_guard import CitationGuard
 
 __version__ = "0.1.0"
 __all__ = [
     "DeadlineGuard",
     "LiabilityGuard", 
     "ClauseGuard",
+    "CitationGuard",
     "LegalGuard",
 ]
 

@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime
 
-from qwed_legal import LegalGuard, DeadlineGuard, LiabilityGuard, ClauseGuard
+from qwed_legal import LegalGuard, DeadlineGuard, LiabilityGuard, ClauseGuard, CitationGuard
 
 
 class TestDeadlineGuard:
@@ -135,6 +135,58 @@ class TestClauseGuard:
         ])
         # Should detect conflict between permission and prohibition
         assert result.consistent is False or len(result.conflicts) >= 0
+
+
+class TestCitationGuard:
+    """Test CitationGuard functionality."""
+    
+    def test_valid_supreme_court_citation(self):
+        """Test valid Supreme Court citation."""
+        guard = CitationGuard()
+        result = guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+        assert result.valid is True
+        assert result.parsed_components.get("volume") == 347
+        assert result.parsed_components.get("reporter") == "U.S."
+    
+    def test_valid_federal_citation(self):
+        """Test valid Federal Reporter citation."""
+        guard = CitationGuard()
+        result = guard.verify("Smith v. Jones, 123 F.3d 456 (2020)")
+        assert result.valid is True
+        assert result.parsed_components.get("reporter") == "F.3d"
+    
+    def test_invalid_reporter(self):
+        """Test citation with invalid reporter."""
+        guard = CitationGuard()
+        result = guard.verify("Fake v. Case, 999 X.Y.Z. 123 (2020)")
+        assert result.valid is False
+        assert any("Unknown reporter" in issue for issue in result.issues)
+    
+    def test_missing_case_name(self):
+        """Test citation without proper case name."""
+        guard = CitationGuard()
+        result = guard.verify("123 U.S. 456 (1990)")
+        assert result.valid is False
+        assert any("case name" in issue.lower() for issue in result.issues)
+    
+    def test_batch_verification(self):
+        """Test batch citation verification."""
+        guard = CitationGuard()
+        citations = [
+            "Brown v. Board, 347 U.S. 483 (1954)",
+            "Invalid v. Citation, 999 FAKE 123",
+        ]
+        result = guard.verify_batch(citations)
+        assert result.total == 2
+        assert result.valid == 1
+        assert result.invalid == 1
+    
+    def test_statute_citation(self):
+        """Test statute citation verification."""
+        guard = CitationGuard()
+        result = guard.check_statute_citation("42 U.S.C. § 1983")
+        assert result.valid is True
+        assert result.parsed_components.get("title") == 42
 
 
 class TestLegalGuard:

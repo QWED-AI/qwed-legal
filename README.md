@@ -90,13 +90,38 @@ print(result.consistent)  # False!
 
 ---
 
-## 🛡️ The Three Guards
+## 🛡️ The Four Guards
 
 | Guard | What It Verifies |
 |-------|------------------|
 | **DeadlineGuard** | Date calculations, business days, leap years |
 | **LiabilityGuard** | Cap percentages, tiered liability, indemnity limits |
 | **ClauseGuard** | Clause contradictions, termination conflicts |
+| **CitationGuard** | Legal citations (Bluebook format, case names, reporters) |
+
+### Verify Legal Citations (New!)
+
+```python
+from qwed_legal import CitationGuard
+
+guard = CitationGuard()
+result = guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+
+print(result.valid)  # True
+print(result.parsed_components)
+# {'plaintiff': 'Brown', 'defendant': 'Board of Education', 'volume': 347, 'reporter': 'U.S.', 'page': 483, 'year': 1954}
+```
+
+---
+
+## 📊 Audit Log: Real Hallucinations Caught
+
+| Contract Input | LLM Claim | QWED Verdict |
+|----------------|-----------|--------------|
+| "Net 30 Business Days from Dec 20" | Jan 19 | 🛑 **BLOCKED** (Actual: Feb 2, 2026) |
+| "Liability Cap: 2x Fees ($50k)" | $200,000 | 🛑 **BLOCKED** (Actual: $100,000) |
+| "Seller may terminate with 30 days notice" + "Neither party may terminate before 90 days" | "Clauses are consistent" | 🛑 **BLOCKED** (Conflict detected) |
+| "Smith v. Jones, 999 FAKE 123" | Valid citation | 🛑 **BLOCKED** (Unknown reporter) |
 
 ---
 
