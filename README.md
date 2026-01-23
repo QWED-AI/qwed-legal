@@ -33,12 +33,24 @@
 
 ---
 
+
 ## ⚡ Quick Start
 
-### Installation
+### 📦 Installation
 
+| Language | Package | Command |
+|----------|---------|---------|
+| **Python** | `qwed-legal` | `pip install qwed-legal` |
+| **TypeScript/JS** | `@qwed-ai/legal` | `npm install @qwed-ai/legal` |
+
+**Python:**
 ```bash
 pip install qwed-legal
+```
+
+**TypeScript/JavaScript:**
+```bash
+npm install @qwed-ai/legal
 ```
 
 ### Verify a Deadline Calculation
@@ -158,13 +170,72 @@ print(result.message)   # ❌ EXPIRED: Statute of limitations expired...
 npm install @qwed-ai/legal
 ```
 
-```typescript
-import { DeadlineVerifier, JurisdictionVerifier } from '@qwed-ai/legal';
+### Available Verifiers
 
+| Verifier | Description |
+|----------|-------------|
+| `DeadlineVerifier` | Verify date calculations |
+| `LiabilityVerifier` | Verify liability caps |
+| `ClauseVerifier` | Detect contradictions |
+| `CitationVerifier` | Validate legal citations |
+| `JurisdictionVerifier` | Check choice of law |
+| `StatuteVerifier` | Check limitation periods |
+| `LegalGuard` | All-in-one wrapper |
+
+### TypeScript Examples
+
+```typescript
+import { 
+  DeadlineVerifier, 
+  JurisdictionVerifier, 
+  StatuteVerifier,
+  LegalGuard 
+} from '@qwed-ai/legal';
+
+// Verify deadline
 const deadline = new DeadlineVerifier();
 const result = await deadline.verify("2026-01-15", "30 days", "2026-02-14");
-console.log(result.verified);
+console.log(result.verified);  // true
+
+// Check jurisdiction
+const jurisdiction = new JurisdictionVerifier();
+const jResult = await jurisdiction.verifyChoiceOfLaw(
+  ["US", "UK"], "Delaware", "London"
+);
+console.log(jResult.conflicts);  // Array of conflicts
+
+// All-in-one guard
+const guard = new LegalGuard();
+const deadline2 = await guard.deadline.verify(...);
+const statute = await guard.statute.verify(...);
 ```
+
+---
+
+## 🌍 Supported Jurisdictions
+
+### Statute of Limitations
+
+| Jurisdiction | Breach of Contract | Negligence | Fraud |
+|--------------|-------------------|------------|-------|
+| California | 4 years | 2 years | 3 years |
+| New York | 6 years | 3 years | 6 years |
+| Texas | 4 years | 2 years | 4 years |
+| Delaware | 3 years | 2 years | 3 years |
+| UK/England | 6 years | 6 years | 6 years |
+| Germany | 3 years | 3 years | 10 years |
+| France | 5 years | 5 years | 5 years |
+| Australia | 6 years | 6 years | 6 years |
+| India | 3 years | 3 years | 3 years |
+
+### DeadlineGuard Holiday Support
+
+| Region | Countries/States |
+|--------|-----------------|
+| **United States** | All 50 states + DC |
+| **European Union** | DE, FR, IT, ES, NL, BE, AT, PL |
+| **Commonwealth** | UK, AU (all states), CA |
+| **Asia** | IN (all states), SG, HK |
 
 
 ---
