@@ -9,13 +9,17 @@ from qwed_legal.guards.deadline_guard import DeadlineGuard
 from qwed_legal.guards.liability_guard import LiabilityGuard
 from qwed_legal.guards.clause_guard import ClauseGuard
 from qwed_legal.guards.citation_guard import CitationGuard
+from qwed_legal.guards.jurisdiction_guard import JurisdictionGuard
+from qwed_legal.guards.statute_guard import StatuteOfLimitationsGuard
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "DeadlineGuard",
     "LiabilityGuard", 
     "ClauseGuard",
     "CitationGuard",
+    "JurisdictionGuard",
+    "StatuteOfLimitationsGuard",
     "LegalGuard",
 ]
 
@@ -24,8 +28,7 @@ class LegalGuard:
     """
     All-in-one legal verification guard.
     
-    Combines DeadlineGuard, LiabilityGuard, and ClauseGuard for comprehensive
-    contract verification.
+    Combines all guards for comprehensive contract verification.
     
     Example:
         >>> from qwed_legal import LegalGuard
@@ -37,6 +40,9 @@ class LegalGuard:
         self.deadline = DeadlineGuard()
         self.liability = LiabilityGuard()
         self.clause = ClauseGuard()
+        self.citation = CitationGuard()
+        self.jurisdiction = JurisdictionGuard()
+        self.statute = StatuteOfLimitationsGuard()
     
     def verify_deadline(self, signing_date: str, term: str, claimed_deadline: str):
         """Verify a deadline calculation."""
@@ -49,3 +55,16 @@ class LegalGuard:
     def check_clause_consistency(self, clauses: list[str]):
         """Check clauses for logical contradictions."""
         return self.clause.check_consistency(clauses)
+    
+    def verify_citation(self, citation: str):
+        """Verify a legal citation."""
+        return self.citation.verify(citation)
+    
+    def verify_jurisdiction(self, parties_countries: list[str], governing_law: str, forum: str = None):
+        """Verify choice of law and forum selection."""
+        return self.jurisdiction.verify_choice_of_law(parties_countries, governing_law, forum)
+    
+    def verify_statute_of_limitations(self, claim_type: str, jurisdiction: str, incident_date: str, filing_date: str):
+        """Verify if claim is within statute of limitations."""
+        return self.statute.verify(claim_type, jurisdiction, incident_date, filing_date)
+

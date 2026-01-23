@@ -12,6 +12,7 @@
   [![Verified by QWED](https://img.shields.io/badge/Verified_by-QWED-00C853?style=flat&logo=checkmarx)](https://github.com/QWED-AI/qwed-legal)
   [![GitHub Developer Program](https://img.shields.io/badge/GitHub_Developer_Program-Member-4c1?style=flat&logo=github)](https://github.com/QWED-AI)
   [![PyPI](https://img.shields.io/pypi/v/qwed-legal?color=blue&cacheSeconds=60)](https://pypi.org/project/qwed-legal/)
+  [![npm](https://img.shields.io/npm/v/@qwed-ai/legal?color=red)](https://www.npmjs.com/package/@qwed-ai/legal)
   [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
   [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
   [![Tests](https://github.com/QWED-AI/qwed-legal/actions/workflows/ci.yml/badge.svg)](https://github.com/QWED-AI/qwed-legal/actions)
@@ -93,7 +94,7 @@ print(result.consistent)  # False!
 
 ---
 
-## 🛡️ The Four Guards
+## 🛡️ The Six Guards
 
 | Guard | What It Verifies |
 |-------|------------------|
@@ -101,8 +102,10 @@ print(result.consistent)  # False!
 | **LiabilityGuard** | Cap percentages, tiered liability, indemnity limits |
 | **ClauseGuard** | Clause contradictions, termination conflicts |
 | **CitationGuard** | Legal citations (Bluebook format, case names, reporters) |
+| **JurisdictionGuard** | Choice of law, forum selection, cross-border conflicts |
+| **StatuteOfLimitationsGuard** | Claim periods by jurisdiction and claim type |
 
-### Verify Legal Citations (New!)
+### Verify Legal Citations
 
 ```python
 from qwed_legal import CitationGuard
@@ -114,6 +117,55 @@ print(result.valid)  # True
 print(result.parsed_components)
 # {'plaintiff': 'Brown', 'defendant': 'Board of Education', 'volume': 347, 'reporter': 'U.S.', 'page': 483, 'year': 1954}
 ```
+
+### Verify Jurisdiction (New in v0.2.0!)
+
+```python
+from qwed_legal import JurisdictionGuard
+
+guard = JurisdictionGuard()
+result = guard.verify_choice_of_law(
+    parties_countries=["US", "UK"],
+    governing_law="Delaware",
+    forum="London"
+)
+
+print(result.conflicts)  # ['Governing law Delaware (US state) but forum London is non-US...']
+```
+
+### Check Statute of Limitations (New in v0.2.0!)
+
+```python
+from qwed_legal import StatuteOfLimitationsGuard
+
+guard = StatuteOfLimitationsGuard()
+result = guard.verify(
+    claim_type="breach_of_contract",
+    jurisdiction="California",
+    incident_date="2020-01-15",
+    filing_date="2026-06-01"
+)
+
+print(result.verified)  # False - 4 year limit exceeded!
+print(result.message)   # ❌ EXPIRED: Statute of limitations expired...
+```
+
+---
+
+## 📦 TypeScript/JavaScript (npm)
+
+```bash
+npm install @qwed-ai/legal
+```
+
+```typescript
+import { DeadlineVerifier, JurisdictionVerifier } from '@qwed-ai/legal';
+
+const deadline = new DeadlineVerifier();
+const result = await deadline.verify("2026-01-15", "30 days", "2026-02-14");
+console.log(result.verified);
+```
+
 
 ---
 

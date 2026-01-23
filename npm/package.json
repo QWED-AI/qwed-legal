@@ -1,0 +1,48 @@
+{
+    "name": "@qwed-ai/legal",
+    "version": "1.0.0",
+    "description": "TypeScript wrapper for QWED-Legal - Verification guards for legal contracts",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "build": "tsc",
+        "prepublishOnly": "npm run build"
+    },
+    "keywords": [
+        "qwed",
+        "legal",
+        "contracts",
+        "verification",
+        "ai",
+        "llm",
+        "deadline",
+        "liability",
+        "jurisdiction",
+        "statute-of-limitations",
+        "legal-tech"
+    ],
+    "author": "QWED-AI <rahul@qwedai.com>",
+    "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/QWED-AI/qwed-legal.git"
+    },
+    "homepage": "https://docs.qwedai.com/docs/legal/overview",
+    "bugs": {
+        "url": "https://github.com/QWED-AI/qwed-legal/issues"
+    },
+    "dependencies": {
+        "python-shell": "^5.0.0"
+    },
+    "devDependencies": {
+        "typescript": "^5.0.0",
+        "@types/node": "^20.0.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "files": [
+        "dist",
+        "README.md"
+    ]
+}

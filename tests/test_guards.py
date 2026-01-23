@@ -213,5 +213,107 @@ class TestLegalGuard:
         assert result.consistent is True
 
 
+class TestJurisdictionGuard:
+    """Test JurisdictionGuard functionality."""
+    
+    def test_valid_choice_of_law(self):
+        """Test valid choice of law verification."""
+        from qwed_legal import JurisdictionGuard
+        guard = JurisdictionGuard()
+        result = guard.verify_choice_of_law(
+            parties_countries=["US", "US"],
+            governing_law="Delaware",
+            forum="Delaware"
+        )
+        assert result.verified is True
+    
+    def test_mismatched_governing_law_forum(self):
+        """Test mismatch between governing law and forum."""
+        from qwed_legal import JurisdictionGuard
+        guard = JurisdictionGuard()
+        result = guard.verify_choice_of_law(
+            parties_countries=["US", "UK"],
+            governing_law="Delaware",
+            forum="London"
+        )
+        # Should detect conflict
+        assert len(result.conflicts) > 0 or len(result.warnings) > 0
+    
+    def test_cisg_applicability(self):
+        """Test CISG convention check."""
+        from qwed_legal import JurisdictionGuard
+        guard = JurisdictionGuard()
+        result = guard.check_convention_applicability(
+            parties_countries=["US", "DE"],
+            convention="CISG"
+        )
+        assert result.verified is True
+        assert "applies" in result.message.lower()
+    
+    def test_forum_selection(self):
+        """Test forum selection validation."""
+        from qwed_legal import JurisdictionGuard
+        guard = JurisdictionGuard()
+        result = guard.verify_forum_selection("NY", contract_value=100000)
+        assert result.verified is True
+
+
+class TestStatuteOfLimitationsGuard:
+    """Test StatuteOfLimitationsGuard functionality."""
+    
+    def test_within_statute(self):
+        """Test claim within statute of limitations."""
+        from qwed_legal import StatuteOfLimitationsGuard
+        guard = StatuteOfLimitationsGuard()
+        result = guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="2024-01-15",
+            filing_date="2026-06-01"
+        )
+        assert result.verified is True
+        assert "WITHIN" in result.message
+    
+    def test_expired_statute(self):
+        """Test claim past statute of limitations."""
+        from qwed_legal import StatuteOfLimitationsGuard
+        guard = StatuteOfLimitationsGuard()
+        result = guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="2018-01-15",
+            filing_date="2026-06-01"
+        )
+        assert result.verified is False
+        assert "EXPIRED" in result.message
+    
+    def test_get_limitation_period(self):
+        """Test getting limitation period."""
+        from qwed_legal import StatuteOfLimitationsGuard
+        guard = StatuteOfLimitationsGuard()
+        period = guard.get_limitation_period("breach_of_contract", "California")
+        assert period == 4.0
+    
+    def test_compare_jurisdictions(self):
+        """Test comparing limitation periods across jurisdictions."""
+        from qwed_legal import StatuteOfLimitationsGuard
+        guard = StatuteOfLimitationsGuard()
+        comparison = guard.compare_jurisdictions(
+            "breach_of_contract",
+            ["California", "New York", "Delaware"]
+        )
+        assert comparison["California"] == 4.0
+        assert comparison["New York"] == 6.0
+        assert comparison["Delaware"] == 3.0
+    
+    def test_india_jurisdiction(self):
+        """Test India statute of limitations."""
+        from qwed_legal import StatuteOfLimitationsGuard
+        guard = StatuteOfLimitationsGuard()
+        period = guard.get_limitation_period("breach_of_contract", "India")
+        assert period == 3.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
