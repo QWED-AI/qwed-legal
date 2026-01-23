@@ -151,12 +151,6 @@ class JurisdictionGuard:
             elif country in self.CIVIL_LAW_JURISDICTIONS:
                 party_legal_systems.add("CIVIL_LAW")
         
-        gov_law_system = None
-        if governing_law_upper in self.COMMON_LAW_JURISDICTIONS or governing_law_upper in self.US_STATES:
-            gov_law_system = "COMMON_LAW"
-        elif governing_law_upper in self.CIVIL_LAW_JURISDICTIONS:
-            gov_law_system = "CIVIL_LAW"
-        
         if len(party_legal_systems) > 1:
             warnings.append(
                 "Cross-border contract with parties from different legal systems "
