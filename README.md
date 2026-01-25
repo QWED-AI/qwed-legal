@@ -128,20 +128,20 @@ print(result.computed_cap)  # 10,000,000 (200% of 5M)
 # ❌ ERROR: 200% of $5M = $10M, not $15M
 ```
 
-### Detect Contradictory Clauses
+### Detect Contradictory Clauses (Z3 Logic)
 
 ```python
-from qwed_legal import ClauseGuard
+from qwed_legal import ContradictionGuard, Clause
 
-guard = ClauseGuard()
-result = guard.check_consistency([
-    "Seller may terminate with 30 days notice",
-    "Neither party may terminate before 90 days",
-    "Seller may terminate immediately upon breach"
+guard = ContradictionGuard()
+result = guard.verify_consistency([
+    Clause(id="1", text="Liability capped at $10k", category="LIABILITY", value=10000),
+    Clause(id="2", text="Minimum penalty is $50k", category="LIABILITY", value=50000)
 ])
 
-print(result.consistent)  # False!
-# ⚠️ WARNING: Clauses 1 and 2 may conflict (days 30-90)
+print(result["verified"])  # False!
+print(result["message"])   
+# ❌ LOGIC CONTRADICTION: Clauses are mutually exclusive. (50k > 10k Cap)
 ```
 
 ---

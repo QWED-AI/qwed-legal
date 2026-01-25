@@ -1,6 +1,5 @@
-from z3 import *
-from enum import Enum
-from typing import Dict, List, Optional
+from z3 import Solver, Int, sat
+from typing import List
 from dataclasses import dataclass
 
 @dataclass
@@ -33,8 +32,6 @@ class ContradictionGuard:
         s.add(contract_duration_months >= 0)
         s.add(max_liability_usd >= 0)
         s.add(notice_period_days >= 0)
-        
-        clause_map = {} # Trace back constraint to clause ID
         
         term_clauses = [c for c in clauses if c.category == "DURATION"]
         liability_clauses = [c for c in clauses if c.category == "LIABILITY"]
