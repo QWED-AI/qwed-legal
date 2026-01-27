@@ -170,6 +170,24 @@ print(result.parsed_components)
 # {'plaintiff': 'Brown', 'defendant': 'Board of Education', 'volume': 347, 'reporter': 'U.S.', 'page': 483, 'year': 1954}
 ```
 
+## 🛡️ The QWED Legal Triangle
+
+Based on the latest research in Legal AI Evaluation (Hu et al., 2025; Yu et al., 2025), QWED ensures coverage across the three critical dimensions of legal trust:
+
+1.  **Output Accuracy (The "What"):**
+    *   *Verified by:* `DeadlineGuard`, `LiabilityGuard`.
+    *   *Role:* Ensures specific facts (dates, amounts) are mathematically correct.
+
+2.  **Reasoning Quality (The "How"):**
+    *   *Verified by:* `IRACGuard` [NEW].
+    *   *Role:* Enforces "Reasoned Elaboration" [Source: MSLR Benchmark]. Ensures the AI doesn't hallucinate a correct answer via incorrect logic.
+
+3.  **Trustworthiness (The "Source"):**
+    *   *Verified by:* `SACChunker` (in Core).
+    *   *Role:* Prevents "Retrieval Mismatch" where AI cites the wrong contract [Source: Reliable Retrieval in RAG].
+
+## 📦 Components
+
 ### Verify Jurisdiction (New in v0.2.0!)
 
 ```python
