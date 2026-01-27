@@ -527,7 +527,16 @@ Typically <10ms per verification. The symbolic math engine is highly optimized.
 - [x] DeadlineGuard with business day calculations
 - [x] LiabilityGuard for cap verification
 - [x] ClauseGuard for contradiction detection
-- [x] CitationGuard for legal citation validation
+- **Reasoning Verification**: `IRACGuard` ensures legal reasoning follows Issue-Rule-Application-Conclusion structure.
+- **Authority Verification**: `CitationGuard` (v0.2.0) checks for hallucinated case citations.
+
+## 🌍 Global Jurisdiction Support (v0.2.0)
+QWED-Legal now supports cross-border verification:
+*   **JurisdictionGuard:** Detects conflicts between Governing Law and Forum Selection (e.g., Civil vs. Common Law mismatches).
+*   **StatuteOfLimitationsGuard:** Deterministically calculates filing deadlines for CA, NY, TX, UK, and more.
+*   **Attestation:** Every verification can be cryptographically signed (JWT) to provide an audit trail of safety checks.
+
+## 📦 Installation
 - [x] JurisdictionGuard for choice of law verification
 - [x] StatuteOfLimitationsGuard for claim periods
 - [x] TypeScript/npm SDK (@qwed-ai/legal)
