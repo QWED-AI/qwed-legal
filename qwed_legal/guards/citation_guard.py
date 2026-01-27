@@ -63,7 +63,7 @@ class CitationGuard:
                 if "volume" in components:
                     try:
                         components["volume"] = int(components["volume"])
-                    except: 
+                    except (ValueError, TypeError): 
                         pass
                 
                 return CitationResult(True, parsed_components=components)
@@ -101,7 +101,7 @@ class CitationGuard:
                 if "title" in components:
                     try:
                         components["title"] = int(components["title"])
-                    except:
+                    except (ValueError, TypeError):
                         pass
                 return CitationResult(True, parsed_components=components)
         
