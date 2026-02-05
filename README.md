@@ -10,6 +10,7 @@
   </p>
 
   [![Verified by QWED](https://img.shields.io/badge/Verified_by-QWED-00C853?style=flat&logo=checkmarx)](https://github.com/QWED-AI/qwed-legal)
+  [![100% Deterministic](https://img.shields.io/badge/100%25_Deterministic-QWED-0066CC?style=flat&logo=checkmarx)](https://docs.qwedai.com/docs/engines/overview#deterministic-first-philosophy)
   [![GitHub Developer Program](https://img.shields.io/badge/GitHub_Developer_Program-Member-4c1?style=flat&logo=github)](https://github.com/QWED-AI)
   [![PyPI](https://img.shields.io/pypi/v/qwed-legal?color=blue&cacheSeconds=60)](https://pypi.org/project/qwed-legal/)
   [![npm](https://img.shields.io/npm/v/@qwed-ai/legal?color=red)](https://www.npmjs.com/package/@qwed-ai/legal)
@@ -359,6 +360,8 @@ ca_guard = DeadlineGuard(country="US", state="CA")
 - Contracts containing trade secrets
 - GDPR/HIPAA-sensitive documents
 - Air-gapped environments
+
+> 📖 **See [Determinism Guarantee](https://docs.qwedai.com/docs/engines/overview#deterministic-first-philosophy)** for how QWED ensures 100% reproducible verification.
 
 ---
 

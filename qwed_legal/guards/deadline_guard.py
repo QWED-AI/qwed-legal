@@ -24,6 +24,7 @@ class DeadlineResult:
     term_parsed: str
     difference_days: int
     message: str
+    verification_mode: str = "SYMBOLIC"  # Always SYMBOLIC for legal (SymPy/Z3)
 
 
 class DeadlineGuard:
