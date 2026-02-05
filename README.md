@@ -579,4 +579,6 @@ Apache 2.0 - See [LICENSE](LICENSE)
   <b>⭐ Star us if you believe AI needs verification in legal domains</b>
   <br><br>
   <i>"In law, precision isn't optional. QWED makes it verifiable."</i>
+  <br><br>
+  <a href="https://snyk.io"><img src="https://img.shields.io/badge/Security-Snyk-4C4A73?style=for-the-badge&logo=snyk&logoColor=white" alt="Secured by Snyk" /></a>
 </div>
