@@ -580,5 +580,5 @@ Apache 2.0 - See [LICENSE](LICENSE)
   <br><br>
   <i>"In law, precision isn't optional. QWED makes it verifiable."</i>
   <br><br>
-  <a href="https://snyk.io"><img src="https://img.shields.io/badge/Security-Snyk-4C4A73?style=for-the-badge&logo=snyk&logoColor=white" alt="Secured by Snyk" /></a>
+  <a href="https://snyk.io/test/github/QWED-AI/qwed-legal"><img src="https://snyk.io/test/github/QWED-AI/qwed-legal/badge.svg" alt="Known Vulnerabilities" /></a>
 </div>
