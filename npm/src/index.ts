@@ -73,6 +73,18 @@ export interface StatuteResult {
 }
 
 // ============================================================================
+// Security Helper
+// ============================================================================
+
+/**
+ * Escape a string for safe interpolation into Python string literals.
+ * Escapes backslashes first, then quotes, to prevent injection attacks.
+ */
+function escapePythonString(str: string): string {
+    return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+// ============================================================================
 // Base Runner
 // ============================================================================
 
@@ -124,8 +136,8 @@ export class DeadlineVerifier {
 from qwed_legal import DeadlineGuard
 import json
 
-guard = DeadlineGuard(country="${country}")
-result = guard.verify("${signingDate}", "${term}", "${claimedDeadline}")
+guard = DeadlineGuard(country="${escapePythonString(country)}")
+result = guard.verify("${escapePythonString(signingDate)}", "${escapePythonString(term)}", "${escapePythonString(claimedDeadline)}")
 
 print(json.dumps({
     "verified": result.verified,
@@ -278,13 +290,13 @@ export class JurisdictionVerifier {
         forum?: string
     ): Promise<JurisdictionResult> {
         const partiesJson = JSON.stringify(partiesCountries);
-        const forumArg = forum ? `"${forum}"` : 'None';
+        const forumArg = forum ? `"${escapePythonString(forum)}"` : 'None';
         const script = `
 from qwed_legal import JurisdictionGuard
 import json
 
 guard = JurisdictionGuard()
-result = guard.verify_choice_of_law(${partiesJson}, "${governingLaw}", ${forumArg})
+result = guard.verify_choice_of_law(${partiesJson}, "${escapePythonString(governingLaw)}", ${forumArg})
 
 print(json.dumps({
     "verified": result.verified,
@@ -311,7 +323,7 @@ from qwed_legal import JurisdictionGuard
 import json
 
 guard = JurisdictionGuard()
-result = guard.check_convention_applicability(${partiesJson}, "${convention}")
+result = guard.check_convention_applicability(${partiesJson}, "${escapePythonString(convention)}")
 
 print(json.dumps({
     "verified": result.verified,
@@ -352,7 +364,7 @@ from qwed_legal import StatuteOfLimitationsGuard
 import json
 
 guard = StatuteOfLimitationsGuard()
-result = guard.verify("${claimType}", "${jurisdiction}", "${incidentDate}", "${filingDate}")
+result = guard.verify("${escapePythonString(claimType)}", "${escapePythonString(jurisdiction)}", "${escapePythonString(incidentDate)}", "${escapePythonString(filingDate)}")
 
 print(json.dumps({
     "verified": result.verified,
@@ -381,7 +393,7 @@ from qwed_legal import StatuteOfLimitationsGuard
 import json
 
 guard = StatuteOfLimitationsGuard()
-period = guard.get_limitation_period("${claimType}", "${jurisdiction}")
+period = guard.get_limitation_period("${escapePythonString(claimType)}", "${escapePythonString(jurisdiction)}")
 
 print(json.dumps(period))
 `;
