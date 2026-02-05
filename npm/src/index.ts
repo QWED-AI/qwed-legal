@@ -78,10 +78,15 @@ export interface StatuteResult {
 
 /**
  * Escape a string for safe interpolation into Python string literals.
- * Escapes backslashes first, then quotes, to prevent injection attacks.
+ * Escapes backslashes first, then quotes, then control characters.
+ * This prevents injection attacks via quotes, backslashes, or newlines.
  */
 function escapePythonString(str: string): string {
-    return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return str
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r');
 }
 
 // ============================================================================
