@@ -241,7 +241,7 @@ from qwed_legal import CitationGuard
 import json
 
 guard = CitationGuard()
-result = guard.verify("${citation.replace(/"/g, '\\"')}")
+result = guard.verify("${citation.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")
 
 print(json.dumps({
     "valid": result.valid,
