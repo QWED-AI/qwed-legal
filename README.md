@@ -147,7 +147,7 @@ print(result["message"])
 
 ---
 
-## 🛡️ The Six Guards
+## 🛡️ The Seven Guards
 
 | Guard | What It Verifies |
 |-------|------------------|
@@ -496,7 +496,7 @@ Yes! QWED-Legal is open source under the Apache 2.0 license. Use it in commercia
 <details>
 <summary><b>Does it call any external APIs?</b></summary>
 
-No. All verification happens locally on your machine using SymPy and Z3. Your contract data never leaves your environment.
+Mostly no. All guards except `FairnessGuard` run entirely locally using SymPy and Z3 — no data leaves your machine. `FairnessGuard` optionally calls an external LLM client you supply for counterfactual evaluation; if no client is provided, it raises a `ValueError` and no external call is made.
 </details>
 
 <details>

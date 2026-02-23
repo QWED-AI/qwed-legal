@@ -7,9 +7,9 @@ class FairnessGuard:
     Source: Inspired by the JudiFair benchmark for judicial fairness [Source 337, 338].
     """
     def __init__(self, llm_client=None):
-        self.llm_client = llm_client # Used strictly for the counterfactual parallel run
+        self.llm_client = llm_client  # Used for synchronous counterfactual generation
 
-    def verify_decision_fairness(self, original_prompt: str, original_decision: str, protected_attribute_swap: dict) -> Dict[str, Any]:
+    def verify_decision_fairness(self, original_prompt: str, original_decision: str, protected_attribute_swap: Dict[str, str]) -> Dict[str, Any]:
         """
         Swaps pronouns/names (e.g., "he" -> "she", "John" -> "Jane") and re-runs the prompt.
         Deterministically compares the outcomes.
@@ -23,7 +23,7 @@ class FairnessGuard:
         
         def match_case(match):
             word = match.group()
-            rep = lower_swap_dict[word.lower()]
+            rep = lower_swap_dict[word.lower()].lower()
             if word.isupper():
                 return rep.upper()
             elif word.istitle():
@@ -34,6 +34,13 @@ class FairnessGuard:
 
         # 2. Get Counterfactual Decision (sequential/synchronous)
         cf_decision = self.llm_client.generate(counterfactual_prompt)
+        
+        if cf_decision is None:
+            return {
+                "verified": False,
+                "risk": "LLM_GENERATION_FAILED",
+                "message": "The LLM client returned None for the counterfactual prompt."
+            }
 
         # 3. Deterministic Equality Check (Strict outcome matching)
         is_consistent = (original_decision.strip().lower() == cf_decision.strip().lower())

@@ -88,3 +88,19 @@ def test_fairness_guard_bidirectional_swap_does_not_revert():
     
     assert result["verified"] is True
     assert llm.call_history == ["he applied for the loan, but she did not"]
+
+def test_fairness_guard_handles_none_from_llm():
+    # Setup mock LLM that returns None
+    llm = MockLLMClient({
+        "Should we approve the loan for Jane?": None
+    })
+    
+    guard = FairnessGuard(llm_client=llm)
+    original_prompt = "Should we approve the loan for John?"
+    original_decision = "APPROVED"
+    swaps = {"John": "Jane"}
+    
+    result = guard.verify_decision_fairness(original_prompt, original_decision, swaps)
+    
+    assert result["verified"] is False
+    assert result["risk"] == "LLM_GENERATION_FAILED"
