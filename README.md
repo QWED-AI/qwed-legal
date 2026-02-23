@@ -157,6 +157,7 @@ print(result["message"])
 | **CitationGuard** | Legal citations (Bluebook format, case names, reporters) |
 | **JurisdictionGuard** | Choice of law, forum selection, cross-border conflicts |
 | **StatuteOfLimitationsGuard** | Claim periods by jurisdiction and claim type |
+| **FairnessGuard** | Counterfactual tests for bias (Requires `llm_client`) |
 
 ### Verify Legal Citations
 
@@ -350,9 +351,9 @@ ca_guard = DeadlineGuard(country="US", state="CA")
 
 | Concern | QWED-Legal Approach |
 |---------|---------------------|
-| **Data Transmission** | ❌ No API calls, no cloud processing |
+| **Data Transmission** | ❌ No API calls, no cloud processing (Except `FairnessGuard`, which optionally uses an LLM client) |
 | **Storage** | ❌ Nothing stored, pure computation |
-| **Dependencies** | ✅ Local-only (SymPy, Z3, holidays) |
+| **Dependencies** | ✅ Local-only (SymPy, Z3, holidays), external LLM required only for `FairnessGuard` counterfactuals |
 | **Audit Trail** | ✅ All verification results are deterministic and reproducible |
 
 **Perfect for**:
@@ -380,22 +381,25 @@ flowchart LR
         E[CitationGuard]
         F[JurisdictionGuard]
         G[StatuteGuard]
+        L[FairnessGuard]
     end
     
     subgraph "Verification Engines"
         H[SymPy<br/>Symbolic Math]
         I[Z3 SMT Solver<br/>Formal Proofs]
         J[Rule Engine<br/>Jurisdiction DB]
+        M[External LLM<br/>Counterfactual]
     end
     
     A --> |"LLM claims deadline is Feb 14"| B
     B --> H
     H --> |"VERIFIED ✓ or BLOCKED ✗"| K[Certified Output]
     
-    A --> C & D & E & F & G
+    A --> C & D & E & F & G & L
     C & D --> H
     E --> J
     F & G --> I & J
+    L --> M
 ```
 
 **Key**: LLM output → QWED Guard → Symbolic Engine → Verified/Blocked
