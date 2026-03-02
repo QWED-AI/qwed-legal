@@ -16,7 +16,12 @@ def set_output(name: str, value: str):
     """Set GitHub Action output."""
     output_file = os.environ.get('GITHUB_OUTPUT')
     if output_file:
-        with open(output_file, 'a') as f:
+        # Sanitize: resolve path and ensure it's under the runner workspace
+        resolved = os.path.realpath(output_file)
+        if not resolved.startswith(('/home/runner/', '/github/', '/tmp/')):
+            print(f"⚠️ Refusing to write to untrusted path: {resolved}")
+            return
+        with open(resolved, 'a') as f:
             f.write(f"{name}={value}\n")
     else:
         print(f"::set-output name={name}::{value}")

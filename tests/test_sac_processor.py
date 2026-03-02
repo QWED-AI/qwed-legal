@@ -1,7 +1,5 @@
 """Tests for SACProcessor — Summary-Augmented Chunking."""
 
-import pytest
-
 from qwed_legal.rag.sac_processor import SACProcessor
 
 
