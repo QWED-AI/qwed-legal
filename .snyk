@@ -1,0 +1,14 @@
+# Snyk policy file — https://snyk.io/docs/snyk-policy-file/
+version: v1.25.0
+ignore:
+  # GITHUB_OUTPUT is set by the GitHub Actions runner itself,
+  # not by untrusted user input. This is standard Actions output
+  # mechanism and is not a real Path Traversal risk.
+  SNYK-CODE-0000:
+    - '* > action_entrypoint.py':
+        reason: >
+          GITHUB_OUTPUT env var is set by the GitHub Actions runner,
+          not by untrusted input. This is the standard mechanism for
+          setting action outputs. See:
+          https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-output-parameter
+        expires: 2027-03-02T00:00:00.000Z
