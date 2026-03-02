@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="assets/logo.png" alt="QWED Logo" width="80" height="80">
   <h1>🏛️ QWED-Legal</h1>
   <h3>Verification Guards for Legal Contracts</h3>
   
