@@ -15,8 +15,7 @@ Source: "Towards Reliable Retrieval in RAG Systems for Large Legal Datasets".
 """
 
 import hashlib
-import re
-from typing import Any, Dict, List, Optional, Protocol
+from typing import List, Optional, Protocol
 
 
 class LLMClient(Protocol):
