@@ -1,0 +1,65 @@
+name: 💡 Feature Request
+description: Suggest a new feature for QWED Legal
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Before You Submit
+        
+        ⚠️ **Read the [CONTRIBUTING.md](https://github.com/QWED-AI/qwed-legal/blob/main/CONTRIBUTING.md)** to understand QWED's philosophy.
+        
+        - QWED is **deterministic-first** - LLMs are translators, not verifiers
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which component does this affect?
+      options:
+        - Citation Guard
+        - Clause Guard
+        - Contradiction Guard
+        - Deadline Guard
+        - Fairness Guard
+        - IRAC Guard
+        - Jurisdiction Guard
+        - Liability Guard
+        - Statute Guard
+        - RAG / SAC Processor
+        - New Guard (Propose)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this solve?
+      placeholder: "Currently, QWED Legal cannot verify..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How should this work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches did you consider?
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I have read CONTRIBUTING.md
+          required: true

@@ -1,0 +1,81 @@
+name: 🐛 Bug Report
+description: Report a bug in QWED Legal
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill in the details below.
+
+  - type: input
+    id: version
+    attributes:
+      label: QWED Legal Version
+      description: Run `pip show qwed-legal` to get this
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python Version
+      description: Run `python --version`
+      placeholder: "3.11.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which component is affected?
+      options:
+        - Citation Guard
+        - Clause Guard
+        - Contradiction Guard
+        - Deadline Guard
+        - Fairness Guard
+        - IRAC Guard
+        - Jurisdiction Guard
+        - Liability Guard
+        - Statute Guard
+        - RAG / SAC Processor
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Input that caused the bug
+      description: Share the query/code that triggered the issue
+      placeholder: |
+        ```python
+        from qwed_legal import LegalVerifier
+        result = verifier.verify(...)
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Include full traceback if applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other information that might help
