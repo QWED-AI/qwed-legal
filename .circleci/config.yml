@@ -1,0 +1,64 @@
+version: 2.1
+
+orbs:
+  python: circleci/python@2.1.1
+
+jobs:
+  build-and-test:
+    parameters:
+      python-version:
+        type: string
+    docker:
+      - image: cimg/python:<< parameters.python-version >>
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - pip-v1-{{ checksum "pyproject.toml" }}-<< parameters.python-version >>
+            - pip-v1-
+      - run:
+          name: Install Dependencies
+          command: pip install -e ".[dev]"
+      - save_cache:
+          key: pip-v1-{{ checksum "pyproject.toml" }}-<< parameters.python-version >>
+          paths:
+            - ~/.local/lib/python<< parameters.python-version >>/site-packages
+            - ~/.cache/pip
+      - run:
+          name: Run Tests
+          command: |
+            mkdir -p test-results
+            pytest --junitxml=test-results/results.xml tests/
+      - store_test_results:
+          path: test-results
+
+  security-scan:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Create isolated audit environment
+          command: |
+            python -m venv /tmp/audit-env
+            /tmp/audit-env/bin/pip install --upgrade pip
+            /tmp/audit-env/bin/pip install -e ".[dev]"
+      - run:
+          name: Run pip-audit (project deps only)
+          command: |
+            set -o pipefail
+            /tmp/audit-env/bin/pip install pip-audit
+            /tmp/audit-env/bin/pip-audit --strict --skip-editable --desc 2>&1 | tee audit-results.txt
+      - store_artifacts:
+          path: audit-results.txt
+
+workflows:
+  ci:
+    jobs:
+      - build-and-test:
+          matrix:
+            parameters:
+              python-version: ["3.10", "3.11", "3.12"]
+      - security-scan:
+          requires:
+            - build-and-test
