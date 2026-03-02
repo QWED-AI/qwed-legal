@@ -13,16 +13,17 @@ from qwed_legal import DeadlineGuard, LiabilityGuard, ClauseGuard, CitationGuard
 
 
 def set_output(name: str, value: str):
-    """Set GitHub Action output."""
+    """Set GitHub Action output using heredoc delimiter format."""
     output_file = os.environ.get('GITHUB_OUTPUT')
     if output_file:
-        # Sanitize: resolve path and ensure it's under the runner workspace
-        resolved = os.path.realpath(output_file)
-        if not resolved.startswith(('/home/runner/', '/github/', '/tmp/')):
-            print(f"⚠️ Refusing to write to untrusted path: {resolved}")
-            return
-        with open(resolved, 'a') as f:
-            f.write(f"{name}={value}\n")
+        # Sanitize the output name (no newlines)
+        safe_name = name.replace("\r", "").replace("\n", "")
+        # Use heredoc delimiter to prevent newline injection
+        delimiter = "ghadelimiter_qwed"
+        while delimiter in value:
+            delimiter += "_x"
+        with open(output_file, 'a', encoding='utf-8') as f:
+            f.write(f"{safe_name}<<{delimiter}\n{value}\n{delimiter}\n")
     else:
         print(f"::set-output name={name}::{value}")
 

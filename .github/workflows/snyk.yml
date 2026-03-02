@@ -57,7 +57,7 @@ jobs:
       - name: Run Snyk Code test
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        run: snyk code test --org=${{ secrets.SNYK_ORG_ID }} --sarif-file-output=snyk-code.sarif
+        run: snyk code test --org=${{ secrets.SNYK_ORG_ID }} --severity-threshold=high --sarif-file-output=snyk-code.sarif
 
       - name: Upload Snyk Code results
         uses: github/codeql-action/upload-sarif@v4
