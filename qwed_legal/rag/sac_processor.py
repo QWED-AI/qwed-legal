@@ -76,7 +76,7 @@ class SACProcessor:
             self.MIN_SUMMARY_LENGTH,
             min(target_summary_length, self.MAX_SUMMARY_LENGTH),
         )
-        self._preview_chars = preview_chars
+        self._preview_chars = max(1, preview_chars)
 
     # ------------------------------------------------------------------ #
     #  Public API                                                          #
@@ -146,6 +146,10 @@ class SACProcessor:
         )
 
         summary = self._llm.generate(prompt)
+
+        # Defensive: handle None or empty LLM returns
+        if not summary or not summary.strip():
+            return self._hash_id(document_text)
 
         # Enforce length limit
         if len(summary) > self._target_length:

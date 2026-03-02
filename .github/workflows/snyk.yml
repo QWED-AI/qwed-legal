@@ -31,7 +31,6 @@ jobs:
           pip install -e .
 
       - name: Run Snyk to check for vulnerabilities
-        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: snyk test --org=${{ secrets.SNYK_ORG_ID }} --severity-threshold=high --sarif-file-output=snyk.sarif
@@ -52,7 +51,6 @@ jobs:
         run: npm install -g snyk
 
       - name: Run Snyk Code test
-        continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: snyk code test --org=${{ secrets.SNYK_ORG_ID }} --sarif-file-output=snyk-code.sarif

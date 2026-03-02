@@ -52,8 +52,9 @@ body:
       description: Share the query/code that triggered the issue
       placeholder: |
         ```python
-        from qwed_legal import LegalVerifier
-        result = verifier.verify(...)
+        from qwed_legal.guards import DeadlineGuard
+        guard = DeadlineGuard()
+        result = guard.verify(...)
         ```
     validations:
       required: true
