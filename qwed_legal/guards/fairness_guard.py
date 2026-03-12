@@ -17,6 +17,9 @@ class FairnessGuard:
         if not self.llm_client:
             raise ValueError("LLM client must be provided for counterfactual execution.")
 
+        if not protected_attribute_swap:
+            return {"verified": True, "status": "NO_SWAP_REQUIRED", "message": "No protected attributes to swap."}
+
         # 1. Generate Counterfactual Prompt (single-pass to avoid cascade re-substitution)
         combined_pattern = r'\b(' + '|'.join(re.escape(k) for k in protected_attribute_swap) + r')\b'
         lower_swap_dict = {k.lower(): v for k, v in protected_attribute_swap.items()}

@@ -102,7 +102,7 @@ class LegalGuard:
         """
         return self.contradiction.verify_consistency(clauses)
 
-    def verify_fairness(self, original_prompt: str, original_decision: str, protected_attribute_swap: dict):
+    def verify_fairness(self, original_prompt: str, original_decision: str, protected_attribute_swap: dict[str, str]):
         """Test for algorithmic bias using counterfactual testing.
 
         Requires ``llm_client`` to be provided at init time.
