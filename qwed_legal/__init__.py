@@ -39,13 +39,18 @@ class LegalGuard:
 
     Combines all guards for comprehensive contract verification.
 
+    Args:
+        llm_client: Optional LLM client for FairnessGuard counterfactual testing.
+            If not provided, ``verify_fairness()`` will raise ``ValueError``.
+            All other guards are fully deterministic and require no external client.
+
     Example:
         >>> from qwed_legal import LegalGuard
         >>> guard = LegalGuard()
         >>> result = guard.verify_deadline("2026-01-15", "30 business days", "2026-02-14")
     """
 
-    def __init__(self):
+    def __init__(self, llm_client=None):
         self.deadline = DeadlineGuard()
         self.liability = LiabilityGuard()
         self.clause = ClauseGuard()
@@ -54,6 +59,7 @@ class LegalGuard:
         self.statute = StatuteOfLimitationsGuard()
         self.irac = IRACGuard()
         self.contradiction = ContradictionGuard()
+        self.fairness = FairnessGuard(llm_client=llm_client)
 
     def verify_deadline(self, signing_date: str, term: str, claimed_deadline: str):
         """Verify a deadline calculation."""
@@ -64,7 +70,11 @@ class LegalGuard:
         return self.liability.verify_cap(contract_value, cap_percentage, claimed_cap)
 
     def check_clause_consistency(self, clauses: list[str]):
-        """Check clauses for logical contradictions."""
+        """Check clauses for contradictions using text-based heuristics (ClauseGuard).
+
+        Accepts raw clause strings. For Z3-powered formal logic verification
+        with structured ``Clause`` dataclass instances, use ``verify_contradiction()``.
+        """
         return self.clause.check_consistency(clauses)
 
     def verify_citation(self, citation: str):
@@ -83,7 +93,19 @@ class LegalGuard:
         """Verify that legal reasoning follows IRAC structure."""
         return self.irac.verify_structure(llm_output)
 
-    def verify_contradiction(self, clauses: list):
-        """Check clauses for logical contradictions using Z3."""
+    def verify_contradiction(self, clauses: list[Clause]):
+        """Check clauses for logical contradictions using Z3 SMT Solver (ContradictionGuard).
+
+        Accepts structured ``Clause`` dataclass instances with ``id``, ``text``,
+        ``category``, and ``value`` fields. For simple text-based contradiction
+        detection, use ``check_clause_consistency()``.
+        """
         return self.contradiction.verify_consistency(clauses)
+
+    def verify_fairness(self, original_prompt: str, original_decision: str, protected_attribute_swap: dict):
+        """Test for algorithmic bias using counterfactual testing.
+
+        Requires ``llm_client`` to be provided at init time.
+        """
+        return self.fairness.verify_decision_fairness(original_prompt, original_decision, protected_attribute_swap)
 
