@@ -64,7 +64,7 @@
 | **Accuracy** | ~95% (hallucination risk) | 100% mathematical certainty |
 | **Tech** | GPT-4, Claude, custom LLMs | SymPy + Z3 SMT Solver |
 | **Model** | Closed SaaS platform | Open-source SDK |
-| **Pricing** | $1000s/month enterprise | Free (MIT License) |
+| **Pricing** | $1000s/month enterprise | Free (Apache 2.0 License) |
 
 ### Use Together (Best Practice)
 ```
@@ -148,7 +148,7 @@ print(result["message"])
 
 ---
 
-## 🛡️ The Seven Guards
+## 🛡️ The Nine Guards
 
 | Guard | What It Verifies |
 |-------|------------------|
@@ -158,7 +158,9 @@ print(result["message"])
 | **CitationGuard** | Legal citations (Bluebook format, case names, reporters) |
 | **JurisdictionGuard** | Choice of law, forum selection, cross-border conflicts |
 | **StatuteOfLimitationsGuard** | Claim periods by jurisdiction and claim type |
-| **FairnessGuard** | Counterfactual tests for bias (Requires `llm_client`) |
+| **IRACGuard** | Legal reasoning structure (Issue→Rule→Application→Conclusion) |
+| **ContradictionGuard** | Z3-powered logical contradiction detection between clauses |
+| **FairnessGuard** | Counterfactual bias testing (Requires `llm_client`) |
 
 ### Verify Legal Citations
 
@@ -531,12 +533,15 @@ Typically <10ms per verification. The symbolic math engine is highly optimized.
 
 ## 🗺️ Roadmap
 
-### ✅ Released (v0.2.0)
+### ✅ Released (v0.3.0)
 - [x] DeadlineGuard with business day calculations
 - [x] LiabilityGuard for cap verification
 - [x] ClauseGuard for contradiction detection
-- **Reasoning Verification**: `IRACGuard` ensures legal reasoning follows Issue-Rule-Application-Conclusion structure.
-- **Authority Verification**: `CitationGuard` (v0.2.0) checks for hallucinated case citations.
+- [x] **IRACGuard** — Ensures legal reasoning follows Issue-Rule-Application-Conclusion structure
+- [x] **ContradictionGuard** — Z3-powered logical contradiction detection between clauses
+- [x] **FairnessGuard** — Counterfactual bias testing for judicial fairness
+- [x] **CitationGuard** — Checks for hallucinated case citations (Bluebook format)
+- [x] **SACProcessor** — Summary-Augmented Chunking for DRM prevention in legal RAG
 
 ## 🌍 Global Jurisdiction Support (v0.2.0)
 QWED-Legal now supports cross-border verification:
@@ -544,7 +549,6 @@ QWED-Legal now supports cross-border verification:
 *   **StatuteOfLimitationsGuard:** Deterministically calculates filing deadlines for CA, NY, TX, UK, and more.
 *   **Attestation:** Every verification can be cryptographically signed (JWT) to provide an audit trail of safety checks.
 
-## 📦 Installation
 - [x] JurisdictionGuard for choice of law verification
 - [x] StatuteOfLimitationsGuard for claim periods
 - [x] TypeScript/npm SDK (@qwed-ai/legal)
@@ -569,6 +573,7 @@ QWED-Legal now supports cross-border verification:
 |---------|---------|
 | [qwed-verification](https://github.com/QWED-AI/qwed-verification) | Core verification engine |
 | [qwed-finance](https://github.com/QWED-AI/qwed-finance) | Banking & financial verification |
+| [qwed-tax](https://github.com/QWED-AI/qwed-tax) | Tax calculation verification |
 | [qwed-ucp](https://github.com/QWED-AI/qwed-ucp) | E-commerce transaction verification |
 | [qwed-mcp](https://github.com/QWED-AI/qwed-mcp) | Claude Desktop integration |
 

@@ -6,6 +6,9 @@ from qwed_legal.guards.clause_guard import ClauseGuard
 from qwed_legal.guards.citation_guard import CitationGuard
 from qwed_legal.guards.jurisdiction_guard import JurisdictionGuard
 from qwed_legal.guards.statute_guard import StatuteOfLimitationsGuard
+from qwed_legal.guards.irac_guard import IRACGuard
+from qwed_legal.guards.fairness_guard import FairnessGuard
+from qwed_legal.guards.contradiction_guard import ContradictionGuard, Clause
 
 __all__ = [
     "DeadlineGuard",
@@ -14,5 +17,9 @@ __all__ = [
     "CitationGuard",
     "JurisdictionGuard",
     "StatuteOfLimitationsGuard",
+    "IRACGuard",
+    "FairnessGuard",
+    "ContradictionGuard",
+    "Clause",
 ]
 
