@@ -2,8 +2,11 @@
 QWED-Legal: Verification Guards for Legal Contracts
 
 Deterministic verification layer for AI-generated legal document analysis.
-Catches date calculation errors, contradictory clauses, and liability miscalculations.
+Catches date calculation errors, contradictory clauses, liability miscalculations,
+and ensures AI content provenance compliance.
 """
+
+from typing import Optional
 
 from qwed_legal.guards.deadline_guard import DeadlineGuard
 from qwed_legal.guards.liability_guard import LiabilityGuard
@@ -14,9 +17,10 @@ from qwed_legal.guards.statute_guard import StatuteOfLimitationsGuard
 from qwed_legal.guards.irac_guard import IRACGuard
 from qwed_legal.guards.fairness_guard import FairnessGuard
 from qwed_legal.guards.contradiction_guard import ContradictionGuard, Clause
+from qwed_legal.guards.provenance_guard import ProvenanceGuard, ProvenanceRecord
 from qwed_legal.rag.sac_processor import SACProcessor
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "DeadlineGuard",
     "LiabilityGuard",
@@ -28,6 +32,8 @@ __all__ = [
     "FairnessGuard",
     "ContradictionGuard",
     "Clause",
+    "ProvenanceGuard",
+    "ProvenanceRecord",
     "SACProcessor",
     "LegalGuard",
 ]
@@ -50,7 +56,7 @@ class LegalGuard:
         >>> result = guard.verify_deadline("2026-01-15", "30 business days", "2026-02-14")
     """
 
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None, provenance_config: Optional[dict] = None):
         self.deadline = DeadlineGuard()
         self.liability = LiabilityGuard()
         self.clause = ClauseGuard()
@@ -60,6 +66,12 @@ class LegalGuard:
         self.irac = IRACGuard()
         self.contradiction = ContradictionGuard()
         self.fairness = FairnessGuard(llm_client=llm_client)
+        prov_cfg = provenance_config or {}
+        self.provenance = ProvenanceGuard(
+            require_disclosure=prov_cfg.get("require_disclosure", True),
+            require_human_review=prov_cfg.get("require_human_review", False),
+            allowed_models=prov_cfg.get("allowed_models"),
+        )
 
     def verify_deadline(self, signing_date: str, term: str, claimed_deadline: str):
         """Verify a deadline calculation."""
@@ -108,4 +120,8 @@ class LegalGuard:
         Requires ``llm_client`` to be provided at init time.
         """
         return self.fairness.verify_decision_fairness(original_prompt, original_decision, protected_attribute_swap)
+
+    def verify_provenance(self, content: str, provenance: dict):
+        """Verify AI-generated content provenance and disclosure compliance."""
+        return self.provenance.verify_provenance(content, provenance)
 

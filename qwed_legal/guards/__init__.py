@@ -9,6 +9,7 @@ from qwed_legal.guards.statute_guard import StatuteOfLimitationsGuard
 from qwed_legal.guards.irac_guard import IRACGuard
 from qwed_legal.guards.fairness_guard import FairnessGuard
 from qwed_legal.guards.contradiction_guard import ContradictionGuard, Clause
+from qwed_legal.guards.provenance_guard import ProvenanceGuard, ProvenanceRecord
 
 __all__ = [
     "DeadlineGuard",
@@ -21,5 +22,7 @@ __all__ = [
     "FairnessGuard",
     "ContradictionGuard",
     "Clause",
+    "ProvenanceGuard",
+    "ProvenanceRecord",
 ]
 
