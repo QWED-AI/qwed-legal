@@ -53,7 +53,7 @@ class ProvenanceGuard:
     """
 
     # Minimum required disclosure keywords (case-insensitive)
-    DISCLOSURE_PATTERNS: List[str] = [
+    _DISCLOSURE_PATTERN_STRINGS = [
         r"ai[\-\s]generated",
         r"generated\s+by\s+(an?\s+)?ai",
         r"produced\s+(by|using)\s+(an?\s+)?(artificial\s+intelligence|ai|llm)",
@@ -61,6 +61,8 @@ class ProvenanceGuard:
         r"automated[\-\s]content",
         r"this\s+(document|content|output)\s+was\s+(generated|created|produced)\s+(by|using)",
     ]
+    # Pre-compiled patterns for performance
+    DISCLOSURE_PATTERNS = [re.compile(p, re.IGNORECASE) for p in _DISCLOSURE_PATTERN_STRINGS]
 
     REQUIRED_METADATA_FIELDS = {
         "content_hash",
@@ -251,9 +253,8 @@ class ProvenanceGuard:
         self, content: str,
         passed: List[str], failed: List[str],
     ) -> None:
-        content_lower = content.lower()
         for pattern in self.DISCLOSURE_PATTERNS:
-            if re.search(pattern, content_lower):
+            if pattern.search(content):
                 passed.append("disclosure_present")
                 return
         failed.append("disclosure_present")
@@ -263,6 +264,8 @@ class ProvenanceGuard:
         passed: List[str], failed: List[str],
     ) -> None:
         model_id = provenance.get("model_id", "")
+        if not model_id:
+            return  # Caught by metadata_completeness
         if model_id not in self.allowed_models:
             failed.append("model_allowed")
         else:
