@@ -2,7 +2,8 @@
 QWED-Legal: Verification Guards for Legal Contracts
 
 Deterministic verification layer for AI-generated legal document analysis.
-Catches date calculation errors, contradictory clauses, and liability miscalculations.
+Catches date calculation errors, contradictory clauses, liability miscalculations,
+and ensures AI content provenance compliance.
 """
 
 from qwed_legal.guards.deadline_guard import DeadlineGuard
@@ -14,9 +15,10 @@ from qwed_legal.guards.statute_guard import StatuteOfLimitationsGuard
 from qwed_legal.guards.irac_guard import IRACGuard
 from qwed_legal.guards.fairness_guard import FairnessGuard
 from qwed_legal.guards.contradiction_guard import ContradictionGuard, Clause
+from qwed_legal.guards.provenance_guard import ProvenanceGuard, ProvenanceRecord
 from qwed_legal.rag.sac_processor import SACProcessor
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "DeadlineGuard",
     "LiabilityGuard",
@@ -28,6 +30,8 @@ __all__ = [
     "FairnessGuard",
     "ContradictionGuard",
     "Clause",
+    "ProvenanceGuard",
+    "ProvenanceRecord",
     "SACProcessor",
     "LegalGuard",
 ]
@@ -60,6 +64,7 @@ class LegalGuard:
         self.irac = IRACGuard()
         self.contradiction = ContradictionGuard()
         self.fairness = FairnessGuard(llm_client=llm_client)
+        self.provenance = ProvenanceGuard()
 
     def verify_deadline(self, signing_date: str, term: str, claimed_deadline: str):
         """Verify a deadline calculation."""
@@ -108,4 +113,8 @@ class LegalGuard:
         Requires ``llm_client`` to be provided at init time.
         """
         return self.fairness.verify_decision_fairness(original_prompt, original_decision, protected_attribute_swap)
+
+    def verify_provenance(self, content: str, provenance: dict):
+        """Verify AI-generated content provenance and disclosure compliance."""
+        return self.provenance.verify_provenance(content, provenance)
 
