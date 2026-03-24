@@ -11,7 +11,7 @@ All checks are deterministic — no LLM calls required.
 import re
 import hashlib
 from typing import Dict, Any, List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
@@ -231,7 +231,7 @@ class ProvenanceGuard:
             return  # Caught by metadata_completeness
         try:
             parsed = datetime.fromisoformat(str(ts))
-            # Reject timestamps in the future (clock skew tolerance: 5 min)
+            # Reject timestamps in the future
             now = datetime.now(timezone.utc)
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
@@ -258,7 +258,7 @@ class ProvenanceGuard:
         passed: List[str], failed: List[str],
     ) -> None:
         model_id = provenance.get("model_id", "")
-        if self.allowed_models and model_id not in self.allowed_models:
+        if self.allowed_models is not None and model_id not in self.allowed_models:
             failed.append("model_allowed")
         else:
             passed.append("model_allowed")

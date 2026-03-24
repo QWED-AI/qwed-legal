@@ -151,6 +151,13 @@ class TestModelAllowlist:
         assert result["verified"] is True
         assert "model_allowed" in result["checks_passed"]
 
+    def test_empty_allowlist_denies_all(self):
+        """Empty list means deny-all, not allow-all."""
+        guard = ProvenanceGuard(allowed_models=[])
+        result = guard.verify_provenance(SAMPLE_CONTENT, _make_provenance())
+        assert result["verified"] is False
+        assert "model_allowed" in result["checks_failed"]
+
 
 # ── Human review ────────────────────────────────────────────
 

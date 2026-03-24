@@ -6,6 +6,8 @@ Catches date calculation errors, contradictory clauses, liability miscalculation
 and ensures AI content provenance compliance.
 """
 
+from typing import Optional, List
+
 from qwed_legal.guards.deadline_guard import DeadlineGuard
 from qwed_legal.guards.liability_guard import LiabilityGuard
 from qwed_legal.guards.clause_guard import ClauseGuard
@@ -54,7 +56,7 @@ class LegalGuard:
         >>> result = guard.verify_deadline("2026-01-15", "30 business days", "2026-02-14")
     """
 
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None, provenance_config: Optional[dict] = None):
         self.deadline = DeadlineGuard()
         self.liability = LiabilityGuard()
         self.clause = ClauseGuard()
@@ -64,7 +66,12 @@ class LegalGuard:
         self.irac = IRACGuard()
         self.contradiction = ContradictionGuard()
         self.fairness = FairnessGuard(llm_client=llm_client)
-        self.provenance = ProvenanceGuard()
+        prov_cfg = provenance_config or {}
+        self.provenance = ProvenanceGuard(
+            require_disclosure=prov_cfg.get("require_disclosure", True),
+            require_human_review=prov_cfg.get("require_human_review", False),
+            allowed_models=prov_cfg.get("allowed_models"),
+        )
 
     def verify_deadline(self, signing_date: str, term: str, claimed_deadline: str):
         """Verify a deadline calculation."""
