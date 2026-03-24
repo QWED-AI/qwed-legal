@@ -6,7 +6,7 @@ Catches date calculation errors, contradictory clauses, liability miscalculation
 and ensures AI content provenance compliance.
 """
 
-from typing import Optional, List
+from typing import Optional
 
 from qwed_legal.guards.deadline_guard import DeadlineGuard
 from qwed_legal.guards.liability_guard import LiabilityGuard

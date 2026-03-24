@@ -41,10 +41,13 @@ class ProvenanceGuard:
     Verifies AI-generated content carries proper provenance metadata
     and disclosure markers.
 
-    Three core checks:
+    Six checks (first three always run, last three are configurable):
     1. **Metadata Completeness** — required fields are present and valid
-    2. **Disclosure Compliance** — content includes an AI-generation disclosure
-    3. **Hash Integrity** — content hash matches the actual content
+    2. **Hash Integrity** — content hash matches the actual content
+    3. **Timestamp Validity** — ISO-8601 format, not in the future
+    4. **Disclosure Compliance** — content includes an AI-generation disclosure
+    5. **Model Allowlist** — model_id is in the approved list
+    6. **Human Review** — content has been reviewed by a human
 
     All checks are fully deterministic.
     """
@@ -75,7 +78,8 @@ class ProvenanceGuard:
         Args:
             require_disclosure: Require AI disclosure text in the content.
             require_human_review: Require human_reviewed=True in provenance.
-            allowed_models: Allowlist of model IDs. None = allow all.
+            allowed_models: Allowlist of model IDs. None = allow all;
+                            empty list = deny all.
         """
         self.require_disclosure = require_disclosure
         self.require_human_review = require_human_review
@@ -234,6 +238,7 @@ class ProvenanceGuard:
             # Reject timestamps in the future
             now = datetime.now(timezone.utc)
             if parsed.tzinfo is None:
+                # Assume naive timestamps are UTC
                 parsed = parsed.replace(tzinfo=timezone.utc)
             if parsed > now:
                 failed.append("timestamp_valid")
@@ -258,7 +263,7 @@ class ProvenanceGuard:
         passed: List[str], failed: List[str],
     ) -> None:
         model_id = provenance.get("model_id", "")
-        if self.allowed_models is not None and model_id not in self.allowed_models:
+        if model_id not in self.allowed_models:
             failed.append("model_allowed")
         else:
             passed.append("model_allowed")
