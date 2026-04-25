@@ -1,5 +1,7 @@
 """Tests for QWED-Legal guards."""
 
+from unittest.mock import patch
+
 import pytest
 from z3 import Int
 
@@ -136,6 +138,26 @@ class TestClauseGuard:
         # Should detect conflict between permission and prohibition
         assert result.consistent is False or len(result.conflicts) >= 0
 
+    def test_termination_conflict_detected_in_reverse_order(self):
+        """Reverse ordering should still detect the termination/minimum-term conflict."""
+        guard = ClauseGuard()
+        result = guard.check_consistency([
+            "Neither party may terminate before 90 days",
+            "Seller may terminate with 30 days notice",
+        ])
+        assert result.consistent is False
+        assert any("minimum term" in reason for _, _, reason in result.conflicts)
+
+    def test_exclusivity_conflict_for_same_party(self):
+        """Exclusive rights granted twice to the same modeled party should conflict."""
+        guard = ClauseGuard()
+        result = guard.check_consistency([
+            "Seller has exclusive distribution rights in Region A.",
+            "Seller has exclusive distribution rights in Region B.",
+        ])
+        assert result.consistent is False
+        assert any("exclusive rights" in reason for _, _, reason in result.conflicts)
+
     def test_verify_using_z3_rejects_raw_text_constraints(self):
         """Raw text constraints should fail closed instead of pretending to be proven."""
         guard = ClauseGuard()
@@ -143,6 +165,13 @@ class TestClauseGuard:
             "The agreement must last exactly 12 months.",
             "The agreement must last exactly 24 months.",
         ])
+        assert result.consistent is False
+        assert "UNVERIFIABLE" in result.message
+
+    def test_verify_using_z3_empty_constraints_fail_closed(self):
+        """Empty constraints must not be reported as verified."""
+        guard = ClauseGuard()
+        result = guard.verify_using_z3([])
         assert result.consistent is False
         assert "UNVERIFIABLE" in result.message
 
@@ -161,6 +190,24 @@ class TestClauseGuard:
         result = guard.verify_using_z3([months == 12, months == 24])
         assert result.consistent is False
         assert "unsatisfiable" in result.message.lower()
+
+    def test_verify_using_z3_handles_unknown_fail_closed(self):
+        """Z3 unknown must not default to consistent."""
+        guard = ClauseGuard()
+        months = Int("months")
+        with patch("qwed_legal.guards.clause_guard.Solver.check", return_value="unknown"):
+            result = guard.verify_using_z3([months >= 12])
+        assert result.consistent is False
+        assert "UNVERIFIABLE" in result.message
+
+    def test_verify_using_z3_handles_unexpected_solver_state_fail_closed(self):
+        """Unexpected solver states must also fail closed."""
+        guard = ClauseGuard()
+        months = Int("months")
+        with patch("qwed_legal.guards.clause_guard.Solver.check", return_value="mystery"):
+            result = guard.verify_using_z3([months >= 12])
+        assert result.consistent is False
+        assert "unsupported satisfiability state" in result.message.lower()
 
 
 class TestCitationGuard:
