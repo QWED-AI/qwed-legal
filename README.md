@@ -1,101 +1,129 @@
 <div align="center">
   <img src="assets/logo.png" alt="QWED Logo" width="80" height="80">
-  <h1>🏛️ QWED-Legal</h1>
-  <h3>Verification Guards for Legal Contracts</h3>
-  
-  > **Catch AI hallucinations before they become lawsuits.**
-  
+  <h1>QWED-Legal</h1>
+  <h3>Deterministic Verification Guards for Computational Legal Claims</h3>
+
+  > **Block unproven legal claims before they become liabilities.**
+
   <p>
-    <b>Don't trust AI with legal analysis. Verify it.</b><br>
-    <i>Deadline math • Clause contradictions • Liability calculations</i>
+    <b>QWED-Legal verifies only what can be deterministically proven.</b><br>
+    <i>Dates, amounts, structured constraints</i>
+  </p>
+
+  <p>
+    QWED-Legal verifies ONLY what can be deterministically proven (dates, amounts, constraints).<br>
+    Interpretive legal reasoning is NOT automatically trusted.
   </p>
 
   [![Verified by QWED](https://img.shields.io/badge/Verified_by-QWED-00C853?style=flat&logo=checkmarx)](https://github.com/QWED-AI/qwed-legal)
-  [![100% Deterministic](https://img.shields.io/badge/100%25_Deterministic-QWED-0066CC?style=flat&logo=checkmarx)](https://docs.qwedai.com/docs/engines/overview#deterministic-first-philosophy)
+  [![Deterministic First](https://img.shields.io/badge/Deterministic-First-0066CC?style=flat&logo=checkmarx)](https://docs.qwedai.com/docs/engines/overview#deterministic-first-philosophy)
   [![GitHub Developer Program](https://img.shields.io/badge/GitHub_Developer_Program-Member-4c1?style=flat&logo=github)](https://github.com/QWED-AI)
   [![PyPI](https://img.shields.io/pypi/v/qwed-legal?color=blue&cacheSeconds=60)](https://pypi.org/project/qwed-legal/)
   [![npm](https://img.shields.io/npm/v/@qwed-ai/legal?color=red)](https://www.npmjs.com/package/@qwed-ai/legal)
   [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
   [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
   [![Tests](https://github.com/QWED-AI/qwed-legal/actions/workflows/ci.yml/badge.svg)](https://github.com/QWED-AI/qwed-legal/actions)
-
 </div>
 
 ---
 
-## 🚨 The Problem
+## The Problem
 
-**Lawyers are using AI to review contracts. AI makes mistakes.**
+LLMs can produce legal-sounding output that is wrong, incomplete, or unprovable.
 
-| Case | What Happened | Impact |
-|------|--------------|--------|
-| **Mata v. Avianca (2023)** | ChatGPT cited 6 fake legal cases | $5,000 fine, sanctions |
-| **Contract Review Errors** | LLMs miss contradictory clauses | Disputes, litigation |
-| **Date Calculation Bugs** | "30 business days" miscalculated | Missed deadlines, defaults |
+| Failure mode | Example | Risk |
+|--------------|---------|------|
+| Fabricated authority | AI cites a nonexistent or malformed legal source | Sanctions, bad filings, bad advice |
+| Deadline mistakes | "30 business days" is miscomputed | Missed obligations, defaults |
+| Clause inconsistency | Two provisions cannot both be true | Disputes, unenforceable terms |
+| False certainty | Model states a legal conclusion without proof | Liability, audit failure |
 
----
-
-## 💡 What QWED-Legal Is (and Isn't)
-
-### ✅ QWED-Legal IS:
-- **Verification middleware** that checks LLM outputs for correctness
-- **Deterministic** — uses symbolic math (SymPy) and formal proofs (Z3 SMT Solver)
-- **Open source** — integrate into any workflow, no vendor lock-in
-- **A safety layer** — catches mistakes before they cause real harm
-
-### ❌ QWED-Legal is NOT:
-- ~~A document drafting tool~~ — use Harvey, ChatGPT, or Claude for that
-- ~~A contract review platform~~ — use LegalFly or Luminance for that  
-- ~~A legal research assistant~~ — use Westlaw or LexisNexis for that
-- ~~A replacement for lawyers~~ — we just help them catch AI mistakes
-
-> **Think of QWED-Legal as the spell-checker for AI-generated legal claims.**
-> 
-> Harvey drafts. LegalFly reviews. Luminance classifies. **QWED verifies.**
+QWED-Legal is designed to sit between untrusted model output and downstream action.
 
 ---
 
-## 🆚 How We're Different
+## What QWED-Legal Is
 
-| Aspect | Harvey / LegalFly / Luminance | QWED-Legal |
-|--------|-------------------------------|------------|
-| **Approach** | Probabilistic LLM generation | Deterministic symbolic verification |
-| **Output** | "The deadline is likely March 15th" | `VERIFIED: March 15, 2024 ✓` (with proof) |
-| **Accuracy** | ~95% (hallucination risk) | 100% mathematical certainty |
-| **Tech** | GPT-4, Claude, custom LLMs | SymPy + Z3 SMT Solver |
-| **Model** | Closed SaaS platform | Open-source SDK |
-| **Pricing** | $1000s/month enterprise | Free (Apache 2.0 License) |
+QWED-Legal is a verification layer for **deterministic, computational legal claims**.
 
-### Use Together (Best Practice)
+It is built to:
+
+- verify only deterministic, provable components such as dates, calculations, and structured constraints
+- reject or mark unverified claims that cannot be safely proven
+- operate as a fail-closed middleware layer in legal AI workflows
+- integrate into existing LLM, review, or contract-analysis pipelines
+
+## Verification Boundaries
+
+QWED-Legal operates under strict limits:
+
+- only deterministic claims can be verified
+- ambiguous or interpretive outputs are rejected or marked unverified
+- legal reasoning is **not** assumed correct without proof
+- if something cannot be proven, it must not pass
+
+This repository should be understood as a **deterministic rejection layer**, not a general-purpose legal reasoning engine.
+
+## ❌ What QWED-Legal Is Not
+
+QWED-Legal is **not**:
+
+- a legal reasoning engine
+- a source of legal truth
+- a replacement for lawyers
+- a contract drafting tool
+- a legal research assistant
+- a guarantee that every legal output can be verified
+- a system that can prove subjective, ambiguous, or interpretive legal conclusions
+
+QWED-Legal is a rejection layer. It blocks what cannot be proven.
+
+---
+
+## Positioning
+
+QWED-Legal is not another end-to-end legal AI assistant.
+
+It does **not** compete by generating more legal text. It is intended to check narrow classes of legal claims that can be computed or constrained deterministically.
+
+| Aspect | Generative legal tools | QWED-Legal |
+|--------|-------------------------|------------|
+| Primary role | Draft, summarize, classify, or answer | Verify narrow deterministic claims |
+| Approach | Probabilistic generation | Deterministic checks where possible |
+| Scope | Broad legal text tasks | Limited (computational checks only) |
+| Output style | Plausible legal answer | Verified / blocked / unverified result |
+| Certainty | Model confidence | 100% certainty only for supported deterministic checks |
+| Failure mode | Can hallucinate or overstate | Should fail closed when proof is unavailable |
+| Deployment | Often SaaS or model-centric | SDK / middleware / local verification layer |
+
+### Recommended usage
+
+```text
+LLM or legal workflow -> QWED-Legal -> accept only what survives verification
 ```
-┌──────────────┐     ┌─────────────┐     ┌──────────────┐
-│   Harvey AI  │ ──► │ QWED-Legal  │ ──► │   Verified   │
-│  (generates) │     │  (verifies) │     │   Output     │
-└──────────────┘     └─────────────┘     └──────────────┘
-```
 
 ---
 
-## ⚡ Quick Start
+## Quick Start
 
-### 📦 Installation
+### Installation
 
 | Language | Package | Command |
 |----------|---------|---------|
-| **Python** | `qwed-legal` | `pip install qwed-legal` |
-| **TypeScript/JS** | `@qwed-ai/legal` | `npm install @qwed-ai/legal` |
+| Python | `qwed-legal` | `pip install qwed-legal` |
+| TypeScript / JS | `@qwed-ai/legal` | `npm install @qwed-ai/legal` |
 
-**Python:**
 ```bash
 pip install qwed-legal
 ```
 
-**TypeScript/JavaScript:**
 ```bash
 npm install @qwed-ai/legal
 ```
 
-### Verify a Deadline Calculation
+### Verify a structured deadline claim
+
+Use deterministic checks only with structured, unambiguous inputs.
 
 ```python
 from qwed_legal import DeadlineGuard
@@ -104,16 +132,15 @@ guard = DeadlineGuard()
 result = guard.verify(
     signing_date="2026-01-15",
     term="30 business days",
-    claimed_deadline="2026-02-14"  # LLM claimed this
+    claimed_deadline="2026-02-14"
 )
 
-print(result.verified)   # False!
-print(result.computed_deadline)  # 2026-02-27 (correct)
+print(result.verified)
+print(result.computed_deadline)
 print(result.message)
-# ❌ ERROR: Deadline mismatch. Expected 2026-02-27, but LLM claimed 2026-02-14.
 ```
 
-### Verify a Liability Cap
+### Verify a liability cap calculation
 
 ```python
 from qwed_legal import LiabilityGuard
@@ -122,15 +149,15 @@ guard = LiabilityGuard()
 result = guard.verify_cap(
     contract_value=5_000_000,
     cap_percentage=200,
-    claimed_cap=15_000_000  # LLM said 15M
+    claimed_cap=15_000_000
 )
 
-print(result.verified)  # False!
-print(result.computed_cap)  # 10,000,000 (200% of 5M)
-# ❌ ERROR: 200% of $5M = $10M, not $15M
+print(result.verified)
+print(result.computed_cap)
+print(result.message)
 ```
 
-### Detect Contradictory Clauses (Z3 Logic)
+### Check a structured contradiction scenario
 
 ```python
 from qwed_legal import ContradictionGuard, Clause
@@ -138,31 +165,33 @@ from qwed_legal import ContradictionGuard, Clause
 guard = ContradictionGuard()
 result = guard.verify_consistency([
     Clause(id="1", text="Liability capped at $10k", category="LIABILITY", value=10000),
-    Clause(id="2", text="Minimum penalty is $50k", category="LIABILITY", value=50000)
+    Clause(id="2", text="Minimum penalty is $50k", category="LIABILITY", value=50000),
 ])
 
-print(result["verified"])  # False!
-print(result["message"])   
-# ❌ LOGIC CONTRADICTION: Clauses are mutually exclusive. (50k > 10k Cap)
+print(result["verified"])
+print(result["message"])
 ```
 
 ---
 
-## 🛡️ The Nine Guards
+## Guard Coverage
 
-| Guard | What It Verifies |
-|-------|------------------|
-| **DeadlineGuard** | Date calculations, business days, leap years |
-| **LiabilityGuard** | Cap percentages, tiered liability, indemnity limits |
-| **ClauseGuard** | Clause contradictions, termination conflicts |
-| **CitationGuard** | Legal citations (Bluebook format, case names, reporters) |
-| **JurisdictionGuard** | Choice of law, forum selection, cross-border conflicts |
-| **StatuteOfLimitationsGuard** | Claim periods by jurisdiction and claim type |
-| **IRACGuard** | Legal reasoning structure (Issue→Rule→Application→Conclusion) |
-| **ContradictionGuard** | Z3-powered logical contradiction detection between clauses |
-| **FairnessGuard** | Counterfactual bias testing (Requires `llm_client`) |
+⚠️ Not all guards provide full formal verification.  
+Some operate on partial rules or structured validation and should **not** be treated as complete legal proof.
 
-### Verify Legal Citations
+| Guard | Status | What it checks |
+|-------|--------|----------------|
+| `DeadlineGuard` | `DETERMINISTIC` | Date arithmetic, business-day calculations, holiday-aware computations for supported inputs |
+| `LiabilityGuard` | `DETERMINISTIC` | Cap calculations, tiered amount computations for supported numeric inputs |
+| `ClauseGuard` | `PARTIAL / HEURISTIC` | Limited clause consistency and contradiction checks |
+| `CitationGuard` | `PARTIAL / HEURISTIC` | Citation shape / format validation, not authoritative existence proof |
+| `JurisdictionGuard` | `PARTIAL / HEURISTIC` | Structured checks around governing law / forum combinations |
+| `StatuteOfLimitationsGuard` | `PARTIAL / HEURISTIC` | Limitation-period calculations for supported jurisdictions and claim types |
+| `IRACGuard` | `PARTIAL / HEURISTIC` | IRAC structure and consistency checks, not proof of legal reasoning |
+| `ContradictionGuard` | `PARTIAL / HEURISTIC` | Structured contradiction checks for a limited set of modeled clause categories |
+| `FairnessGuard` | `PARTIAL / HEURISTIC` | Counterfactual consistency checks, not full fairness proof |
+
+### Example: citation format check
 
 ```python
 from qwed_legal import CitationGuard
@@ -170,30 +199,37 @@ from qwed_legal import CitationGuard
 guard = CitationGuard()
 result = guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
 
-print(result.valid)  # True
+print(result.valid)
 print(result.parsed_components)
-# {'plaintiff': 'Brown', 'defendant': 'Board of Education', 'volume': 347, 'reporter': 'U.S.', 'page': 483, 'year': 1954}
 ```
 
-## 🛡️ The QWED Legal Triangle
+Important: a valid format result does **not** prove that a cited authority exists or is controlling. It only means the citation matched a supported structural pattern.
 
-Based on the latest research in Legal AI Evaluation (Hu et al., 2025; Yu et al., 2025), QWED ensures coverage across the three critical dimensions of legal trust:
+---
 
-1.  **Output Accuracy (The "What"):**
-    *   *Verified by:* `DeadlineGuard`, `LiabilityGuard`.
-    *   *Role:* Ensures specific facts (dates, amounts) are mathematically correct.
+## QWED Legal Triangle
 
-2.  **Reasoning Quality (The "How"):**
-    *   *Verified by:* `IRACGuard` [NEW].
-    *   *Role:* Enforces "Reasoned Elaboration" [Source: MSLR Benchmark]. Ensures the AI doesn't hallucinate a correct answer via incorrect logic.
+QWED-Legal is safest when used across three separate trust questions:
 
-3.  **Trustworthiness (The "Source"):**
-    *   *Verified by:* `SACChunker` (in Core).
-    *   *Role:* Prevents "Retrieval Mismatch" where AI cites the wrong contract [Source: Reliable Retrieval in RAG].
+1. **Output Accuracy (the "what")**
+   - Typical guards: `DeadlineGuard`, `LiabilityGuard`
+   - Role: verify computational claims such as dates, percentages, and amounts
 
-## 📦 Components
+2. **Reasoning Structure (the "how")**
+   - Typical guards: `IRACGuard`, `ClauseGuard`, `ContradictionGuard`
+   - Role: apply structure and consistency checks to reasoning, but full logical proof is **not** guaranteed
 
-### Verify Jurisdiction (New in v0.2.0!)
+3. **Source / Retrieval Integrity (the "where from")**
+   - Typical component: `SACProcessor`
+   - Role: improve traceability and chunking quality for legal retrieval workflows
+
+QWED-Legal does **not** collapse these into one claim of "full legal verification."
+
+---
+
+## Components
+
+### Jurisdiction checks
 
 ```python
 from qwed_legal import JurisdictionGuard
@@ -202,13 +238,14 @@ guard = JurisdictionGuard()
 result = guard.verify_choice_of_law(
     parties_countries=["US", "UK"],
     governing_law="Delaware",
-    forum="London"
+    forum="London",
 )
 
-print(result.conflicts)  # ['Governing law Delaware (US state) but forum London is non-US...']
+print(result.conflicts)
+print(result.warnings)
 ```
 
-### Check Statute of Limitations (New in v0.2.0!)
+### Statute of limitations checks
 
 ```python
 from qwed_legal import StatuteOfLimitationsGuard
@@ -218,66 +255,66 @@ result = guard.verify(
     claim_type="breach_of_contract",
     jurisdiction="California",
     incident_date="2020-01-15",
-    filing_date="2026-06-01"
+    filing_date="2026-06-01",
 )
 
-print(result.verified)  # False - 4 year limit exceeded!
-print(result.message)   # ❌ EXPIRED: Statute of limitations expired...
+print(result.verified)
+print(result.message)
 ```
+
+These results should be treated as valid only for supported, unambiguous, and modeled inputs.
 
 ---
 
-## 📦 TypeScript/JavaScript (npm)
+## TypeScript / JavaScript
 
 ```bash
 npm install @qwed-ai/legal
 ```
 
-### Available Verifiers
+### Available verifiers
 
 | Verifier | Description |
 |----------|-------------|
-| `DeadlineVerifier` | Verify date calculations |
-| `LiabilityVerifier` | Verify liability caps |
-| `ClauseVerifier` | Detect contradictions |
-| `CitationVerifier` | Validate legal citations |
-| `JurisdictionVerifier` | Check choice of law |
-| `StatuteVerifier` | Check limitation periods |
-| `LegalGuard` | All-in-one wrapper |
+| `DeadlineVerifier` | Verify structured date calculations |
+| `LiabilityVerifier` | Verify liability cap arithmetic |
+| `ClauseVerifier` | Run limited clause consistency checks |
+| `CitationVerifier` | Check supported citation formats |
+| `JurisdictionVerifier` | Check structured governing-law / forum combinations |
+| `StatuteVerifier` | Check supported limitation periods |
+| `LegalGuard` | Convenience wrapper |
 
-### TypeScript Examples
+### TypeScript example
 
 ```typescript
-import { 
-  DeadlineVerifier, 
-  JurisdictionVerifier, 
+import {
+  DeadlineVerifier,
+  JurisdictionVerifier,
   StatuteVerifier,
-  LegalGuard 
-} from '@qwed-ai/legal';
+  LegalGuard,
+} from "@qwed-ai/legal";
 
-// Verify deadline
 const deadline = new DeadlineVerifier();
-const result = await deadline.verify("2026-01-15", "30 days", "2026-02-14");
-console.log(result.verified);  // true
+const deadlineResult = await deadline.verify("2026-01-15", "30 days", "2026-02-14");
+console.log(deadlineResult.verified);
 
-// Check jurisdiction
 const jurisdiction = new JurisdictionVerifier();
 const jResult = await jurisdiction.verifyChoiceOfLaw(
-  ["US", "UK"], "Delaware", "London"
+  ["US", "UK"],
+  "Delaware",
+  "London",
 );
-console.log(jResult.conflicts);  // Array of conflicts
+console.log(jResult.conflicts);
 
-// All-in-one guard
 const guard = new LegalGuard();
-const deadline2 = await guard.deadline.verify(...);
 const statute = await guard.statute.verify(...);
 ```
 
 ---
 
-## 🌍 Supported Jurisdictions
+## Supported Jurisdictions
 
-### Statute of Limitations
+### Statute of limitations
 
 | Jurisdiction | Breach of Contract | Negligence | Fraud |
 |--------------|-------------------|------------|-------|
@@ -285,310 +322,278 @@ const statute = await guard.statute.verify(...);
 | New York | 6 years | 3 years | 6 years |
 | Texas | 4 years | 2 years | 4 years |
 | Delaware | 3 years | 2 years | 3 years |
-| UK/England | 6 years | 6 years | 6 years |
+| UK / England | 6 years | 6 years | 6 years |
 | Germany | 3 years | 3 years | 10 years |
 | France | 5 years | 5 years | 5 years |
 | Australia | 6 years | 6 years | 6 years |
 | India | 3 years | 3 years | 3 years |
 
-### DeadlineGuard Holiday Support
+### `DeadlineGuard` holiday support
 
-| Region | Countries/States |
-|--------|-----------------|
-| **United States** | All 50 states + DC |
-| **European Union** | DE, FR, IT, ES, NL, BE, AT, PL |
-| **Commonwealth** | UK, AU (all states), CA |
-| **Asia** | IN (all states), SG, HK |
+| Region | Countries / States |
+|--------|--------------------|
+| United States | All 50 states + DC |
+| European Union | DE, FR, IT, ES, NL, BE, AT, PL |
+| Commonwealth | UK, AU (all states), CA |
+| Asia | IN (all states), SG, HK |
 
-
----
-
-## 📊 Audit Log: Real Hallucinations Caught
-
-| Contract Input | LLM Claim | QWED Verdict |
-|----------------|-----------|--------------|
-| "Net 30 Business Days from Dec 20" | Jan 19 | 🛑 **BLOCKED** (Actual: Feb 2, 2026) |
-| "Liability Cap: 2x Fees ($50k)" | $200,000 | 🛑 **BLOCKED** (Actual: $100,000) |
-| "Seller may terminate with 30 days notice" + "Neither party may terminate before 90 days" | "Clauses are consistent" | 🛑 **BLOCKED** (Conflict detected) |
-| "Smith v. Jones, 999 FAKE 123" | Valid citation | 🛑 **BLOCKED** (Unknown reporter) |
+Support coverage does not imply that every legal deadline term is verifiable. Inputs still need to be structured and deterministic.
 
 ---
 
-## 🏦 All-in-One Guard
+## Examples of Claims QWED-Legal Can Reject
+
+These are examples of supported checks catching unsupported claims. They are **not** proof that every legal hallucination is detectable.
+
+| Input | Claimed result | Example outcome |
+|------|----------------|-----------------|
+| "Net 30 business days from Dec 20" | Wrong computed date | Blocked by `DeadlineGuard` |
+| "Liability cap: 2x fees" | Wrong cap arithmetic | Blocked by `LiabilityGuard` |
+| Structured liability conflict | "Clauses are consistent" | Blocked by `ContradictionGuard` |
+| Unsupported citation reporter | "Valid citation" | Blocked by `CitationGuard` format checks |
+
+---
+
+## All-in-One Guard
 
 ```python
 from qwed_legal import LegalGuard
 
 guard = LegalGuard()
 
-# All verification methods in one object
 guard.verify_deadline(...)
 guard.verify_liability_cap(...)
 guard.check_clause_consistency(...)
 ```
 
----
-
-## 🌍 Jurisdiction Support
-
-DeadlineGuard supports jurisdiction-specific holidays:
-
-```python
-from qwed_legal import DeadlineGuard
-
-# US holidays (default)
-us_guard = DeadlineGuard(country="US")
-
-# UK holidays
-uk_guard = DeadlineGuard(country="GB")
-
-# California-specific holidays
-ca_guard = DeadlineGuard(country="US", state="CA")
-```
+This wrapper is for convenience. It does not change the proof boundaries of the underlying guards.
 
 ---
 
-## 🔒 Security & Privacy
+## Security & Privacy
 
-> **Your data never leaves your machine.**
+> Your data does not need to leave your machine for deterministic checks.
 
-| Concern | QWED-Legal Approach |
+| Concern | QWED-Legal approach |
 |---------|---------------------|
-| **Data Transmission** | ❌ No API calls, no cloud processing (Except `FairnessGuard`, which optionally uses an LLM client) |
-| **Storage** | ❌ Nothing stored, pure computation |
-| **Dependencies** | ✅ Local-only (SymPy, Z3, holidays), external LLM required only for `FairnessGuard` counterfactuals |
-| **Audit Trail** | ✅ All verification results are deterministic and reproducible |
+| Data transmission | No cloud calls for local deterministic guards. `FairnessGuard` is the main exception and depends on an external client you provide. |
+| Storage | No required persistent storage for core verification flows |
+| Dependencies | Local math / logic libraries plus optional external LLM integration for fairness workflows |
+| Auditability | Deterministic checks are reproducible for the same supported inputs |
 
-**Perfect for**:
-- Law firms with strict confidentiality requirements
-- Contracts containing trade secrets
-- GDPR/HIPAA-sensitive documents
-- Air-gapped environments
-
-> 📖 **See [Determinism Guarantee](https://docs.qwedai.com/docs/engines/overview#deterministic-first-philosophy)** for how QWED ensures 100% reproducible verification.
+Verification does **not** imply correctness of legal interpretation. It only implies correctness of the specific properties that were checked.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph "Your LLM Stack"
-        A[OpenAI / Claude / Local LLM]
+    subgraph "Untrusted Input"
+        A["LLM / workflow output"]
     end
-    
-    subgraph "QWED-Legal Guards"
-        B[DeadlineGuard]
-        C[LiabilityGuard]
-        D[ClauseGuard]
-        E[CitationGuard]
-        F[JurisdictionGuard]
-        G[StatuteGuard]
-        L[FairnessGuard]
+
+    subgraph "QWED-Legal"
+        B["DeadlineGuard"]
+        C["LiabilityGuard"]
+        D["ClauseGuard"]
+        E["CitationGuard"]
+        F["JurisdictionGuard"]
+        G["StatuteOfLimitationsGuard"]
+        H["ContradictionGuard"]
+        I["IRACGuard"]
+        J["FairnessGuard"]
     end
-    
-    subgraph "Verification Engines"
-        H[SymPy<br/>Symbolic Math]
-        I[Z3 SMT Solver<br/>Formal Proofs]
-        J[Rule Engine<br/>Jurisdiction DB]
-        M[External LLM<br/>Counterfactual]
+
+    subgraph "Engines"
+        K["Arithmetic / date logic"]
+        L["Constraint solver"]
+        M["Rule tables"]
+        N["Optional external LLM"]
     end
-    
-    A --> |"LLM claims deadline is Feb 14"| B
-    B --> H
-    H --> |"VERIFIED ✓ or BLOCKED ✗"| K[Certified Output]
-    
-    A --> C & D & E & F & G & L
-    C & D --> H
-    E --> J
-    F & G --> I & J
-    L --> M
+
+    A --> B --> K
+    A --> C --> K
+    A --> D --> L
+    A --> E --> M
+    A --> F --> M
+    A --> G --> M
+    A --> H --> L
+    A --> I --> M
+    A --> J --> N
 ```
 
-**Key**: LLM output → QWED Guard → Symbolic Engine → Verified/Blocked
+LLM output is treated as **untrusted input**.  
+QWED does not assume correctness. It requires proof for the properties it is able to verify.
 
 ---
 
-## 🔌 LLM Integration Examples
+## Integration Examples
 
 ### With OpenAI
 
 ```python
 from openai import OpenAI
-from qwed_legal import DeadlineGuard, LiabilityGuard
+from qwed_legal import DeadlineGuard
 
 client = OpenAI()
 guard = DeadlineGuard()
 
-def verified_legal_response(prompt: str) -> dict:
-    # Step 1: Get LLM response
+def verified_deadline_response(prompt: str) -> dict:
     response = client.chat.completions.create(
         model="gpt-4",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
     )
     llm_answer = response.choices[0].message.content
-    
-    # Step 2: Extract and verify claims
-    # (In production, parse the LLM response for dates/amounts)
+
     verification = guard.verify(
         signing_date="2026-01-15",
         term="30 business days",
-        claimed_deadline=llm_answer  # e.g., "2026-02-14"
+        claimed_deadline=llm_answer,
     )
-    
-    # Step 3: Return verified or blocked
+
     return {
         "llm_response": llm_answer,
         "verified": verification.verified,
-        "qwed_message": verification.message
+        "verification_message": verification.message,
     }
 ```
 
 ### With LangChain
 
 ```python
-from langchain.tools import Tool
+from langchain.tools import StructuredTool
+from pydantic import BaseModel, Field
 from qwed_legal import LegalGuard
 
 guard = LegalGuard()
 
-qwed_deadline_tool = Tool(
+class DeadlineInput(BaseModel):
+    signing_date: str = Field(..., description="Contract signing date")
+    term: str = Field(..., description="Structured deadline term")
+    claimed_deadline: str = Field(..., description="Claimed deadline to verify")
+
+class LiabilityInput(BaseModel):
+    contract_value: float = Field(..., description="Base contract value")
+    cap_percentage: float = Field(..., description="Liability cap percentage")
+    claimed_cap: float = Field(..., description="Claimed cap amount")
+
+qwed_deadline_tool = StructuredTool.from_function(
     name="verify_deadline",
-    description="Verify a deadline calculation is correct",
-    func=lambda x: guard.verify_deadline(**x)
+    description="Verify a structured deadline calculation",
+    func=guard.verify_deadline,
+    args_schema=DeadlineInput,
 )
 
-qwed_liability_tool = Tool(
+qwed_liability_tool = StructuredTool.from_function(
     name="verify_liability",
     description="Verify a liability cap calculation",
-    func=lambda x: guard.verify_liability_cap(**x)
+    func=guard.verify_liability_cap,
+    args_schema=LiabilityInput,
 )
 
-# Add to your LangChain agent
 tools = [qwed_deadline_tool, qwed_liability_tool]
-```
-
-### As a CI/CD Check
-
-```yaml
-# .github/workflows/contract-verify.yml
-name: Verify Contract Claims
-on: [push]
-
-jobs:
-  verify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: QWED-AI/qwed-legal@v1
-        with:
-          contracts-path: './contracts/'
-          fail-on-unverified: true
 ```
 
 ---
 
-## ❓ FAQ
+## FAQ
 
 <details>
 <summary><b>Is QWED-Legal free?</b></summary>
 
-Yes! QWED-Legal is open source under the Apache 2.0 license. Use it in commercial projects, modify it, distribute it - no restrictions.
+Yes. QWED-Legal is open source under the Apache 2.0 license.
 </details>
 
 <details>
-<summary><b>Does it call any external APIs?</b></summary>
+<summary><b>Does it call external APIs?</b></summary>
 
-Mostly no. All guards except `FairnessGuard` run entirely locally using SymPy and Z3 — no data leaves your machine. `FairnessGuard` optionally calls an external LLM client you supply for counterfactual evaluation; if no client is provided, it raises a `ValueError` and no external call is made.
+Core deterministic guards do not require external APIs. `FairnessGuard` is the main exception and depends on an external LLM client you supply.
 </details>
 
 <details>
 <summary><b>How accurate is it?</b></summary>
 
-100% for supported verification types. Unlike LLMs that give probabilistic answers, QWED uses symbolic mathematics. `2 + 2 = 4` is deterministically true, and so are our deadline calculations.
+100% accurate for supported deterministic checks such as math and date computations.
+
+For interpretive legal reasoning, QWED-Legal may only partially validate structure or consistency and should fail closed when proof is not possible.
+</details>
+
+<details>
+<summary><b>Can QWED verify legal reasoning?</b></summary>
+
+No. Legal reasoning often involves ambiguity, interpretation, and context that cannot be formally proven. QWED-Legal can only verify specific, structured aspects of such reasoning.
 </details>
 
 <details>
 <summary><b>Can it replace my legal AI tool?</b></summary>
 
-No - and that's by design. QWED-Legal is a **verification layer**, not a replacement. Use Harvey/ChatGPT/Claude to draft, use QWED to verify their output.
+No. It is a verification layer, not a drafting or reasoning engine.
 </details>
 
 <details>
 <summary><b>What happens when verification fails?</b></summary>
 
-You get a detailed result showing:
-- ❌ What the LLM claimed
-- ✅ What the correct answer is
-- 📝 Why they differ (e.g., "Feb 17 is a holiday")
+The claim should be blocked, rejected, or surfaced as unverified. The goal is to prevent unproven legal claims from quietly passing downstream.
 </details>
 
 <details>
-<summary><b>How fast is verification?</b></summary>
+<summary><b>What happens when verification is not possible?</b></summary>
 
-Typically <10ms per verification. The symbolic math engine is highly optimized.
+The correct outcome is not "best guess." The correct outcome is to fail closed, reject the claim, or mark it unverified.
 </details>
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
-### ✅ Released (v0.3.0)
-- [x] DeadlineGuard with business day calculations
-- [x] LiabilityGuard for cap verification
-- [x] ClauseGuard for contradiction detection
-- [x] **IRACGuard** — Ensures legal reasoning follows Issue-Rule-Application-Conclusion structure
-- [x] **ContradictionGuard** — Z3-powered logical contradiction detection between clauses
-- [x] **FairnessGuard** — Counterfactual bias testing for judicial fairness
-- [x] **CitationGuard** — Checks for hallucinated case citations (Bluebook format)
-- [x] **SACProcessor** — Summary-Augmented Chunking for DRM prevention in legal RAG
+Focus: expanding deterministic verification coverage, not heuristic reasoning.
 
-## 🌍 Global Jurisdiction Support (v0.2.0)
-QWED-Legal now supports cross-border verification:
-*   **JurisdictionGuard:** Detects conflicts between Governing Law and Forum Selection (e.g., Civil vs. Common Law mismatches).
-*   **StatuteOfLimitationsGuard:** Deterministically calculates filing deadlines for CA, NY, TX, UK, and more.
-*   **Attestation:** Every verification can be cryptographically signed (JWT) to provide an audit trail of safety checks.
+### Current coverage
 
-- [x] JurisdictionGuard for choice of law verification
-- [x] StatuteOfLimitationsGuard for claim periods
-- [x] TypeScript/npm SDK (@qwed-ai/legal)
+- Deadline calculations
+- Liability computations
+- Structured contradiction checks
+- Citation format checks
+- Jurisdiction / statute support for modeled inputs
+- TypeScript / npm SDK
 
-### 🚧 In Progress
-- [ ] IPClauseGuard - Intellectual property ownership verification
-- [ ] IndemnityGuard - Indemnification scope analysis
-- [ ] More jurisdictions (Canada, Latin America, MENA)
+### In progress
 
-### 🔮 Planned
-- [ ] ForceMAJEureGuard - Force majeure clause completeness
-- [ ] NonCompeteGuard - Non-compete enforceability rules
-- [ ] Full contract logic verification (Z3 first-order logic)
-- [ ] VS Code extension for real-time verification
-- [ ] LangChain/LlamaIndex native integration
+- IP clause verification
+- Indemnity verification
+- More supported jurisdictions
+
+### Planned
+
+- Force majeure completeness checks
+- Non-compete rule coverage
+- More deterministic contract logic coverage
+- IDE and workflow integrations
 
 ---
 
-## 🔗 Related QWED Packages
+## Related QWED Packages
 
 | Package | Purpose |
 |---------|---------|
 | [qwed-verification](https://github.com/QWED-AI/qwed-verification) | Core verification engine |
-| [qwed-finance](https://github.com/QWED-AI/qwed-finance) | Banking & financial verification |
-| [qwed-tax](https://github.com/QWED-AI/qwed-tax) | Tax calculation verification |
-| [qwed-ucp](https://github.com/QWED-AI/qwed-ucp) | E-commerce transaction verification |
-| [qwed-mcp](https://github.com/QWED-AI/qwed-mcp) | Claude Desktop integration |
+| [qwed-finance](https://github.com/QWED-AI/qwed-finance) | Banking and financial verification |
+| [qwed-tax](https://github.com/QWED-AI/qwed-tax) | Tax verification |
+| [qwed-ucp](https://github.com/QWED-AI/qwed-ucp) | Commerce / transaction verification |
+| [qwed-mcp](https://github.com/QWED-AI/qwed-mcp) | Desktop / workflow integration |
 
 ---
 
-## 📄 License
+## License
 
 Apache 2.0 - See [LICENSE](LICENSE)
 
 ---
 
 <div align="center">
-  <b>⭐ Star us if you believe AI needs verification in legal domains</b>
+  <b>Star the repo if you believe legal AI output should be rejected unless it can be proven.</b>
   <br><br>
-  <i>"In law, precision isn't optional. QWED makes it verifiable."</i>
-  <br><br>
-  <a href="https://snyk.io/test/github/QWED-AI/qwed-legal"><img src="https://snyk.io/test/github/QWED-AI/qwed-legal/badge.svg" alt="Known Vulnerabilities" /></a>
+  <i>"In law, unproven output should not pass."</i>
 </div>
+
