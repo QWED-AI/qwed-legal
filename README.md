@@ -399,7 +399,7 @@ flowchart LR
         D["ClauseGuard"]
         E["CitationGuard"]
         F["JurisdictionGuard"]
-        G["StatuteGuard"]
+        G["StatuteOfLimitationsGuard"]
         H["ContradictionGuard"]
         I["IRACGuard"]
         J["FairnessGuard"]
@@ -462,21 +462,34 @@ def verified_deadline_response(prompt: str) -> dict:
 ### With LangChain
 
 ```python
-from langchain.tools import Tool
+from langchain.tools import StructuredTool
+from pydantic import BaseModel, Field
 from qwed_legal import LegalGuard
 
 guard = LegalGuard()
 
-qwed_deadline_tool = Tool(
+class DeadlineInput(BaseModel):
+    signing_date: str = Field(..., description="Contract signing date")
+    term: str = Field(..., description="Structured deadline term")
+    claimed_deadline: str = Field(..., description="Claimed deadline to verify")
+
+class LiabilityInput(BaseModel):
+    contract_value: float = Field(..., description="Base contract value")
+    cap_percentage: float = Field(..., description="Liability cap percentage")
+    claimed_cap: float = Field(..., description="Claimed cap amount")
+
+qwed_deadline_tool = StructuredTool.from_function(
     name="verify_deadline",
     description="Verify a structured deadline calculation",
-    func=lambda x: guard.verify_deadline(**x),
+    func=guard.verify_deadline,
+    args_schema=DeadlineInput,
 )
 
-qwed_liability_tool = Tool(
+qwed_liability_tool = StructuredTool.from_function(
     name="verify_liability",
     description="Verify a liability cap calculation",
-    func=lambda x: guard.verify_liability_cap(**x),
+    func=guard.verify_liability_cap,
+    args_schema=LiabilityInput,
 )
 
 tools = [qwed_deadline_tool, qwed_liability_tool]
@@ -583,3 +596,4 @@ Apache 2.0 - See [LICENSE](LICENSE)
   <br><br>
   <i>"In law, unproven output should not pass."</i>
 </div>
+
