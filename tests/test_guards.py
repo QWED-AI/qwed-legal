@@ -1,6 +1,7 @@
 """Tests for QWED-Legal guards."""
 
 import pytest
+from z3 import Int
 
 from qwed_legal import LegalGuard, DeadlineGuard, LiabilityGuard, ClauseGuard, CitationGuard
 
@@ -134,6 +135,32 @@ class TestClauseGuard:
         ])
         # Should detect conflict between permission and prohibition
         assert result.consistent is False or len(result.conflicts) >= 0
+
+    def test_verify_using_z3_rejects_raw_text_constraints(self):
+        """Raw text constraints should fail closed instead of pretending to be proven."""
+        guard = ClauseGuard()
+        result = guard.verify_using_z3([
+            "The agreement must last exactly 12 months.",
+            "The agreement must last exactly 24 months.",
+        ])
+        assert result.consistent is False
+        assert "UNVERIFIABLE" in result.message
+
+    def test_verify_using_z3_accepts_modeled_sat_constraints(self):
+        """Explicit Z3 constraints should still be checkable."""
+        guard = ClauseGuard()
+        months = Int("months")
+        result = guard.verify_using_z3([months >= 12, months <= 24])
+        assert result.consistent is True
+        assert "satisfiable" in result.message.lower()
+
+    def test_verify_using_z3_detects_unsat_modeled_constraints(self):
+        """Contradictory explicit Z3 constraints should return unsat."""
+        guard = ClauseGuard()
+        months = Int("months")
+        result = guard.verify_using_z3([months == 12, months == 24])
+        assert result.consistent is False
+        assert "unsatisfiable" in result.message.lower()
 
 
 class TestCitationGuard:
