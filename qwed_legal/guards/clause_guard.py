@@ -64,7 +64,7 @@ class ClauseGuard:
         propositions = self._extract_propositions(clauses)
 
         # Check for conflicts using supported heuristics
-        conflicts = self._find_conflicts(clauses, propositions)
+        conflicts = self._find_conflicts(propositions)
 
         if not conflicts:
             return ClauseResult(
@@ -111,7 +111,7 @@ class ClauseGuard:
         return propositions
 
     def _find_conflicts(
-        self, clauses: List[str], propositions: List[dict]
+        self, propositions: List[dict]
     ) -> List[Tuple[int, int, str]]:
         """Find logical conflicts between clauses."""
         conflicts = []

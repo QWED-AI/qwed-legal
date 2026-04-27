@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 import pytest
-from z3 import Int
+from z3 import Int, unknown as z3_unknown
 
 from qwed_legal import LegalGuard, DeadlineGuard, LiabilityGuard, ClauseGuard, CitationGuard
 
@@ -195,10 +195,11 @@ class TestClauseGuard:
         """Z3 unknown must not default to consistent."""
         guard = ClauseGuard()
         months = Int("months")
-        with patch("qwed_legal.guards.clause_guard.Solver.check", return_value="unknown"):
+        with patch("qwed_legal.guards.clause_guard.Solver.check", return_value=z3_unknown):
             result = guard.verify_using_z3([months >= 12])
         assert result.consistent is False
         assert "UNVERIFIABLE" in result.message
+        assert "Z3 returned unknown" in result.message
 
     def test_verify_using_z3_handles_unexpected_solver_state_fail_closed(self):
         """Unexpected solver states must also fail closed."""
