@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import re
 from typing import Any, List, Optional, Tuple
 
-from z3 import ExprRef, Solver, sat, unknown, unsat
+from z3 import BoolRef, Solver, sat, unknown, unsat
 
 
 @dataclass
@@ -40,8 +40,7 @@ class ClauseGuard:
     """
 
     def __init__(self):
-        """Initialize ClauseGuard with Z3 solver."""
-        self.solver = Solver()
+        """Initialize ClauseGuard."""
 
     def check_consistency(self, clauses: List[str]) -> ClauseResult:
         """
@@ -259,7 +258,7 @@ class ClauseGuard:
         invalid_positions = [
             index + 1
             for index, constraint in enumerate(constraints)
-            if not isinstance(constraint, ExprRef)
+            if not isinstance(constraint, BoolRef)
         ]
         if invalid_positions:
             positions = ", ".join(str(position) for position in invalid_positions)
@@ -268,7 +267,8 @@ class ClauseGuard:
                 conflicts=[],
                 message=(
                     "UNVERIFIABLE: verify_using_z3 only accepts explicit Z3 "
-                    f"expressions. Unsupported constraint(s) at position(s): {positions}."
+                    "Boolean expressions. Unsupported constraint(s) at "
+                    f"position(s): {positions}."
                 ),
             )
 
@@ -288,8 +288,8 @@ class ClauseGuard:
                 consistent=False,
                 conflicts=[],
                 message=(
-                    "ERROR: Provided Z3 constraints are unsatisfiable "
-                    "(contradiction exists)."
+                    "CONTRADICTION: Provided Z3 constraints are "
+                    "unsatisfiable (contradiction exists)."
                 ),
             )
 
