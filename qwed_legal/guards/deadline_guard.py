@@ -20,10 +20,11 @@ class DeadlineResult:
     verified: bool
     signing_date: datetime
     claimed_deadline: datetime
-    computed_deadline: datetime
+    computed_deadline: Optional[datetime]
     term_parsed: str
-    difference_days: int
+    difference_days: Optional[int]
     message: str
+    is_computable: bool = True  # False if term is ambiguous/unparseable
     verification_mode: str = "SYMBOLIC"  # Always SYMBOLIC for legal (SymPy/Z3)
 
 
@@ -85,14 +86,34 @@ class DeadlineGuard:
                 verified=False,
                 signing_date=datetime.min,
                 claimed_deadline=datetime.min,
-                computed_deadline=datetime.min,
+                computed_deadline=None,
                 term_parsed="ERROR",
-                difference_days=0,
-                message=f"Failed to parse dates: {e}"
+                difference_days=None,
+                message=f"Failed to parse dates: {e}",
+                is_computable=False,
             )
         
         # Parse term and calculate deadline
         computed = self._calculate_deadline(signing, term)
+        
+        # Fail-closed: if the term is ambiguous, do not verify
+        if computed is None:
+            return DeadlineResult(
+                verified=False,
+                signing_date=signing,
+                claimed_deadline=claimed,
+                computed_deadline=None,
+                term_parsed=term,
+                difference_days=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: Term '{term}' does not contain a "
+                    f"provable time quantity and unit. Cannot compute a "
+                    f"deterministic deadline. Ambiguous legal language "
+                    f"(e.g., 'reasonable period', 'promptly') requires "
+                    f"human legal interpretation."
+                ),
+                is_computable=False,
+            )
         
         # Check difference
         diff = abs((claimed - computed).days)
@@ -118,17 +139,21 @@ class DeadlineGuard:
             message=message
         )
     
-    def _calculate_deadline(self, start_date: datetime, term: str) -> datetime:
-        """Calculate the actual deadline from a term description."""
+    def _calculate_deadline(self, start_date: datetime, term: str) -> Optional[datetime]:
+        """Calculate the actual deadline from a term description.
+        
+        Returns None if the term is ambiguous and cannot be parsed into
+        a deterministic deadline (fail-closed).
+        """
         term_lower = term.lower().strip()
         
         # Extract number
         numbers = re.findall(r'\d+', term_lower)
         if not numbers:
-            # Default to 30 if no number found
-            num = 30
-        else:
-            num = int(numbers[0])
+            # Fail-closed: no numeric quantity found — term is ambiguous
+            return None
+        
+        num = int(numbers[0])
         
         # Determine unit and type
         is_business_days = any(kw in term_lower for kw in ['business', 'working', 'work'])
@@ -141,10 +166,13 @@ class DeadlineGuard:
             if is_business_days:
                 return self._add_business_days(start_date, num * 5)
             return start_date + timedelta(weeks=num)
-        else:  # days
+        elif any(kw in term_lower for kw in ['day', 'calendar']):
             if is_business_days:
                 return self._add_business_days(start_date, num)
             return start_date + timedelta(days=num)
+        else:
+            # Fail-closed: number found but no recognizable time unit
+            return None
     
     def _add_business_days(self, start_date: datetime, days: int) -> datetime:
         """Add business days to a date, excluding weekends and holidays."""
