@@ -230,19 +230,6 @@ class StatuteOfLimitationsGuard:
         },
     }
     
-    # Default limitation period if jurisdiction not found
-    DEFAULT_LIMITATIONS: Dict[str, float] = {
-        "breach_of_contract": 4.0,
-        "breach_of_warranty": 4.0,
-        "negligence": 3.0,
-        "professional_malpractice": 3.0,
-        "fraud": 6.0,
-        "personal_injury": 3.0,
-        "property_damage": 3.0,
-        "employment": 3.0,
-        "product_liability": 3.0,
-        "defamation": 1.0,
-    }
     
     def __init__(self):
         """Initialize StatuteOfLimitationsGuard."""
