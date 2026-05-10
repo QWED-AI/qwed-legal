@@ -33,12 +33,14 @@ class StatuteResult:
     verified: bool
     claim_type: str
     jurisdiction: str
-    incident_date: datetime
-    filing_date: datetime
-    limitation_period_years: float
-    expiration_date: datetime
-    days_remaining: int
+    incident_date: Optional[datetime]
+    filing_date: Optional[datetime]
+    limitation_period_years: Optional[float]
+    expiration_date: Optional[datetime]
+    days_remaining: Optional[int]
     message: str
+    jurisdiction_matched: bool = True  # False if jurisdiction is unknown
+    claim_type_matched: bool = True    # False if claim type is unknown
 
 
 class StatuteOfLimitationsGuard:
@@ -276,31 +278,65 @@ class StatuteOfLimitationsGuard:
                 verified=False,
                 claim_type=claim_type,
                 jurisdiction=jurisdiction,
-                incident_date=datetime.min,
-                filing_date=datetime.min,
-                limitation_period_years=0,
-                expiration_date=datetime.min,
-                days_remaining=0,
-                message=f"Failed to parse dates: {e}"
+                incident_date=None,
+                filing_date=None,
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=f"Failed to parse dates: {e}",
+                jurisdiction_matched=False,
+                claim_type_matched=False,
             )
         
         # Get limitation period
         claim_type_lower = claim_type.lower().replace(" ", "_")
         jurisdiction_upper = jurisdiction.upper().strip()
         
-        # Look up limitation period
-        if jurisdiction_upper in self.LIMITATIONS:
-            limits = self.LIMITATIONS[jurisdiction_upper]
-        else:
-            # Try partial match
-            matched = None
-            for key in self.LIMITATIONS:
-                if key in jurisdiction_upper or jurisdiction_upper in key:
-                    matched = key
-                    break
-            limits = self.LIMITATIONS.get(matched, self.DEFAULT_LIMITATIONS)
+        # Fail-closed: exact jurisdiction match only (no partial matching)
+        if jurisdiction_upper not in self.LIMITATIONS:
+            return StatuteResult(
+                verified=False,
+                claim_type=claim_type,
+                jurisdiction=jurisdiction,
+                incident_date=incident,
+                filing_date=filing,
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: Jurisdiction '{jurisdiction}' is not "
+                    f"in the supported jurisdiction list. Cannot determine "
+                    f"applicable statute of limitations. Supported: "
+                    f"{', '.join(sorted(self.LIMITATIONS.keys()))}."
+                ),
+                jurisdiction_matched=False,
+                claim_type_matched=False,
+            )
         
-        period_years = limits.get(claim_type_lower, 3.0)
+        limits = self.LIMITATIONS[jurisdiction_upper]
+        
+        # Fail-closed: exact claim type match only (no default fallback)
+        if claim_type_lower not in limits:
+            return StatuteResult(
+                verified=False,
+                claim_type=claim_type,
+                jurisdiction=jurisdiction,
+                incident_date=incident,
+                filing_date=filing,
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: Claim type '{claim_type}' is not "
+                    f"recognized for jurisdiction '{jurisdiction}'. Cannot "
+                    f"determine limitation period. Supported claim types: "
+                    f"{', '.join(sorted(limits.keys()))}."
+                ),
+                jurisdiction_matched=True,
+                claim_type_matched=False,
+            )
+        
+        period_years = limits[claim_type_lower]
         
         # Calculate expiration date
         expiration = incident + relativedelta(years=int(period_years))
@@ -346,7 +382,7 @@ class StatuteOfLimitationsGuard:
         self,
         claim_type: str,
         jurisdiction: str
-    ) -> float:
+    ) -> Optional[float]:
         """
         Get the limitation period for a claim type in a jurisdiction.
         
@@ -355,24 +391,25 @@ class StatuteOfLimitationsGuard:
             jurisdiction: State or country
             
         Returns:
-            Limitation period in years
+            Limitation period in years, or None if jurisdiction/claim unknown
         """
         claim_type_lower = claim_type.lower().replace(" ", "_")
         jurisdiction_upper = jurisdiction.upper().strip()
         
-        if jurisdiction_upper in self.LIMITATIONS:
-            return self.LIMITATIONS[jurisdiction_upper].get(
-                claim_type_lower, 
-                self.DEFAULT_LIMITATIONS.get(claim_type_lower, 3.0)
-            )
+        if jurisdiction_upper not in self.LIMITATIONS:
+            return None
         
-        return self.DEFAULT_LIMITATIONS.get(claim_type_lower, 3.0)
+        limits = self.LIMITATIONS[jurisdiction_upper]
+        if claim_type_lower not in limits:
+            return None
+        
+        return limits[claim_type_lower]
     
     def compare_jurisdictions(
         self,
         claim_type: str,
         jurisdictions: list
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Optional[float]]:
         """
         Compare limitation periods across jurisdictions.
         
@@ -381,7 +418,7 @@ class StatuteOfLimitationsGuard:
             jurisdictions: List of jurisdictions to compare
             
         Returns:
-            Dict mapping jurisdiction to limitation period
+            Dict mapping jurisdiction to limitation period (None if unknown)
         """
         return {
             j: self.get_limitation_period(claim_type, j)
