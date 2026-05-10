@@ -8,7 +8,6 @@ Covers:
 - is_computable flag is correctly set
 """
 
-import pytest
 from qwed_legal import DeadlineGuard
 
 

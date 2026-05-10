@@ -155,18 +155,19 @@ class DeadlineGuard:
         
         num = int(numbers[0])
         
-        # Determine unit and type
-        is_business_days = any(kw in term_lower for kw in ['business', 'working', 'work'])
+        # Determine unit and type (word-boundary matching to prevent
+        # false positives like 'today' matching 'day')
+        is_business_days = bool(re.search(r'\b(?:business|working|work)\b', term_lower))
         
-        if 'year' in term_lower:
+        if re.search(r'\byears?\b', term_lower):
             return start_date + relativedelta(years=num)
-        elif 'month' in term_lower:
+        elif re.search(r'\bmonths?\b', term_lower):
             return start_date + relativedelta(months=num)
-        elif 'week' in term_lower:
+        elif re.search(r'\bweeks?\b', term_lower):
             if is_business_days:
                 return self._add_business_days(start_date, num * 5)
             return start_date + timedelta(weeks=num)
-        elif any(kw in term_lower for kw in ['day', 'calendar']):
+        elif re.search(r'\b(?:days?|calendar\s+days?)\b', term_lower):
             if is_business_days:
                 return self._add_business_days(start_date, num)
             return start_date + timedelta(days=num)
