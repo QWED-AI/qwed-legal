@@ -23,10 +23,11 @@ export interface DeadlineResult {
     verified: boolean;
     signing_date: string;
     claimed_deadline: string;
-    computed_deadline: string;
+    computed_deadline: string | null;
     term_parsed: string;
-    difference_days: number;
+    difference_days: number | null;
     message: string;
+    is_computable: boolean;
 }
 
 export interface LiabilityResult {
@@ -151,7 +152,8 @@ print(json.dumps({
     "computed_deadline": result.computed_deadline.isoformat() if result.computed_deadline else None,
     "term_parsed": result.term_parsed,
     "difference_days": result.difference_days,
-    "message": result.message
+    "message": result.message,
+    "is_computable": result.is_computable
 }))
 `;
         return runPythonScript<DeadlineResult>(script, this.pythonPath);
