@@ -65,12 +65,14 @@ export interface StatuteResult {
     verified: boolean;
     claim_type: string;
     jurisdiction: string;
-    incident_date: string;
-    filing_date: string;
-    limitation_period_years: number;
-    expiration_date: string;
-    days_remaining: number;
+    incident_date: string | null;
+    filing_date: string | null;
+    limitation_period_years: number | null;
+    expiration_date: string | null;
+    days_remaining: number | null;
     message: string;
+    jurisdiction_matched: boolean;
+    claim_type_matched: boolean;
 }
 
 // ============================================================================
@@ -382,7 +384,9 @@ print(json.dumps({
     "limitation_period_years": result.limitation_period_years,
     "expiration_date": result.expiration_date.isoformat() if result.expiration_date else None,
     "days_remaining": result.days_remaining,
-    "message": result.message
+    "message": result.message,
+    "jurisdiction_matched": result.jurisdiction_matched,
+    "claim_type_matched": result.claim_type_matched
 }))
 `;
         return runPythonScript<StatuteResult>(script, this.pythonPath);
@@ -394,7 +398,7 @@ print(json.dumps({
     async getLimitationPeriod(
         claimType: string,
         jurisdiction: string
-    ): Promise<number> {
+    ): Promise<number | null> {
         const script = `
 from qwed_legal import StatuteOfLimitationsGuard
 import json
@@ -404,7 +408,7 @@ period = guard.get_limitation_period("${escapePythonString(claimType)}", "${esca
 
 print(json.dumps(period))
 `;
-        return runPythonScript<number>(script, this.pythonPath);
+        return runPythonScript<number | null>(script, this.pythonPath);
     }
 }
 
