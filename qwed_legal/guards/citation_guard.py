@@ -40,10 +40,10 @@ from typing import Any, Dict, List, Optional
 STATUS_FORMAT_INVALID = "format_invalid"
 STATUS_UNVERIFIABLE_AUTHORITY = "unverifiable_authority"
 
-# Regex for a case name prefix — supports special chars in party names:
-# e.g. "AT&T Mobility LLC v. Concepcion", "U.S. v. Windsor"
-# Anchored at start; accepts any non-newline char before " v. "
-_CASE_NAME_RE = re.compile(r"^.+\sv\.\s\S", re.IGNORECASE)
+# Pattern that matches " v. " — the defining element of a party-vs-party case name.
+# Used positionally: we require this marker to appear BEFORE the reporter match start,
+# not just anywhere in the string.
+_V_DOT_RE = re.compile(r"\sv\.\s", re.IGNORECASE)
 
 
 @dataclass
@@ -202,12 +202,25 @@ class CitationGuard:
             if not match:
                 continue
 
-            # For reporter types that mandate a case name, verify one is present.
-            # Use continue (not return): another pattern later in the loop may
-            # match the same text without requiring a case name (e.g. INDIA_AIR).
-            # Returning early would prevent those patterns from being evaluated.
+            # For reporter types that mandate a case name, verify one is present
+            # AND that it appears BEFORE the reporter in the string.
+            # Positional check prevents "347 U.S. 483 Smith v. Jones" from passing
+            # (case name after reporter is not a valid citation prefix).
+            # Use continue (not return): a later pattern may match without case name.
             if citation_type in self._REQUIRES_CASE_NAME:
-                if not _CASE_NAME_RE.search(text):
+                v_dot = _V_DOT_RE.search(text)
+                # "v." must exist AND appear before the volume number.
+                # Use match.start("volume") — the volume group is always the first
+                # numeric capture and is the true start of the reporter section.
+                # match.start() alone would be 0 because the pattern has an optional
+                # case-name prefix group, making match.start() unreliable here.
+                volume_start = (
+                    match.start("volume")
+                    if "volume" in match.groupdict()
+                    else match.start()
+                )
+                if not v_dot or v_dot.start() >= volume_start:
+                    # No "v." found, or "v." at/after reporter — case name not a prefix
                     skipped_for_case_name = True
                     continue
 

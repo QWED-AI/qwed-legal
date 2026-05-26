@@ -394,3 +394,35 @@ class TestCitationEarlyReturnBug:
         result = self.guard.verify("347 U.S. 483")
         assert result.format_valid is False
         assert result.status == "format_invalid"
+
+
+class TestCaseNamePositionCheck:
+    """Sentry LOW: case name v. must appear before the reporter volume, not after."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    def test_case_name_after_reporter_is_format_invalid(self):
+        """'347 U.S. 483 Smith v. Jones' must be invalid -- name is after reporter."""
+        result = self.guard.verify("347 U.S. 483 Smith v. Jones")
+        assert result.format_valid is False
+        assert result.status == STATUS_FORMAT_INVALID
+
+    def test_case_name_before_reporter_is_valid(self):
+        """Normal citation with name before reporter must pass."""
+        result = self.guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+        assert result.format_valid is True
+        assert result.status == STATUS_UNVERIFIABLE_AUTHORITY
+
+    def test_atandt_before_reporter_passes(self):
+        """Special-char party name before reporter must still pass."""
+        result = self.guard.verify(
+            "AT&T Mobility LLC v. Concepcion, 563 U.S. 333 (2011)"
+        )
+        assert result.format_valid is True
+
+    def test_federal_reporter_name_after_reporter_invalid(self):
+        """Same positional check applies to F.3d reporter."""
+        result = self.guard.verify("123 F.3d 456 Fake v. Case")
+        assert result.format_valid is False
+        assert result.status == STATUS_FORMAT_INVALID
