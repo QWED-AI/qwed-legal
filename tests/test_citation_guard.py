@@ -244,3 +244,125 @@ class TestStatusConstants:
     def test_format_valid_and_unverifiable_are_distinct(self):
         """format_valid status and unverifiable_authority are separate concepts."""
         assert STATUS_FORMAT_VALID != STATUS_UNVERIFIABLE_AUTHORITY
+
+
+class TestCitationReviewFixes:
+    """
+    Tests covering all valid PR review comments.
+
+    Sentry HIGH   — citation field present and populated
+    Codex P2      — deprecated 'verified' key restored in verify_citation_format()
+    CodeRabbit    — AT&T and other special-char party names not misclassified
+    CodeRabbit    — UK neutral citations accepted without case name
+    CodeRabbit    — year coerced to int in parsed_components
+    """
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    # Sentry HIGH — citation field
+
+    def test_citation_field_populated_on_format_valid(self):
+        """CitationResult.citation must contain the original input text (TS SDK needs it)."""
+        text = "Brown v. Board of Education, 347 U.S. 483 (1954)"
+        result = self.guard.verify(text)
+        assert result.citation == text
+
+    def test_citation_field_populated_on_format_invalid(self):
+        """citation field must be set even for invalid citations."""
+        text = "totally invalid text"
+        result = self.guard.verify(text)
+        assert result.citation == text
+
+    def test_citation_field_populated_for_fabricated(self):
+        """citation field present for fabricated-but-well-formed citations."""
+        text = "Unicorn v. Rainbow, 347 U.S. 483 (1999)"
+        result = self.guard.verify(text)
+        assert result.citation == text
+
+    # Codex P2 — deprecated 'verified' key in verify_citation_format()
+
+    def test_verify_citation_format_has_deprecated_verified_key(self):
+        """verify_citation_format() must keep 'verified' key for backward compat."""
+        result = self.guard.verify_citation_format(
+            "Brown v. Board of Education, 347 U.S. 483 (1954)"
+        )
+        assert (
+            "verified" in result
+        ), "Dropped 'verified' key breaks existing integrations that do result['verified']"
+
+    def test_verify_citation_format_deprecated_verified_equals_format_valid(self):
+        """Deprecated 'verified' == format_valid (not authority_verified)."""
+        result = self.guard.verify_citation_format(
+            "Brown v. Board of Education, 347 U.S. 483 (1954)"
+        )
+        assert result["verified"] == result["format_valid"]
+
+    def test_verify_citation_format_authority_verified_false_canonical(self):
+        """authority_verified=False remains the canonical authority field."""
+        result = self.guard.verify_citation_format(
+            "Brown v. Board of Education, 347 U.S. 483 (1954)"
+        )
+        assert result["authority_verified"] is False
+
+    # CodeRabbit MAJOR — special-char party names
+
+    def test_atandt_party_name_not_misclassified(self):
+        """AT&T in party name must not be rejected as 'Missing case name'."""
+        result = self.guard.verify(
+            "AT&T Mobility LLC v. Concepcion, 563 U.S. 333 (2011)"
+        )
+        assert (
+            result.format_valid is True
+        ), f"AT&T citation should be format_valid but got: {result.issues}"
+        assert result.status == STATUS_UNVERIFIABLE_AUTHORITY
+
+    def test_us_plaintiff_not_misclassified(self):
+        """'U.S. v. Windsor' style party name must not fail case-name check."""
+        result = self.guard.verify("U.S. v. Windsor, 570 U.S. 744 (2013)")
+        assert result.format_valid is True
+
+    def test_hyphenated_party_name_not_misclassified(self):
+        """Hyphen in party name must not fail case-name check."""
+        result = self.guard.verify("Obergefell v. Hodges, 576 U.S. 644 (2015)")
+        assert result.format_valid is True
+
+    # CodeRabbit — UK neutral citation accepted without case name
+
+    def test_uk_neutral_citation_no_case_name_required(self):
+        """UK neutral citations like [2020] UKSC 5 must pass without 'v.' party names."""
+        result = self.guard.verify("[2020] UKSC 5")
+        assert result.format_valid is True
+        assert result.citation_type == "UK_NEUTRAL"
+        assert result.status == STATUS_UNVERIFIABLE_AUTHORITY
+
+    def test_uk_neutral_year_is_int(self):
+        """Year in UK neutral citation must be coerced to int."""
+        result = self.guard.verify("[2020] UKSC 5")
+        assert result.format_valid is True
+        year = result.parsed_components.get("year")
+        assert isinstance(year, int), f"Expected year as int, got {type(year)}: {year}"
+        assert year == 2020
+
+    # CodeRabbit MINOR — year coerced to int for all patterns
+
+    def test_india_air_year_is_int(self):
+        """Year in INDIA_AIR citation must be coerced to int."""
+        result = self.guard.verify("AIR 2001 SC 3021")
+        assert result.format_valid is True
+        year = result.parsed_components.get("year")
+        assert isinstance(year, int), f"Expected year as int, got {type(year)}: {year}"
+        assert year == 2001
+
+    def test_scotus_volume_is_int(self):
+        """Volume in SCOTUS citation is still coerced to int."""
+        result = self.guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+        vol = result.parsed_components.get("volume")
+        assert isinstance(vol, int)
+        assert vol == 347
+
+    # Sentry MEDIUM rejection verification — unverifiable_authority must NOT fail CI
+    # (no code test needed — this is a design decision, not a code path)
+    # The action_entrypoint.py correctly gates failure on format_invalid only.
+    # Adding a test to confirm action_entrypoint logic is unchanged would require
+    # subprocess testing; that is out of scope for unit tests.

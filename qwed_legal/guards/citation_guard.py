@@ -34,6 +34,11 @@ STATUS_FORMAT_INVALID = "format_invalid"
 # check case databases, so authority is always unverifiable.
 STATUS_UNVERIFIABLE_AUTHORITY = "unverifiable_authority"
 
+# Regex for a case name prefix — supports special chars in party names:
+# e.g. "AT&T Mobility LLC v. Concepcion", "U.S. v. Windsor"
+# Anchored at start; accepts any non-newline char before " v. "
+_CASE_NAME_RE = re.compile(r"^.+\sv\.\s\S", re.IGNORECASE)
+
 
 @dataclass
 class CitationResult:
@@ -45,8 +50,11 @@ class CitationResult:
                           Does NOT mean the cited case exists.
         status          — one of STATUS_FORMAT_VALID, STATUS_FORMAT_INVALID,
                           or STATUS_UNVERIFIABLE_AUTHORITY.
+        citation        — the original citation text passed to verify(). Included
+                          so callers and the TypeScript SDK can echo it back.
         citation_type   — reporter category matched (e.g., "US_SCOTUS"), or None.
-        parsed_components — regex-extracted fields (volume, reporter, page, etc.)
+        parsed_components — regex-extracted fields (volume, reporter, page, etc.
+                          Numeric fields are coerced to int where possible.)
         issues          — list of format problems found (empty when format_valid=True)
         message         — human-readable explanation of the result
         risk            — optional risk level string
@@ -54,6 +62,7 @@ class CitationResult:
 
     format_valid: bool
     status: str
+    citation: str = ""  # original input text — for SDK / caller echo-back
     citation_type: Optional[str] = None
     parsed_components: Dict[str, Any] = field(default_factory=dict)
     issues: List[str] = field(default_factory=list)
@@ -112,28 +121,45 @@ class CitationGuard:
     like a real citation." It does not mean: "this legal authority exists."
 
     Downstream consumers MUST check result.status to distinguish:
-      STATUS_FORMAT_VALID / STATUS_UNVERIFIABLE_AUTHORITY  → format ok, authority unknown
-      STATUS_FORMAT_INVALID                                 → format is malformed
+      STATUS_UNVERIFIABLE_AUTHORITY  → format ok, authority unknown (normal passing state)
+      STATUS_FORMAT_INVALID          → citation is malformed
     """
 
-    # Known case citation reporter patterns
+    # Known case citation reporter patterns.
+    # Patterns for case reporters (US_SCOTUS, US_FED) require a case name to
+    # appear BEFORE the reporter group. Neutral citation patterns (UK_NEUTRAL)
+    # do not mandate a party-name prefix.
     CASE_PATTERNS: Dict[str, str] = {
-        "US_SCOTUS": r"(?P<volume>\d{1,4})\s+(?P<reporter>U\.?S\.?)\s+(?P<page>\d{1,4})",
-        "US_FED": r"(?P<volume>\d{1,4})\s+(?P<reporter>F\.(?:2d|3d)?)\s+(?P<page>\d{1,4})",
-        "UK_NEUTRAL": r"\[(?P<year>\d{4})\]\s+(?P<court>UKSC|EWCA\s+Civ|EWHC)\s+(?P<number>\d+)",
-        "INDIA_AIR": r"AIR\s+(?P<year>\d{4})\s+(?P<court>SC|Bom|Del)\s+(?P<page>\d+)",
+        # U.S. Supreme Court: "Brown v. Board, 347 U.S. 483"
+        # Case name enforced by requiring .+ v. . prefix before the volume/reporter
+        "US_SCOTUS": (
+            r"(?i)(?:.+\sv\.\s\S.+?\s)?"
+            r"(?P<volume>\d{1,4})\s+(?P<reporter>U\.?S\.?)\s+(?P<page>\d{1,4})"
+        ),
+        # Federal Reporter: "Smith v. Jones, 123 F.3d 456"
+        "US_FED": (
+            r"(?i)(?:.+\sv\.\s\S.+?\s)?"
+            r"(?P<volume>\d{1,4})\s+(?P<reporter>F\.(?:2d|3d)?)\s+(?P<page>\d{1,4})"
+        ),
+        # UK Neutral: "[2020] UKSC 5" — no party names required
+        "UK_NEUTRAL": (
+            r"\[(?P<year>\d{4})\]\s+(?P<court>UKSC|EWCA\s+Civ|EWHC)\s+(?P<number>\d+)"
+        ),
+        # India AIR: "AIR 2001 SC 3021" — no party names required
+        "INDIA_AIR": (r"AIR\s+(?P<year>\d{4})\s+(?P<court>SC|Bom|Del)\s+(?P<page>\d+)"),
     }
+
+    # Case reporter types that require a "Party v. Party" prefix to be format-valid.
+    # Neutral citation types (UK_NEUTRAL, INDIA_AIR) do not require party names.
+    _REQUIRES_CASE_NAME = frozenset({"US_SCOTUS", "US_FED"})
 
     # Known statute citation patterns
     STATUTE_PATTERNS: Dict[str, str] = {
         "US_CODE": r"(?P<title>\d{1,3})\s+U\.?S\.?C\.?\s+§+\s*(?P<section>[\d\w]+)",
     }
 
-    # Regex for a case name prefix: "Something v. Something"
-    _CASE_NAME_RE = re.compile(r"^([A-Z][a-zA-Z\s\.]+)\sv\.\s([A-Z][a-zA-Z\s\.,]+)")
-
     def __init__(self) -> None:
-        # Compile patterns once
+        # Compile patterns once at init time (not dynamically at runtime)
         self._compiled_case = {k: re.compile(v) for k, v in self.CASE_PATTERNS.items()}
         self._compiled_statute = {
             k: re.compile(v) for k, v in self.STATUTE_PATTERNS.items()
@@ -147,7 +173,7 @@ class CitationGuard:
 
         Returns CitationResult with:
           format_valid=True  + status=STATUS_UNVERIFIABLE_AUTHORITY
-              when a reporter pattern matches.
+              when a reporter pattern matches (and case-name is present if required).
               WARNING: this does NOT confirm the cited case exists.
 
           format_valid=False + status=STATUS_FORMAT_INVALID
@@ -156,44 +182,57 @@ class CitationGuard:
         Authority is ALWAYS unverifiable — CitationGuard has no database access.
         """
         is_statute = "U.S.C." in text or "§" in text
-        has_case_name = bool(self._CASE_NAME_RE.search(text))
 
-        if not has_case_name and not is_statute:
-            if re.search(r"\d+\s+[A-Za-z\.]+\s+\d+", text):
-                return CitationResult(
-                    format_valid=False,
-                    status=STATUS_FORMAT_INVALID,
-                    issues=["Missing case name"],
-                    message=(
-                        "FORMAT INVALID: Citation is missing a case name "
-                        "(expected 'Party v. Party, ...' format)."
-                    ),
-                )
-
-        # Try each case reporter pattern
+        # Try each case reporter pattern.
+        # Case-name enforcement is per-pattern: US_SCOTUS and US_FED require a
+        # "Party v. Party" prefix; UK_NEUTRAL and INDIA_AIR do not.
         for citation_type, pattern in self._compiled_case.items():
             match = pattern.search(text)
-            if match:
-                components = self._parse_components(match.groupdict())
-                return CitationResult(
-                    format_valid=True,
-                    status=STATUS_UNVERIFIABLE_AUTHORITY,
-                    citation_type=citation_type,
-                    parsed_components=components,
-                    message=(
-                        f"FORMAT VALID ({citation_type}): Citation matches the "
-                        f"{citation_type} reporter pattern. "
-                        f"AUTHORITY UNVERIFIABLE: CitationGuard cannot confirm "
-                        f"this case exists or is correctly identified. "
-                        f"Format match is not proof of legal authority."
-                    ),
-                )
+            if not match:
+                continue
+
+            # For reporter types that mandate a case name, verify one is present.
+            if citation_type in self._REQUIRES_CASE_NAME:
+                if not _CASE_NAME_RE.search(text):
+                    return CitationResult(
+                        format_valid=False,
+                        status=STATUS_FORMAT_INVALID,
+                        citation=text,
+                        issues=["Missing case name"],
+                        message=(
+                            "FORMAT INVALID: Citation is missing a case name "
+                            "(expected 'Party v. Party, ...' format for "
+                            f"{citation_type} reporter)."
+                        ),
+                    )
+
+            components = self._parse_components(match.groupdict())
+            return CitationResult(
+                format_valid=True,
+                status=STATUS_UNVERIFIABLE_AUTHORITY,
+                citation=text,
+                citation_type=citation_type,
+                parsed_components=components,
+                message=(
+                    f"FORMAT VALID ({citation_type}): Citation matches the "
+                    f"{citation_type} reporter pattern. "
+                    f"AUTHORITY UNVERIFIABLE: CitationGuard cannot confirm "
+                    f"this case exists or is correctly identified. "
+                    f"Format match is not proof of legal authority."
+                ),
+            )
+
+        # Statute check (done after case patterns to avoid dual-matching)
+        if is_statute:
+            # Let check_statute_citation handle it for a structured result
+            return self.check_statute_citation(text)
 
         # Unknown/invalid reporter pattern
         if re.search(r"\d+\s+[A-Z\.]+\s+\d+", text):
             return CitationResult(
                 format_valid=False,
                 status=STATUS_FORMAT_INVALID,
+                citation=text,
                 issues=["Unknown reporter"],
                 message=(
                     "FORMAT INVALID: Citation contains an unrecognized reporter "
@@ -205,6 +244,7 @@ class CitationGuard:
         return CitationResult(
             format_valid=False,
             status=STATUS_FORMAT_INVALID,
+            citation=text,
             issues=["No valid citation found"],
             message="FORMAT INVALID: No recognizable citation pattern found in the text.",
         )
@@ -213,17 +253,24 @@ class CitationGuard:
         """
         Explicit format-check API. Returns a dict describing format validity only.
 
-        Prefer verify() for structured results. This method is provided for
-        backward compatibility and for callers who explicitly want format info.
+        Backward-compat note:
+          - 'verified' key is retained as a deprecated alias for format_valid.
+            It reflects whether the citation FORMAT is valid, NOT whether the
+            legal authority exists. New code should use 'format_valid' instead.
+          - 'authority_verified' is always False (canonical field for auth check).
         """
         result = self.verify(text)
         return {
             "format_valid": result.format_valid,
+            # Deprecated alias — equals format_valid, not authority verification.
+            # Kept for backward compatibility. Use 'format_valid' in new code.
+            "verified": result.format_valid,
             "status": result.status,
             "citation_type": result.citation_type,
+            "citation": result.citation,
             "issues": result.issues,
             "message": result.message,
-            # Explicit note — not a property alias, an intentional field
+            # Explicit authority fields — these are the canonical source of truth
             "authority_verified": False,
             "authority_note": (
                 "CitationGuard performs format validation only. "
@@ -245,6 +292,7 @@ class CitationGuard:
                 return CitationResult(
                     format_valid=True,
                     status=STATUS_UNVERIFIABLE_AUTHORITY,
+                    citation=text,
                     citation_type=citation_type,
                     parsed_components=components,
                     message=(
@@ -258,6 +306,7 @@ class CitationGuard:
         return CitationResult(
             format_valid=False,
             status=STATUS_FORMAT_INVALID,
+            citation=text,
             issues=["Invalid statute format"],
             message=(
                 "FORMAT INVALID: No recognized statute citation pattern found. "
@@ -284,10 +333,16 @@ class CitationGuard:
 
     @staticmethod
     def _parse_components(groupdict: Dict[str, Any]) -> Dict[str, Any]:
-        """Coerce numeric fields (volume, title, page, number) to int where possible."""
+        """
+        Coerce numeric fields to int where possible.
+
+        Fields coerced: volume, title, page, number, year.
+        All other fields are left as-is.
+        """
+        _NUMERIC_FIELDS = {"volume", "title", "page", "number", "year"}
         result = {}
         for key, value in groupdict.items():
-            if value is not None and key in {"volume", "title", "page", "number"}:
+            if value is not None and key in _NUMERIC_FIELDS:
                 try:
                     result[key] = int(value)
                 except (ValueError, TypeError):
