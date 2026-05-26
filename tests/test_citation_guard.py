@@ -1,0 +1,246 @@
+"""
+Tests for issue #17: CitationGuard must not conflate format validity with authority proof.
+
+Key invariants:
+- verified is ALWAYS False — CitationGuard has no database access
+- format_valid=True → status=unverifiable_authority, NEVER a claim of legal existence
+- Fabricated well-formed citations (Unicorn v. Rainbow) must get same treatment as real ones
+- FORMAT_INVALID for malformed, unknown reporters, missing case names
+- BatchCitationResult uses format_valid/format_invalid (not valid/invalid)
+- verify_citation_format() explicitly returns authority_verified=False
+- check_statute_citation() same semantics
+"""
+
+from qwed_legal.guards.citation_guard import (
+    CitationGuard,
+    STATUS_FORMAT_VALID,
+    STATUS_FORMAT_INVALID,
+    STATUS_UNVERIFIABLE_AUTHORITY,
+)
+
+
+class TestCitationGuardSemantics:
+    """Core semantic invariants — format ≠ authority."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    # verified is ALWAYS False
+
+    def test_verified_always_false_for_real_citation(self):
+        """verified must be False even for well-known real cases."""
+        result = self.guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+        assert (
+            result.verified is False
+        ), "CitationGuard.verified must always be False — it has no database access"
+
+    def test_verified_always_false_for_fabricated_citation(self):
+        """The core bug: fabricated but well-formed citations must not be 'verified'."""
+        result = self.guard.verify("Unicorn v. Rainbow, 347 U.S. 483 (1999)")
+        assert (
+            result.verified is False
+        ), "A fabricated citation with a plausible reporter must never return verified=True"
+
+    def test_verified_always_false_for_hallucinated_citation(self):
+        """Hallucinated citation with correct reporter format must not be 'verified'."""
+        result = self.guard.verify("Nonexistent v. Case, 123 F.3d 456 (2020)")
+        assert result.verified is False
+
+    def test_verified_always_false_for_invalid_citation(self):
+        """Invalid citations must also return verified=False (not just valid ones)."""
+        result = self.guard.verify("Fake v. Case, 999 X.Y.Z. 123 (2020)")
+        assert result.verified is False
+
+    # status field semantics
+
+    def test_format_valid_citation_has_unverifiable_authority_status(self):
+        """format_valid=True must produce status=unverifiable_authority, not format_valid."""
+        result = self.guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+        assert result.format_valid is True
+        assert (
+            result.status == STATUS_UNVERIFIABLE_AUTHORITY
+        ), f"Expected status=unverifiable_authority but got: {result.status}"
+
+    def test_fabricated_format_valid_citation_has_unverifiable_status(self):
+        """Fabricated but format-valid citation must carry unverifiable_authority status."""
+        result = self.guard.verify("Unicorn v. Rainbow, 347 U.S. 483 (1999)")
+        assert result.format_valid is True
+        assert result.status == STATUS_UNVERIFIABLE_AUTHORITY
+
+    def test_invalid_citation_has_format_invalid_status(self):
+        """Malformed citation must return status=format_invalid."""
+        result = self.guard.verify("Fake v. Case, 999 X.Y.Z. 123 (2020)")
+        assert result.format_valid is False
+        assert result.status == STATUS_FORMAT_INVALID
+
+    # message must state authority is unverifiable
+
+    def test_format_valid_message_states_authority_unverifiable(self):
+        """Message for format_valid=True must explicitly warn about authority."""
+        result = self.guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+        assert result.format_valid is True
+        assert (
+            "UNVERIFIABLE" in result.message.upper()
+            or "AUTHORITY" in result.message.upper()
+        ), f"Expected UNVERIFIABLE/AUTHORITY in message but got: {result.message}"
+
+    def test_fabricated_citation_message_states_authority_unverifiable(self):
+        """Same warning must appear for fabricated citations."""
+        result = self.guard.verify("Unicorn v. Rainbow, 347 U.S. 483 (1999)")
+        assert (
+            "UNVERIFIABLE" in result.message.upper()
+            or "AUTHORITY" in result.message.upper()
+        )
+
+
+class TestCitationFormatValidation:
+    """Format validation still works correctly after the fix."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    def test_scotus_format_valid(self):
+        result = self.guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+        assert result.format_valid is True
+        assert result.citation_type == "US_SCOTUS"
+        assert result.parsed_components.get("volume") == 347
+        assert result.parsed_components.get("reporter") == "U.S."
+
+    def test_federal_reporter_format_valid(self):
+        result = self.guard.verify("Smith v. Jones, 123 F.3d 456 (2020)")
+        assert result.format_valid is True
+        assert result.citation_type == "US_FED"
+        assert result.parsed_components.get("reporter") == "F.3d"
+
+    def test_unknown_reporter_format_invalid(self):
+        result = self.guard.verify("Fake v. Case, 999 X.Y.Z. 123 (2020)")
+        assert result.format_valid is False
+        assert result.status == STATUS_FORMAT_INVALID
+        assert any("Unknown reporter" in issue for issue in result.issues)
+
+    def test_missing_case_name_format_invalid(self):
+        result = self.guard.verify("123 U.S. 456 (1990)")
+        assert result.format_valid is False
+        assert result.status == STATUS_FORMAT_INVALID
+        assert any("case name" in issue.lower() for issue in result.issues)
+
+    def test_no_citation_format_invalid(self):
+        result = self.guard.verify("This is just plain text with no citation.")
+        assert result.format_valid is False
+        assert result.status == STATUS_FORMAT_INVALID
+
+    # backward compat
+    def test_valid_property_aliases_format_valid(self):
+        result = self.guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+        assert result.valid == result.format_valid
+
+
+class TestStatuteCitationGuard:
+    """check_statute_citation: same FORMAT_ONLY semantics."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    def test_valid_statute_format(self):
+        result = self.guard.check_statute_citation("42 U.S.C. § 1983")
+        assert result.format_valid is True
+        assert result.status == STATUS_UNVERIFIABLE_AUTHORITY
+        assert result.parsed_components.get("title") == 42
+
+    def test_valid_statute_verified_always_false(self):
+        result = self.guard.check_statute_citation("42 U.S.C. § 1983")
+        assert result.verified is False
+
+    def test_invalid_statute_format_invalid(self):
+        result = self.guard.check_statute_citation("this is not a statute")
+        assert result.format_valid is False
+        assert result.status == STATUS_FORMAT_INVALID
+
+    def test_fabricated_statute_number_treated_same_as_real(self):
+        """Nonexistent section 99999 passes format check — same UNVERIFIABLE status."""
+        result = self.guard.check_statute_citation("42 U.S.C. § 99999")
+        assert result.format_valid is True
+        assert result.status == STATUS_UNVERIFIABLE_AUTHORITY
+        assert result.verified is False
+
+
+class TestVerifyCitationFormat:
+    """verify_citation_format() must explicitly expose authority_verified=False."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    def test_authority_verified_always_false_in_dict(self):
+        result = self.guard.verify_citation_format(
+            "Brown v. Board of Education, 347 U.S. 483 (1954)"
+        )
+        assert result["authority_verified"] is False
+
+    def test_authority_note_present(self):
+        result = self.guard.verify_citation_format(
+            "Brown v. Board of Education, 347 U.S. 483 (1954)"
+        )
+        assert "authority_note" in result
+        assert len(result["authority_note"]) > 0
+
+    def test_format_valid_in_dict(self):
+        result = self.guard.verify_citation_format(
+            "Brown v. Board of Education, 347 U.S. 483 (1954)"
+        )
+        assert result["format_valid"] is True
+
+    def test_status_in_dict(self):
+        result = self.guard.verify_citation_format(
+            "Brown v. Board of Education, 347 U.S. 483 (1954)"
+        )
+        assert result["status"] == STATUS_UNVERIFIABLE_AUTHORITY
+
+
+class TestBatchCitationResult:
+    """verify_batch uses format_valid/format_invalid fields."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    def test_batch_counts_are_correct(self):
+        citations = [
+            "Brown v. Board, 347 U.S. 483 (1954)",  # format_valid
+            "Invalid v. Citation, 999 FAKE 123",  # format_invalid
+        ]
+        result = self.guard.verify_batch(citations)
+        assert result.total == 2
+        assert result.format_valid == 1
+        assert result.format_invalid == 1
+
+    def test_batch_valid_alias(self):
+        """Backward-compat: result.valid == result.format_valid."""
+        citations = ["Brown v. Board, 347 U.S. 483 (1954)", "Fake v. X, 999 XYZ 1"]
+        result = self.guard.verify_batch(citations)
+        assert result.valid == result.format_valid
+
+    def test_batch_invalid_alias(self):
+        citations = ["Brown v. Board, 347 U.S. 483 (1954)", "Fake v. X, 999 XYZ 1"]
+        result = self.guard.verify_batch(citations)
+        assert result.invalid == result.format_invalid
+
+    def test_batch_verified_count_not_exposed(self):
+        """BatchCitationResult must NOT expose a 'verified' count — authority not checked."""
+        citations = ["Brown v. Board, 347 U.S. 483 (1954)"]
+        result = self.guard.verify_batch(citations)
+        assert not hasattr(result, "verified"), (
+            "BatchCitationResult must not expose a 'verified' count — "
+            "CitationGuard cannot verify authority"
+        )
+
+
+class TestStatusConstants:
+    """Status constants are importable and have correct values."""
+
+    def test_status_constants_exist(self):
+        assert STATUS_FORMAT_VALID == "format_valid"
+        assert STATUS_FORMAT_INVALID == "format_invalid"
+        assert STATUS_UNVERIFIABLE_AUTHORITY == "unverifiable_authority"
+
+    def test_format_valid_and_unverifiable_are_distinct(self):
+        """format_valid status and unverifiable_authority are separate concepts."""
+        assert STATUS_FORMAT_VALID != STATUS_UNVERIFIABLE_AUTHORITY
