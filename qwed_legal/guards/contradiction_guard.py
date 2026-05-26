@@ -3,15 +3,16 @@ ContradictionGuard: Detect logical contradictions in contract clauses using Z3.
 
 Fail-closed design:
   - Only DURATION and LIABILITY categories are modeled.
-  - Clauses with unsupported categories are not silently ignored.
-  - If NO clauses are translatable, returns UNVERIFIABLE instead of a false SAT.
-  - If SOME clauses are untranslatable, returns a partial-coverage warning.
+  - Unsupported categories are never silently ignored — UNVERIFIABLE is returned.
+  - Supported clauses with unmodeled keywords (no constraint added) are tracked
+    and cause partial_coverage — never verified=True for partial inputs.
+  - Z3 unknown result → UNVERIFIABLE (not a false contradiction).
 """
 
 from dataclasses import dataclass, field
 from typing import List
 
-from z3 import Int, Solver, sat
+from z3 import Int, Solver, sat, unknown
 
 
 @dataclass
@@ -35,124 +36,186 @@ class ContradictionGuard:
     Supported categories: DURATION, LIABILITY.
 
     Fail-closed:
-    - Clauses with unsupported categories (PAYMENT, PENALTY, etc.) are not
-      silently ignored — they trigger an UNVERIFIABLE result.
-    - If no supported clauses are present, returns UNVERIFIABLE instead of
-      a false SAT (absence of constraints does not mean consistency).
-    - If some clauses are unsupported, returns PARTIAL_COVERAGE with a warning.
+    - Unsupported categories → UNVERIFIABLE (never silently ignored).
+    - No supported clauses present → UNVERIFIABLE.
+    - Supported clauses whose keywords are not modeled → partial_coverage,
+      verified=False (constraint could not be encoded).
+    - Z3 unknown → UNVERIFIABLE (not a false contradiction).
     """
 
     def verify_consistency(self, clauses: List[Clause]) -> dict:
         """
-        Translate supported legal clauses into Z3 constraints and check for SAT.
+        Translate supported legal clauses into Z3 constraints and check SAT.
 
         Returns a dict with keys:
           verified     (bool)
-          status       (str)  — one of: consistent, contradiction, unverifiable, partial_coverage
+          status       (str) — consistent | contradiction | unverifiable | partial_coverage
           message      (str)
-          unsupported  (list) — categories not modeled by this guard
+          unsupported  (list[str]) — categories not modeled by this guard
         """
         if not clauses:
-            return {
-                "verified": False,
-                "status": "unverifiable",
-                "message": (
+            return self._unverifiable_result(
+                message=(
                     "UNVERIFIABLE: No clauses provided. "
                     "An empty clause list cannot be proven consistent."
                 ),
-                "unsupported": [],
-            }
+                unsupported=[],
+            )
 
-        # Partition clauses into supported and unsupported
+        supported, unsupported = self._partition_clauses(clauses)
+        unsupported_categories = sorted({c.category for c in unsupported})
+
+        if not supported:
+            return self._unverifiable_result(
+                message=(
+                    f"UNVERIFIABLE: None of the provided clause categories are modeled "
+                    f"by ContradictionGuard. Supported: "
+                    f"{', '.join(sorted(SUPPORTED_CATEGORIES))}. "
+                    f"Received unsupported: {', '.join(unsupported_categories)}. "
+                    f"Cannot prove consistency for inputs that are not modeled."
+                ),
+                unsupported=unsupported_categories,
+            )
+
+        s = Solver()
+        contract_duration_months = Int("contract_duration_months")
+        max_liability_usd = Int("max_liability_usd")
+        s.add(contract_duration_months >= 0)
+        s.add(max_liability_usd >= 0)
+
+        unmodeled_supported = 0
+
+        duration_clauses = [c for c in supported if c.category.upper() == "DURATION"]
+        for clause in duration_clauses:
+            unmodeled_supported += self._add_duration_constraint(
+                s, clause, contract_duration_months
+            )
+
+        liability_clauses = [c for c in supported if c.category.upper() == "LIABILITY"]
+        for clause in liability_clauses:
+            unmodeled_supported += self._add_liability_constraint(
+                s, clause, max_liability_usd
+            )
+
+        return self._build_result(
+            s=s,
+            unsupported_categories=unsupported_categories,
+            has_unsupported=bool(unsupported),
+            unmodeled_supported=unmodeled_supported,
+        )
+
+    # ── private helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _partition_clauses(clauses: List[Clause]):
+        """Split clauses into supported and unsupported categories."""
         supported = [c for c in clauses if c.category.upper() in SUPPORTED_CATEGORIES]
         unsupported = [
             c for c in clauses if c.category.upper() not in SUPPORTED_CATEGORIES
         ]
-        unsupported_categories = sorted({c.category for c in unsupported})
+        return supported, unsupported
 
-        # Fail closed: if there are NO supported clauses we cannot prove anything
-        if not supported:
+    @staticmethod
+    def _add_duration_constraint(s: Solver, clause: Clause, var: object) -> int:
+        """
+        Add a Z3 constraint for a DURATION clause.
+        Returns 1 if the clause keyword is not modeled (unmodeled), 0 otherwise.
+        """
+        text = clause.text.lower()
+        if "exactly" in text:
+            s.add(var == clause.value)
+        elif "minimum" in text or "at least" in text:
+            s.add(var >= clause.value)
+        elif "maximum" in text or "up to" in text:
+            s.add(var <= clause.value)
+        else:
+            return 1  # clause recognized as DURATION but keyword not modeled
+        return 0
+
+    @staticmethod
+    def _add_liability_constraint(s: Solver, clause: Clause, var: object) -> int:
+        """
+        Add a Z3 constraint for a LIABILITY clause.
+        Returns 1 if the clause keyword is not modeled (unmodeled), 0 otherwise.
+        """
+        text = clause.text.lower()
+        if "capped" in text or "max" in text or "cap" in text:
+            s.add(var <= clause.value)
+        elif "penalty" in text or "fixed" in text or "minimum" in text:
+            s.add(var >= clause.value)
+        else:
+            return 1  # clause recognized as LIABILITY but keyword not modeled
+        return 0
+
+    @staticmethod
+    def _unverifiable_result(message: str, unsupported: list) -> dict:
+        return {
+            "verified": False,
+            "status": "unverifiable",
+            "message": message,
+            "unsupported": unsupported,
+        }
+
+    @staticmethod
+    def _build_result(
+        s: Solver,
+        unsupported_categories: list,
+        has_unsupported: bool,
+        unmodeled_supported: int,
+    ) -> dict:
+        """Evaluate Z3 solver and build the final result dict."""
+        has_partial_modeling = has_unsupported or (unmodeled_supported > 0)
+
+        coverage_note = ""
+        if has_unsupported:
+            coverage_note = (
+                f" NOTE: clause(s) with unsupported categories "
+                f"({', '.join(unsupported_categories)}) were excluded from the Z3 model."
+            )
+        if unmodeled_supported > 0:
+            coverage_note += (
+                f" NOTE: {unmodeled_supported} supported-category clause(s) had "
+                f"unrecognized keyword patterns and could not be encoded."
+            )
+
+        result = s.check()
+
+        if result == sat:
+            status = "partial_coverage" if has_partial_modeling else "consistent"
+            # partial_coverage is NOT verified=True — modeling was incomplete
+            verified = status == "consistent"
+            return {
+                "verified": verified,
+                "status": status,
+                "message": (
+                    f"{'✅ CONSISTENT' if verified else '⚠️  PARTIAL COVERAGE'} "
+                    f"(modeled clauses): The DURATION and LIABILITY clauses "
+                    f"{'are logically satisfiable' if verified else 'passed, but modeling is incomplete'}"
+                    f".{coverage_note}"
+                ),
+                "unsupported": unsupported_categories,
+            }
+
+        if result == unknown:
             return {
                 "verified": False,
                 "status": "unverifiable",
                 "message": (
-                    f"UNVERIFIABLE: None of the provided clause categories are modeled by "
-                    f"ContradictionGuard. Supported categories: "
-                    f"{', '.join(sorted(SUPPORTED_CATEGORIES))}. "
-                    f"Received unsupported categories: {', '.join(unsupported_categories)}. "
-                    f"Cannot prove consistency for inputs that are not modeled."
+                    f"UNVERIFIABLE: Z3 returned unknown for the provided constraints "
+                    f"(e.g. timeout or excessive complexity). "
+                    f"Cannot determine consistency.{coverage_note}"
                 ),
                 "unsupported": unsupported_categories,
             }
 
-        # Build Z3 model for supported clauses only
-        s = Solver()
-        contract_duration_months = Int("contract_duration_months")
-        max_liability_usd = Int("max_liability_usd")
-
-        # Physical feasibility constraints
-        s.add(contract_duration_months >= 0)
-        s.add(max_liability_usd >= 0)
-
-        duration_clauses = [c for c in supported if c.category.upper() == "DURATION"]
-        liability_clauses = [c for c in supported if c.category.upper() == "LIABILITY"]
-
-        for c in duration_clauses:
-            text_lower = c.text.lower()
-            if "exactly" in text_lower:
-                s.add(contract_duration_months == c.value)
-            elif "minimum" in text_lower or "at least" in text_lower:
-                s.add(contract_duration_months >= c.value)
-            elif "maximum" in text_lower or "up to" in text_lower:
-                s.add(contract_duration_months <= c.value)
-            # Clauses that don't match any keyword are not silently ignored —
-            # they remain as candidates but generate no constraint.
-            # This is acceptable: the clause was recognized as DURATION but
-            # its keyword pattern is not modeled. Logged in partial_coverage.
-
-        for c in liability_clauses:
-            text_lower = c.text.lower()
-            if "capped" in text_lower or "max" in text_lower or "cap" in text_lower:
-                s.add(max_liability_usd <= c.value)
-            elif (
-                "penalty" in text_lower
-                or "fixed" in text_lower
-                or "minimum" in text_lower
-            ):
-                s.add(max_liability_usd >= c.value)
-
-        # Check satisfiability
-        result = s.check()
-
-        # Determine coverage status
-        has_unsupported = bool(unsupported)
-        coverage_note = ""
-        if has_unsupported:
-            coverage_note = (
-                f" NOTE: {len(unsupported)} clause(s) with unsupported "
-                f"categories ({', '.join(unsupported_categories)}) were excluded from "
-                f"the Z3 model. This result covers only the DURATION/LIABILITY subset."
-            )
-
-        if result == sat:
-            status = "partial_coverage" if has_unsupported else "consistent"
-            return {
-                "verified": True,
-                "status": status,
-                "message": (
-                    f"✅ CONSISTENT (modeled clauses): The DURATION and LIABILITY "
-                    f"clauses are logically satisfiable.{coverage_note}"
-                ),
-                "unsupported": unsupported_categories,
-            }
-        else:
-            return {
-                "verified": False,
-                "status": "contradiction",
-                "message": (
-                    f"❌ CONTRADICTION: The DURATION/LIABILITY clauses are mutually "
-                    f"exclusive (e.g., penalty > liability cap, or min term > max duration). "
-                    f"{coverage_note}"
-                ),
-                "unsupported": unsupported_categories,
-            }
+        # result == unsat → contradiction
+        return {
+            "verified": False,
+            "status": "contradiction",
+            "message": (
+                f"❌ CONTRADICTION: The DURATION/LIABILITY clauses are mutually "
+                f"exclusive (e.g., penalty > liability cap, or min term > max "
+                f"duration).{coverage_note}"
+            ),
+            "unsupported": unsupported_categories,
+        }

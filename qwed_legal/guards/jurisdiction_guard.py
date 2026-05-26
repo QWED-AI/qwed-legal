@@ -246,7 +246,6 @@ class JurisdictionGuard:
         parties_countries: List[str],
         governing_law: str,
         forum: Optional[str] = None,
-        jurisdiction_type: JurisdictionType = JurisdictionType.EXCLUSIVE,
     ) -> JurisdictionResult:
         """
         Verify choice of law and forum selection clause.
@@ -355,7 +354,6 @@ class JurisdictionGuard:
         self,
         forum: str,
         contract_value: Optional[float] = None,
-        parties_countries: Optional[List[str]] = None,
     ) -> JurisdictionResult:
         """
         Verify forum selection clause validity.

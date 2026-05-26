@@ -283,8 +283,8 @@ class TestClauseGuardFailClosed:
                 "Payment due in 60 days.",
             ]
         )
-        # No conflict detected (guard can't see it) but must not claim VERIFIED
-        assert "VERIFIED" not in result.message or "HEURISTIC" in result.message
+        # Must carry the limited-coverage status
+        assert result.status == "heuristic_pass_limited"
 
     def test_heuristic_pass_message_present_for_recognised_clauses(self):
         """Clauses with recognisable termination patterns get HEURISTIC_PASS message."""

@@ -19,6 +19,12 @@ class ClauseResult:
     consistent: bool
     conflicts: List[Tuple[int, int, str]]  # (clause_idx1, clause_idx2, reason)
     message: str
+    status: str = "consistent"
+    # status values:
+    #   "consistent"                  — heuristic checks found no conflicts
+    #   "contradiction"               — at least one conflict detected
+    #   "heuristic_pass_limited"      — no propositions extracted; guard has no coverage
+    #                                   consistent=False but NOT a detected contradiction
 
 
 class ClauseGuard:
@@ -82,18 +88,20 @@ class ClauseGuard:
                 return ClauseResult(
                     consistent=False,
                     conflicts=[],
+                    status="heuristic_pass_limited",
                     message=(
                         "HEURISTIC_PASS (LIMITED COVERAGE): No heuristic propositions "
                         "were extracted from the provided clauses. ClauseGuard only "
                         "recognises termination, notice period, min-term, and exclusivity "
                         "patterns. The clauses may be consistent, but this guard cannot "
-                        "confirm it — downstream consumers should not treat this as "
+                        "confirm it — downstream consumers must not treat this as "
                         "verified consistency."
                     ),
                 )
             return ClauseResult(
                 consistent=True,
                 conflicts=[],
+                status="consistent",
                 message=(
                     "HEURISTIC_PASS: Supported clause checks (termination, notice, "
                     "min-term, exclusivity) found no conflicts. This is a heuristic "
@@ -110,6 +118,7 @@ class ClauseGuard:
         return ClauseResult(
             consistent=False,
             conflicts=conflicts,
+            status="contradiction",
             message=(
                 f"WARNING: {len(conflicts)} potential conflict(s) detected:\n"
                 + "\n".join(conflict_msgs)
