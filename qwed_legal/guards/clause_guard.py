@@ -19,6 +19,12 @@ class ClauseResult:
     consistent: bool
     conflicts: List[Tuple[int, int, str]]  # (clause_idx1, clause_idx2, reason)
     message: str
+    status: str = "consistent"
+    # status values:
+    #   "consistent"                  — heuristic checks found no conflicts
+    #   "contradiction"               — at least one conflict detected
+    #   "heuristic_pass_limited"      — no propositions extracted; guard has no coverage
+    #                                   consistent=False but NOT a detected contradiction
 
 
 class ClauseGuard:
@@ -65,11 +71,42 @@ class ClauseGuard:
         # Check for conflicts using supported heuristics
         conflicts = self._find_conflicts(propositions)
 
+        # Count how many propositions had any extractable content.
+        # If none of the clauses triggered a recognizable proposition, the
+        # heuristic had no coverage — returning "VERIFIED" would be misleading.
+        covered = sum(
+            1
+            for p in propositions
+            if p["can_terminate"]
+            or p["termination_notice_days"] is not None
+            or p["min_term_days"] is not None
+            or p["is_exclusive"]
+        )
+
         if not conflicts:
+            if covered == 0:
+                return ClauseResult(
+                    consistent=False,
+                    conflicts=[],
+                    status="heuristic_pass_limited",
+                    message=(
+                        "HEURISTIC_PASS (LIMITED COVERAGE): No heuristic propositions "
+                        "were extracted from the provided clauses. ClauseGuard only "
+                        "recognises termination, notice period, min-term, and exclusivity "
+                        "patterns. The clauses may be consistent, but this guard cannot "
+                        "confirm it — downstream consumers must not treat this as "
+                        "verified consistency."
+                    ),
+                )
             return ClauseResult(
                 consistent=True,
                 conflicts=[],
-                message="VERIFIED: All supported clause checks found no conflicts.",
+                status="consistent",
+                message=(
+                    "HEURISTIC_PASS: Supported clause checks (termination, notice, "
+                    "min-term, exclusivity) found no conflicts. This is a heuristic "
+                    "result — not deterministic legal verification."
+                ),
             )
 
         conflict_msgs = []
@@ -81,6 +118,7 @@ class ClauseGuard:
         return ClauseResult(
             consistent=False,
             conflicts=conflicts,
+            status="contradiction",
             message=(
                 f"WARNING: {len(conflicts)} potential conflict(s) detected:\n"
                 + "\n".join(conflict_msgs)
@@ -109,9 +147,7 @@ class ClauseGuard:
 
         return propositions
 
-    def _find_conflicts(
-        self, propositions: List[dict]
-    ) -> List[Tuple[int, int, str]]:
+    def _find_conflicts(self, propositions: List[dict]) -> List[Tuple[int, int, str]]:
         """Find logical conflicts between clauses."""
         conflicts = []
 
@@ -136,9 +172,7 @@ class ClauseGuard:
 
         return conflicts
 
-    def _check_termination_conflict(
-        self, prop1: dict, prop2: dict
-    ) -> Optional[str]:
+    def _check_termination_conflict(self, prop1: dict, prop2: dict) -> Optional[str]:
         """Check for conflicting termination clauses."""
         if prop1.get("can_terminate") and prop2.get("min_term_days"):
             notice = prop1.get("termination_notice_days", 0)
@@ -178,9 +212,7 @@ class ClauseGuard:
 
         return None
 
-    def _check_exclusivity_conflict(
-        self, prop1: dict, prop2: dict
-    ) -> Optional[str]:
+    def _check_exclusivity_conflict(self, prop1: dict, prop2: dict) -> Optional[str]:
         """Check for exclusivity conflicts."""
         if prop1.get("is_exclusive") and prop2.get("is_exclusive"):
             parties1 = prop1.get("parties", set())
