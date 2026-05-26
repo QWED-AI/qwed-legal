@@ -186,25 +186,22 @@ class CitationGuard:
         # Try each case reporter pattern.
         # Case-name enforcement is per-pattern: US_SCOTUS and US_FED require a
         # "Party v. Party" prefix; UK_NEUTRAL and INDIA_AIR do not.
+        # We track whether any pattern matched but was skipped due to missing
+        # case name — used to surface the right error message if no pattern succeeds.
+        skipped_for_case_name = False
         for citation_type, pattern in self._compiled_case.items():
             match = pattern.search(text)
             if not match:
                 continue
 
             # For reporter types that mandate a case name, verify one is present.
+            # Use continue (not return): another pattern later in the loop may
+            # match the same text without requiring a case name (e.g. INDIA_AIR).
+            # Returning early would prevent those patterns from being evaluated.
             if citation_type in self._REQUIRES_CASE_NAME:
                 if not _CASE_NAME_RE.search(text):
-                    return CitationResult(
-                        format_valid=False,
-                        status=STATUS_FORMAT_INVALID,
-                        citation=text,
-                        issues=["Missing case name"],
-                        message=(
-                            "FORMAT INVALID: Citation is missing a case name "
-                            "(expected 'Party v. Party, ...' format for "
-                            f"{citation_type} reporter)."
-                        ),
-                    )
+                    skipped_for_case_name = True
+                    continue
 
             components = self._parse_components(match.groupdict())
             return CitationResult(
@@ -219,6 +216,20 @@ class CitationGuard:
                     f"AUTHORITY UNVERIFIABLE: CitationGuard cannot confirm "
                     f"this case exists or is correctly identified. "
                     f"Format match is not proof of legal authority."
+                ),
+            )
+
+        # If a reporter pattern matched but was skipped due to missing case name,
+        # and no other pattern succeeded, surface "Missing case name" specifically.
+        if skipped_for_case_name:
+            return CitationResult(
+                format_valid=False,
+                status=STATUS_FORMAT_INVALID,
+                citation=text,
+                issues=["Missing case name"],
+                message=(
+                    "FORMAT INVALID: Citation is missing a case name "
+                    "(expected 'Party v. Party, ...' format for this reporter)."
                 ),
             )
 

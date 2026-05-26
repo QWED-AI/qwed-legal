@@ -366,3 +366,28 @@ class TestCitationReviewFixes:
     # The action_entrypoint.py correctly gates failure on format_invalid only.
     # Adding a test to confirm action_entrypoint logic is unchanged would require
     # subprocess testing; that is out of scope for unit tests.
+
+
+class TestCitationEarlyReturnBug:
+    """Sentry MEDIUM: premature return prevented later patterns from being checked."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    def test_neutral_citation_not_blocked_by_scotus_miss(self):
+        """UK neutral citation must not be rejected because US_SCOTUS had a partial match."""
+        result = self.guard.verify("[2020] UKSC 5")
+        assert result.format_valid is True
+        assert result.citation_type == "UK_NEUTRAL"
+
+    def test_india_air_not_blocked_by_earlier_pattern(self):
+        """INDIA_AIR must be evaluated even if an earlier pattern partially matched."""
+        result = self.guard.verify("AIR 2001 SC 3021")
+        assert result.format_valid is True
+        assert result.citation_type == "INDIA_AIR"
+
+    def test_bare_scotus_reporter_no_case_name_is_format_invalid(self):
+        """No case name, no alternative pattern: must still return format_invalid."""
+        result = self.guard.verify("347 U.S. 483")
+        assert result.format_valid is False
+        assert result.status == "format_invalid"
