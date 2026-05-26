@@ -240,6 +240,16 @@ class CitationGuard:
                 ),
             )
 
+        # Statute check (done after case patterns to avoid dual-matching)
+        # Important: run this before returning a deferred "Missing case name"
+        # error. Mixed text can contain a bare case reporter fragment (e.g.
+        # "347 U.S. 483") and a valid statute citation. A missing case-name
+        # fragment should not prevent a later valid statute format from being
+        # detected. The result remains FORMAT ONLY / AUTHORITY UNVERIFIABLE.
+        if is_statute:
+            # Let check_statute_citation handle it for a structured result
+            return self.check_statute_citation(text)
+
         # If a reporter pattern matched but was skipped due to missing case name,
         # and no other pattern succeeded, surface "Missing case name" specifically.
         if skipped_for_case_name:
@@ -253,11 +263,6 @@ class CitationGuard:
                     "(expected 'Party v. Party, ...' format for this reporter)."
                 ),
             )
-
-        # Statute check (done after case patterns to avoid dual-matching)
-        if is_statute:
-            # Let check_statute_citation handle it for a structured result
-            return self.check_statute_citation(text)
 
         # Unknown/invalid reporter pattern
         if re.search(r"\d+\s+[A-Z\.]+\s+\d+", text):

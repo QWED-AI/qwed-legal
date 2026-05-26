@@ -426,3 +426,33 @@ class TestCaseNamePositionCheck:
         result = self.guard.verify("123 F.3d 456 Fake v. Case")
         assert result.format_valid is False
         assert result.status == STATUS_FORMAT_INVALID
+
+
+class TestMixedCitationStatuteFallback:
+    """Sentry MEDIUM: bare case fragments must not block valid statute parsing."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    def test_bare_case_fragment_does_not_block_later_statute(self):
+        """A missing case-name fragment should not prevent statute format detection."""
+        result = self.guard.verify("347 U.S. 483 and 42 U.S.C. § 1983")
+        assert result.format_valid is True
+        assert result.status == STATUS_UNVERIFIABLE_AUTHORITY
+        assert result.citation_type == "US_CODE"
+        assert result.verified is False
+
+    def test_later_bare_case_fragment_does_not_block_earlier_statute(self):
+        """Order should not matter when a valid statute citation is present."""
+        result = self.guard.verify("42 U.S.C. § 1983 and 347 U.S. 483")
+        assert result.format_valid is True
+        assert result.status == STATUS_UNVERIFIABLE_AUTHORITY
+        assert result.citation_type == "US_CODE"
+        assert result.verified is False
+
+    def test_bare_case_without_statute_still_missing_case_name(self):
+        """The fallback must not weaken case-name enforcement for case reporters."""
+        result = self.guard.verify("347 U.S. 483")
+        assert result.format_valid is False
+        assert result.status == STATUS_FORMAT_INVALID
+        assert any("case name" in issue.lower() for issue in result.issues)
