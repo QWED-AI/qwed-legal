@@ -13,7 +13,6 @@ Key invariants:
 
 from qwed_legal.guards.citation_guard import (
     CitationGuard,
-    STATUS_FORMAT_VALID,
     STATUS_FORMAT_INVALID,
     STATUS_UNVERIFIABLE_AUTHORITY,
 )
@@ -237,13 +236,17 @@ class TestStatusConstants:
     """Status constants are importable and have correct values."""
 
     def test_status_constants_exist(self):
-        assert STATUS_FORMAT_VALID == "format_valid"
+        """Only STATUS_FORMAT_INVALID and STATUS_UNVERIFIABLE_AUTHORITY are returned."""
         assert STATUS_FORMAT_INVALID == "format_invalid"
         assert STATUS_UNVERIFIABLE_AUTHORITY == "unverifiable_authority"
 
-    def test_format_valid_and_unverifiable_are_distinct(self):
-        """format_valid status and unverifiable_authority are separate concepts."""
-        assert STATUS_FORMAT_VALID != STATUS_UNVERIFIABLE_AUTHORITY
+    def test_format_valid_status_never_returned(self):
+        """format_valid status is never returned — would conflate format with authority."""
+        from qwed_legal.guards.citation_guard import CitationGuard as CG
+
+        r = CG().verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
+        assert r.status != "format_valid"
+        assert r.status == STATUS_UNVERIFIABLE_AUTHORITY
 
 
 class TestCitationReviewFixes:

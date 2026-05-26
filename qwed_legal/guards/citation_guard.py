@@ -13,12 +13,13 @@ IMPORTANT — scope of this guard:
 
   Consumers MUST treat CitationGuard results as FORMAT_VALID / FORMAT_INVALID,
   never as VERIFIED legal authority. The status field makes this explicit:
-    status="format_valid"            — matches a known reporter pattern
-    status="format_invalid"          — does not match any pattern
-    status="unverifiable_authority"  — format is valid but authority is unconfirmed
+    status="format_invalid"          — does not match any known reporter pattern
+    status="unverifiable_authority"  — matches a pattern; authority unconfirmed
+                                       (this is the normal result for valid-format
+                                       citations — format ≠ authority)
 
-  A status of "format_valid" or "unverifiable_authority" does NOT mean the
-  cited case exists. Authority verification requires an external legal database.
+  A status of "unverifiable_authority" does NOT mean the cited case exists.
+  Authority verification requires an external legal database.
 """
 
 import re
@@ -27,11 +28,16 @@ from typing import Any, Dict, List, Optional
 
 
 # Status constants — use these instead of comparing strings directly
-STATUS_FORMAT_VALID = "format_valid"
+#
+# Possible values returned by verify() and check_statute_citation():
+#   STATUS_FORMAT_INVALID          — citation does not match any known pattern
+#   STATUS_UNVERIFIABLE_AUTHORITY  — citation matches a pattern but authority
+#                                   cannot be confirmed (no database access)
+#
+# Note: there is intentionally NO "format_valid" status. When a citation matches
+# a reporter pattern, status is ALWAYS "unverifiable_authority" — because format
+# validity does not imply authority validity and must not be confused with it.
 STATUS_FORMAT_INVALID = "format_invalid"
-# Returned alongside format_valid when authority cannot be confirmed.
-# This is ALWAYS set when a format match is found — CitationGuard cannot
-# check case databases, so authority is always unverifiable.
 STATUS_UNVERIFIABLE_AUTHORITY = "unverifiable_authority"
 
 # Regex for a case name prefix — supports special chars in party names:
@@ -48,8 +54,10 @@ class CitationResult:
     Fields:
         format_valid    — True if citation matches a known reporter pattern.
                           Does NOT mean the cited case exists.
-        status          — one of STATUS_FORMAT_VALID, STATUS_FORMAT_INVALID,
-                          or STATUS_UNVERIFIABLE_AUTHORITY.
+        status          — one of STATUS_FORMAT_INVALID or STATUS_UNVERIFIABLE_AUTHORITY.
+                          Note: STATUS_FORMAT_VALID is never returned — when a citation
+                          matches a pattern, status is always STATUS_UNVERIFIABLE_AUTHORITY
+                          because format validity does not imply authority validity.
         citation        — the original citation text passed to verify(). Included
                           so callers and the TypeScript SDK can echo it back.
         citation_type   — reporter category matched (e.g., "US_SCOTUS"), or None.
