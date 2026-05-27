@@ -420,6 +420,7 @@ class TestLegalGuard:
         )
 
         assert result.verified is False
+        assert result.conflicts == []
         assert result.forum == "New York"
         assert result.warnings
         assert "UNVERIFIABLE" in result.message
