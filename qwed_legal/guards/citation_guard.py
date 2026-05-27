@@ -1,116 +1,389 @@
+"""
+CitationGuard: Validate legal citation format.
+
+IMPORTANT — scope of this guard:
+  CitationGuard checks whether a citation STRING matches a known reporter
+  pattern (e.g., U.S., F.3d, UKSC). This is FORMAT validation only.
+
+  Format validity is NOT authority validity:
+  - A well-formatted citation may refer to a case that does not exist.
+  - A hallucinated citation with a plausible reporter still passes format checks.
+  - This guard has no access to case law databases, and cannot confirm that the
+    cited authority exists, is correctly identified, or applies to the claim made.
+
+  Consumers MUST treat CitationGuard results as FORMAT_VALID / FORMAT_INVALID,
+  never as VERIFIED legal authority. The status field makes this explicit:
+    status="format_invalid"          — does not match any known reporter pattern
+    status="unverifiable_authority"  — matches a pattern; authority unconfirmed
+                                       (this is the normal result for valid-format
+                                       citations — format ≠ authority)
+
+  A status of "unverifiable_authority" does NOT mean the cited case exists.
+  Authority verification requires an external legal database.
+"""
+
 import re
-from typing import Dict, Any, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
+
+# Status constants — use these instead of comparing strings directly
+#
+# Possible values returned by verify() and check_statute_citation():
+#   STATUS_FORMAT_INVALID          — citation does not match any known pattern
+#   STATUS_UNVERIFIABLE_AUTHORITY  — citation matches a pattern but authority
+#                                   cannot be confirmed (no database access)
+#
+# Note: there is intentionally NO "format_valid" status. When a citation matches
+# a reporter pattern, status is ALWAYS "unverifiable_authority" — because format
+# validity does not imply authority validity and must not be confused with it.
+STATUS_FORMAT_INVALID = "format_invalid"
+STATUS_UNVERIFIABLE_AUTHORITY = "unverifiable_authority"
+
+# Pattern that matches " v. " — the defining element of a party-vs-party case name.
+# Used positionally: we require this marker to appear BEFORE the reporter match start,
+# not just anywhere in the string.
+_V_DOT_RE = re.compile(r"\sv\.\s", re.IGNORECASE)
+
+
+@dataclass
 class CitationResult:
-    """Helper class to match test expectations for object attributes (result.valid)."""
-    def __init__(self, valid: bool, parsed_components: Optional[Dict[str, Any]] = None, issues: Optional[List[str]] = None, risk: str = ""):
-        self.valid = valid
-        self.parsed_components = parsed_components or {}
-        self.issues = issues or []
-        self.risk = risk
-        self.verified = valid # Alias
+    """
+    Result of a citation format check.
 
+    Fields:
+        format_valid    — True if citation matches a known reporter pattern.
+                          Does NOT mean the cited case exists.
+        status          — one of STATUS_FORMAT_INVALID or STATUS_UNVERIFIABLE_AUTHORITY.
+                          Note: STATUS_FORMAT_VALID is never returned — when a citation
+                          matches a pattern, status is always STATUS_UNVERIFIABLE_AUTHORITY
+                          because format validity does not imply authority validity.
+        citation        — the original citation text passed to verify(). Included
+                          so callers and the TypeScript SDK can echo it back.
+        citation_type   — reporter category matched (e.g., "US_SCOTUS"), or None.
+        parsed_components — regex-extracted fields (volume, reporter, page, etc.
+                          Numeric fields are coerced to int where possible.)
+        issues          — list of format problems found (empty when format_valid=True)
+        message         — human-readable explanation of the result
+        risk            — optional risk level string
+    """
+
+    format_valid: bool
+    status: str
+    citation: str = ""  # original input text — for SDK / caller echo-back
+    citation_type: Optional[str] = None
+    parsed_components: Dict[str, Any] = field(default_factory=dict)
+    issues: List[str] = field(default_factory=list)
+    message: str = ""
+    risk: Optional[str] = None
+
+    # ── Backward-compatibility properties ─────────────────────────────────────
+    @property
+    def valid(self) -> bool:
+        """Alias for format_valid. Use format_valid in new code."""
+        return self.format_valid
+
+    @property
+    def verified(self) -> bool:
+        """
+        Always False.
+
+        CitationGuard cannot verify legal authority — it has no access to case
+        law databases. Returning True here would be a false claim of authority
+        proof. Use format_valid to check citation format only.
+        """
+        return False
+
+
+@dataclass
 class BatchCitationResult:
-    """Helper class for batch results."""
-    def __init__(self, total: int, valid: int, invalid: int):
-        self.total = total
-        self.valid = valid
-        self.invalid = invalid
+    """Result of a batch citation format check."""
+
+    total: int
+    format_valid: int
+    format_invalid: int
+
+    # Backward-compat aliases
+    @property
+    def valid(self) -> int:
+        return self.format_valid
+
+    @property
+    def invalid(self) -> int:
+        return self.format_invalid
+
 
 class CitationGuard:
     """
-    Verifies that legal citations follow standard reporter formats.
-    Prevents 'Hallucinated Citations' like 'Mata v. Avianca'.
+    Validate legal citation format against known reporter patterns.
+
+    Scope: FORMAT CHECKING ONLY.
+
+    This guard does NOT:
+    - Confirm a cited case exists in any database.
+    - Validate that a case name is real or correctly identified.
+    - Verify that a cited authority supports the proposition claimed.
+    - Detect hallucinated citations that use plausible reporter formats.
+
+    A CitationResult with format_valid=True means: "the citation STRING looks
+    like a real citation." It does not mean: "this legal authority exists."
+
+    Downstream consumers MUST check result.status to distinguish:
+      STATUS_UNVERIFIABLE_AUTHORITY  → format ok, authority unknown (normal passing state)
+      STATUS_FORMAT_INVALID          → citation is malformed
     """
-    def __init__(self):
-        # Regex for common US/UK Reporters (e.g., "501 U.S. 321", "2023 EWCA Civ 10")
-        self.patterns = {
-            "US_SCOTUS": r"(?P<volume>\d{1,4})\s+(?P<reporter>U\.?S\.?)\s+(?P<page>\d{1,4})",
-            "US_FED": r"(?P<volume>\d{1,4})\s+(?P<reporter>F\.(?:2d|3d)?)\s+(?P<page>\d{1,4})",
-            "UK_NEUTRAL": r"\[(?P<year>\d{4})\]\s+(?P<court>UKSC|EWCA\s+Civ|EWHC)\s+(?P<number>\d+)",
-            "INDIA_AIR": r"AIR\s+(?P<year>\d{4})\s+(?P<court>SC|Bom|Del)\s+(?P<page>\d+)"
+
+    # Known case citation reporter patterns.
+    # Patterns for case reporters (US_SCOTUS, US_FED) require a case name to
+    # appear BEFORE the reporter group. Neutral citation patterns (UK_NEUTRAL)
+    # do not mandate a party-name prefix.
+    CASE_PATTERNS: Dict[str, str] = {
+        # U.S. Supreme Court: "Brown v. Board, 347 U.S. 483"
+        # Case name enforced by requiring .+ v. . prefix before the volume/reporter
+        "US_SCOTUS": (
+            r"(?i)(?:.+\sv\.\s\S.+?\s)?"
+            r"(?P<volume>\d{1,4})\s+(?P<reporter>U\.?S\.?)\s+(?P<page>\d{1,4})"
+        ),
+        # Federal Reporter: "Smith v. Jones, 123 F.3d 456"
+        "US_FED": (
+            r"(?i)(?:.+\sv\.\s\S.+?\s)?"
+            r"(?P<volume>\d{1,4})\s+(?P<reporter>F\.(?:2d|3d)?)\s+(?P<page>\d{1,4})"
+        ),
+        # UK Neutral: "[2020] UKSC 5" — no party names required
+        "UK_NEUTRAL": (
+            r"\[(?P<year>\d{4})\]\s+(?P<court>UKSC|EWCA\s+Civ|EWHC)\s+(?P<number>\d+)"
+        ),
+        # India AIR: "AIR 2001 SC 3021" — no party names required
+        "INDIA_AIR": (r"AIR\s+(?P<year>\d{4})\s+(?P<court>SC|Bom|Del)\s+(?P<page>\d+)"),
+    }
+
+    # Case reporter types that require a "Party v. Party" prefix to be format-valid.
+    # Neutral citation types (UK_NEUTRAL, INDIA_AIR) do not require party names.
+    _REQUIRES_CASE_NAME = frozenset({"US_SCOTUS", "US_FED"})
+
+    # Known statute citation patterns
+    STATUTE_PATTERNS: Dict[str, str] = {
+        "US_CODE": r"(?P<title>\d{1,3})\s+U\.?S\.?C\.?\s+§+\s*(?P<section>[\d\w]+)",
+    }
+
+    def __init__(self) -> None:
+        # Compile patterns once at init time (not dynamically at runtime)
+        self._compiled_case = {k: re.compile(v) for k, v in self.CASE_PATTERNS.items()}
+        self._compiled_statute = {
+            k: re.compile(v) for k, v in self.STATUTE_PATTERNS.items()
         }
-        self.statute_patterns = {
-           "US_CODE": r"(?P<title>\d{1,3})\s+U\.?S\.?C\.?\s+§+\s*(?P<section>[\d\w]+)" 
-        }
+
+    # ── Public API ─────────────────────────────────────────────────────────────
 
     def verify(self, text: str) -> CitationResult:
         """
-        Scans text for a valid legal citation match.
-        Used by tests: result.valid, result.parsed_components.get("volume")
+        Check whether `text` matches a known legal citation format.
+
+        Returns CitationResult with:
+          format_valid=True  + status=STATUS_UNVERIFIABLE_AUTHORITY
+              when a reporter pattern matches (and case-name is present if required).
+              WARNING: this does NOT confirm the cited case exists.
+
+          format_valid=False + status=STATUS_FORMAT_INVALID
+              when no pattern matches or required elements are missing.
+
+        Authority is ALWAYS unverifiable — CitationGuard has no database access.
         """
-        # Case Name Check: Must look like "Something v. Something" or valid statute
-        # But this method seems to be checking a SINGLE citation string in tests, e.g. "Brown v. Board ..., 347 U.S. 483"
-        
-        # 1. Parse Case Name
-        case_name_match = re.search(r"^([A-Z][a-zA-Z\s\.]+)\sv\.\s([A-Z][a-zA-Z\s\.,]+)", text)
         is_statute = "U.S.C." in text or "§" in text
-        
-        if not case_name_match and not is_statute:
-             # Basic heuristic from tests: "123 U.S. 456" fails "missing case name"
-             # "Fake v. Case" works for name, but might fail reporter.
-             
-             # If it looks like a citation but no name:
-             if re.search(r"\d+\s+[A-Za-z\.]+\s+\d+", text):
-                 return CitationResult(False, issues=["Missing case name"])
 
-        # 2. Check Reporters
-        for key, pat in self.patterns.items():
-            match = re.search(pat, text)
-            if match:
-                components = match.groupdict()
-                # Convert volume to int if present, for tests
-                if "volume" in components:
-                    try:
-                        components["volume"] = int(components["volume"])
-                    except (ValueError, TypeError): 
-                        pass
-                
-                return CitationResult(True, parsed_components=components)
+        # Try each case reporter pattern.
+        # Case-name enforcement is per-pattern: US_SCOTUS and US_FED require a
+        # "Party v. Party" prefix; UK_NEUTRAL and INDIA_AIR do not.
+        # We track whether any pattern matched but was skipped due to missing
+        # case name — used to surface the right error message if no pattern succeeds.
+        skipped_for_case_name = False
+        for citation_type, pattern in self._compiled_case.items():
+            match = pattern.search(text)
+            if not match:
+                continue
 
-        # 3. Check Unknown/Invalid Reporter
-        # e.g. "999 X.Y.Z. 123"
+            # For reporter types that mandate a case name, verify one is present
+            # AND that it appears BEFORE the reporter in the string.
+            # Positional check prevents "347 U.S. 483 Smith v. Jones" from passing
+            # (case name after reporter is not a valid citation prefix).
+            # Use continue (not return): a later pattern may match without case name.
+            if citation_type in self._REQUIRES_CASE_NAME:
+                v_dot = _V_DOT_RE.search(text)
+                # "v." must exist AND appear before the volume number.
+                # Use match.start("volume") — the volume group is always the first
+                # numeric capture and is the true start of the reporter section.
+                # match.start() alone would be 0 because the pattern has an optional
+                # case-name prefix group, making match.start() unreliable here.
+                volume_start = (
+                    match.start("volume")
+                    if "volume" in match.groupdict()
+                    else match.start()
+                )
+                if not v_dot or v_dot.start() >= volume_start:
+                    # No "v." found, or "v." at/after reporter — case name not a prefix
+                    skipped_for_case_name = True
+                    continue
+
+            components = self._parse_components(match.groupdict())
+            return CitationResult(
+                format_valid=True,
+                status=STATUS_UNVERIFIABLE_AUTHORITY,
+                citation=text,
+                citation_type=citation_type,
+                parsed_components=components,
+                message=(
+                    f"FORMAT VALID ({citation_type}): Citation matches the "
+                    f"{citation_type} reporter pattern. "
+                    f"AUTHORITY UNVERIFIABLE: CitationGuard cannot confirm "
+                    f"this case exists or is correctly identified. "
+                    f"Format match is not proof of legal authority."
+                ),
+            )
+
+        # Statute check (done after case patterns to avoid dual-matching)
+        # Important: run this before returning a deferred "Missing case name"
+        # error. Mixed text can contain a bare case reporter fragment (e.g.
+        # "347 U.S. 483") and a valid statute citation. A missing case-name
+        # fragment should not prevent a later valid statute format from being
+        # detected. The result remains FORMAT ONLY / AUTHORITY UNVERIFIABLE.
+        if is_statute:
+            # Let check_statute_citation handle it for a structured result
+            return self.check_statute_citation(text)
+
+        # If a reporter pattern matched but was skipped due to missing case name,
+        # and no other pattern succeeded, surface "Missing case name" specifically.
+        if skipped_for_case_name:
+            return CitationResult(
+                format_valid=False,
+                status=STATUS_FORMAT_INVALID,
+                citation=text,
+                issues=["Missing case name"],
+                message=(
+                    "FORMAT INVALID: Citation is missing a case name "
+                    "(expected 'Party v. Party, ...' format for this reporter)."
+                ),
+            )
+
+        # Unknown/invalid reporter pattern
         if re.search(r"\d+\s+[A-Z\.]+\s+\d+", text):
-             return CitationResult(False, issues=["Unknown reporter"])
-             
-        return CitationResult(False, issues=["No valid citation found"])
+            return CitationResult(
+                format_valid=False,
+                status=STATUS_FORMAT_INVALID,
+                citation=text,
+                issues=["Unknown reporter"],
+                message=(
+                    "FORMAT INVALID: Citation contains an unrecognized reporter "
+                    "abbreviation. Supported reporters: "
+                    f"{', '.join(self.CASE_PATTERNS.keys())}."
+                ),
+            )
 
-    def verify_batch(self, citations: List[str]) -> BatchCitationResult:
+        return CitationResult(
+            format_valid=False,
+            status=STATUS_FORMAT_INVALID,
+            citation=text,
+            issues=["No valid citation found"],
+            message="FORMAT INVALID: No recognizable citation pattern found in the text.",
+        )
+
+    def verify_citation_format(self, text: str) -> Dict[str, Any]:
         """
-        Verifies a list of citations.
+        Explicit format-check API. Returns a dict describing format validity only.
+
+        Backward-compat note:
+          - 'verified' key is retained as a deprecated alias for format_valid.
+            It reflects whether the citation FORMAT is valid, NOT whether the
+            legal authority exists. New code should use 'format_valid' instead.
+          - 'authority_verified' is always False (canonical field for auth check).
         """
-        valid_count = 0
-        invalid_count = 0
-        for cite in citations:
-            res = self.verify(cite)
-            if res.valid:
-                valid_count += 1
-            else:
-                invalid_count += 1
-        
-        return BatchCitationResult(len(citations), valid_count, invalid_count)
+        result = self.verify(text)
+        return {
+            "format_valid": result.format_valid,
+            # Deprecated alias — equals format_valid, not authority verification.
+            # Kept for backward compatibility. Use 'format_valid' in new code.
+            "verified": result.format_valid,
+            "status": result.status,
+            "citation_type": result.citation_type,
+            "citation": result.citation,
+            "issues": result.issues,
+            "message": result.message,
+            # Explicit authority fields — these are the canonical source of truth
+            "authority_verified": False,
+            "authority_note": (
+                "CitationGuard performs format validation only. "
+                "Authority verification requires an external legal database."
+            ),
+        }
 
     def check_statute_citation(self, text: str) -> CitationResult:
         """
-        Verifies statute citations like '42 U.S.C. § 1983'.
-        """
-        for key, pat in self.statute_patterns.items():
-            match = re.search(pat, text)
-            if match:
-                components = match.groupdict()
-                if "title" in components:
-                    try:
-                        components["title"] = int(components["title"])
-                    except (ValueError, TypeError):
-                        pass
-                return CitationResult(True, parsed_components=components)
-        
-        return CitationResult(False, issues=["Invalid statute format"])
+        Check whether `text` matches a known statute citation format (e.g., 42 U.S.C. § 1983).
 
-    # Keep original method for backward compatibility/other usage if needed, or alias it
-    def verify_citation_format(self, text: str) -> Dict[str, Any]:
-        res = self.verify(text)
-        return {
-            "verified": res.valid,
-            "issues": res.issues
-        }
+        Same scope as verify(): FORMAT ONLY. Does not confirm the statute section exists
+        or has the legal meaning attributed to it.
+        """
+        for citation_type, pattern in self._compiled_statute.items():
+            match = pattern.search(text)
+            if match:
+                components = self._parse_components(match.groupdict())
+                return CitationResult(
+                    format_valid=True,
+                    status=STATUS_UNVERIFIABLE_AUTHORITY,
+                    citation=text,
+                    citation_type=citation_type,
+                    parsed_components=components,
+                    message=(
+                        f"FORMAT VALID ({citation_type}): Statute citation matches "
+                        f"the {citation_type} pattern. "
+                        f"AUTHORITY UNVERIFIABLE: CitationGuard cannot confirm "
+                        f"this statute section exists or applies as cited."
+                    ),
+                )
+
+        return CitationResult(
+            format_valid=False,
+            status=STATUS_FORMAT_INVALID,
+            citation=text,
+            issues=["Invalid statute format"],
+            message=(
+                "FORMAT INVALID: No recognized statute citation pattern found. "
+                f"Supported patterns: {', '.join(self.STATUTE_PATTERNS.keys())}."
+            ),
+        )
+
+    def verify_batch(self, citations: List[str]) -> BatchCitationResult:
+        """
+        Check a list of citation strings for format validity.
+
+        Returns counts of format_valid and format_invalid. Note that format_valid
+        citations are NOT verified legal authorities — see verify() for details.
+        """
+        valid_count = sum(1 for c in citations if self.verify(c).format_valid)
+        invalid_count = len(citations) - valid_count
+        return BatchCitationResult(
+            total=len(citations),
+            format_valid=valid_count,
+            format_invalid=invalid_count,
+        )
+
+    # ── Private helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_components(groupdict: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Coerce numeric fields to int where possible.
+
+        Fields coerced: volume, title, page, number, year.
+        All other fields are left as-is.
+        """
+        _NUMERIC_FIELDS = {"volume", "title", "page", "number", "year"}
+        result = {}
+        for key, value in groupdict.items():
+            if value is not None and key in _NUMERIC_FIELDS:
+                try:
+                    result[key] = int(value)
+                except (ValueError, TypeError):
+                    result[key] = value
+            else:
+                result[key] = value
+        return result
