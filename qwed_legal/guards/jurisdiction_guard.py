@@ -264,13 +264,10 @@ class JurisdictionGuard:
             return False
 
         upper = jurisdiction.upper().strip()
-        known_country_codes = (
-            self.COMMON_LAW_JURISDICTIONS | self.CIVIL_LAW_JURISDICTIONS
-        )
-        return (
-            (upper in self.COUNTRY_NAMES and normalized != "US")
-            or (upper in known_country_codes and upper != "US")
-        )
+        # Only full country names are unambiguous here. Raw two-letter values
+        # such as "DE" may mean either Germany or Delaware depending on context,
+        # so keep those eligible for US-state checks in governing-law/forum logic.
+        return upper in self.COUNTRY_NAMES and normalized != "US"
 
     def verify_choice_of_law(
         self,

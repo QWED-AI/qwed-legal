@@ -414,16 +414,15 @@ class TestJurisdictionGuardFailClosed:
         assert result.conflicts == []
         assert not any("CISG" in warning for warning in result.warnings)
 
-    def test_governing_law_country_code_not_treated_as_us_state(self):
-        """DE as Germany must not be treated as Delaware in mismatch checks."""
+    def test_ambiguous_de_code_still_supports_delaware_mismatch_check(self):
+        """Raw DE is ambiguous and must still support Delaware mismatch checks."""
         result = self.guard.verify_choice_of_law(
             parties_countries=["FR", "IT"],
             governing_law="DE",
             forum="London",
         )
 
-        assert result.conflicts == []
-        assert not any("US state" in conflict for conflict in result.conflicts)
+        assert any("US state" in conflict for conflict in result.conflicts)
 
     def test_governing_law_country_name_not_treated_as_us_state(self):
         """Germany normalizes to DE but must remain a country reference."""
