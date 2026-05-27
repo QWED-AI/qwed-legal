@@ -4,6 +4,7 @@ LiabilityGuard: Verify liability cap calculations in contracts.
 Catches percentage miscalculations, cap verification errors, and multi-tier liability issues.
 """
 
+import warnings
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
@@ -79,6 +80,14 @@ class LiabilityGuard:
         Returns:
             LiabilityResult with verification status
         """
+        if tolerance_percent is not None:
+            warnings.warn(
+                "tolerance_percent is deprecated and ignored; liability caps "
+                "must match exactly after currency rounding",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         cv = Decimal(str(contract_value))
         pct = Decimal(str(cap_percentage)) / Decimal("100")
         claimed = Decimal(str(claimed_cap))

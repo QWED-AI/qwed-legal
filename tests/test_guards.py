@@ -87,14 +87,31 @@ class TestLiabilityGuard:
     def test_cap_method_tolerance_argument_does_not_verify_wrong_cap(self):
         """Deprecated method-level tolerance cannot turn an incorrect cap into proof."""
         guard = LiabilityGuard()
-        result = guard.verify_cap(
-            contract_value=1_000_000.0,
-            cap_percentage=10.0,
-            claimed_cap=100_900.0,
-            tolerance_percent=1.0,
-        )
+        with pytest.warns(DeprecationWarning, match="deprecated and ignored"):
+            result = guard.verify_cap(
+                contract_value=1_000_000.0,
+                cap_percentage=10.0,
+                claimed_cap=100_900.0,
+                tolerance_percent=1.0,
+            )
         assert result.verified is False
         assert result.difference == Decimal("900.00")
+
+    def test_cap_rounds_half_up_before_exact_comparison(self):
+        """Exact verification follows modeled HALF_UP currency rounding."""
+        guard = LiabilityGuard()
+
+        exact = guard.verify_cap(Decimal("100000.005"), 100, Decimal("100000.01"))
+        assert exact.verified is True
+        assert exact.computed_cap == Decimal("100000.01")
+
+        rounded_down = guard.verify_cap(
+            Decimal("100000.005"), 100, Decimal("100000.00")
+        )
+        assert rounded_down.verified is False
+        assert rounded_down.computed_cap == Decimal("100000.01")
+        assert rounded_down.difference == Decimal("0.01")
+        assert "tolerance is not accepted" in rounded_down.message.lower()
 
     def test_cap_100_percent(self):
         """Test 100% liability cap."""
