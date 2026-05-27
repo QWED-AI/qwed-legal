@@ -1,5 +1,6 @@
 """Tests for QWED-Legal guards."""
 
+from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
@@ -74,6 +75,44 @@ class TestLiabilityGuard:
         assert result.verified is False
         assert "mismatch" in result.message.lower()
 
+    def test_cap_close_enough_is_not_verified(self):
+        """Issue #19: approximate cap matches must fail closed, not verify."""
+        guard = LiabilityGuard(tolerance_percent=1.0)
+        result = guard.verify_cap(1_000_000.0, 10.0, 100_900.0)
+        assert result.verified is False
+        assert result.computed_cap == Decimal("100000.00")
+        assert result.difference == Decimal("900.00")
+        assert "tolerance is not accepted" in result.message.lower()
+
+    def test_cap_method_tolerance_argument_does_not_verify_wrong_cap(self):
+        """Deprecated method-level tolerance cannot turn an incorrect cap into proof."""
+        guard = LiabilityGuard()
+        with pytest.warns(DeprecationWarning, match="deprecated and ignored"):
+            result = guard.verify_cap(
+                contract_value=1_000_000.0,
+                cap_percentage=10.0,
+                claimed_cap=100_900.0,
+                tolerance_percent=1.0,
+            )
+        assert result.verified is False
+        assert result.difference == Decimal("900.00")
+
+    def test_cap_rounds_half_up_before_exact_comparison(self):
+        """Exact verification follows modeled HALF_UP currency rounding."""
+        guard = LiabilityGuard()
+
+        exact = guard.verify_cap(Decimal("100000.005"), 100, Decimal("100000.01"))
+        assert exact.verified is True
+        assert exact.computed_cap == Decimal("100000.01")
+
+        rounded_down = guard.verify_cap(
+            Decimal("100000.005"), 100, Decimal("100000.00")
+        )
+        assert rounded_down.verified is False
+        assert rounded_down.computed_cap == Decimal("100000.01")
+        assert rounded_down.difference == Decimal("0.01")
+        assert "tolerance is not accepted" in rounded_down.message.lower()
+
     def test_cap_100_percent(self):
         """Test 100% liability cap."""
         guard = LiabilityGuard()
@@ -91,6 +130,17 @@ class TestLiabilityGuard:
         result = guard.verify_tiered_liability(tiers, 1_250_000)
         assert result.verified is True
 
+    def test_tiered_liability_close_enough_is_not_verified(self):
+        """Tiered liability must also reject approximate close-enough totals."""
+        guard = LiabilityGuard(tolerance_percent=1.0)
+        result = guard.verify_tiered_liability(
+            [{"base": 1_000_000, "percentage": 10}], 100_900.0
+        )
+        assert result.verified is False
+        assert result.total_computed == Decimal("100000.00")
+        assert result.claimed_total == Decimal("100900.0")
+        assert "tolerance is not accepted" in result.message.lower()
+
     def test_indemnity_limit(self):
         """Test indemnity limit calculation (3x annual fee)."""
         guard = LiabilityGuard()
@@ -102,6 +152,15 @@ class TestLiabilityGuard:
         guard = LiabilityGuard()
         result = guard.verify_indemnity_limit(100_000, 3, 400_000)
         assert result.verified is False
+
+    def test_indemnity_limit_close_enough_is_not_verified(self):
+        """Indemnity limit verification must not accept approximate values."""
+        guard = LiabilityGuard(tolerance_percent=1.0)
+        result = guard.verify_indemnity_limit(100_000.0, 3, 300_900.0)
+        assert result.verified is False
+        assert result.computed_cap == Decimal("300000.00")
+        assert result.difference == Decimal("900.00")
+        assert "tolerance is not accepted" in result.message.lower()
 
 
 class TestClauseGuard:
