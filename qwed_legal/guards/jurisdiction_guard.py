@@ -252,6 +252,20 @@ class JurisdictionGuard:
             return self.COUNTRY_NAMES[upper]
         return upper
 
+    def _normalize_party_country(self, country: str) -> str:
+        """Normalize party-country input using country-level semantics.
+
+        Unlike jurisdiction normalization, this must not turn raw two-letter
+        country codes such as DE/IN into US states. Full US state names are
+        treated as US to avoid misclassifying domestic contracts as foreign.
+        """
+        upper = country.upper().strip()
+        if upper in self.COUNTRY_NAMES:
+            return self.COUNTRY_NAMES[upper]
+        if upper in self.US_STATE_NAMES:
+            return "US"
+        return upper
+
     def _is_non_us_country_reference(
         self, jurisdiction: Optional[str], normalized: Optional[str]
     ) -> bool:
@@ -296,7 +310,7 @@ class JurisdictionGuard:
 
         # Normalize inputs (convert full state names to abbreviations)
         governing_law_upper = self._normalize_jurisdiction(governing_law)
-        parties_upper = [self._normalize_jurisdiction(p) for p in parties_countries]
+        parties_upper = [self._normalize_party_country(p) for p in parties_countries]
         forum_upper = (
             self._normalize_jurisdiction(selected_forum) if selected_forum else None
         )
