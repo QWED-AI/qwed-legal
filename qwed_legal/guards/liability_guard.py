@@ -6,7 +6,7 @@ Catches percentage miscalculations, cap verification errors, and multi-tier liab
 
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -51,7 +51,10 @@ class LiabilityGuard:
         Initialize LiabilityGuard.
         
         Args:
-            tolerance_percent: Tolerance for floating-point errors (default: 0.01%)
+            tolerance_percent: Deprecated compatibility argument. Liability
+                verification is exact after currency rounding; tolerance is not
+                used as a success criterion because approximate caps are not
+                legal proof.
         """
         self.tolerance = Decimal(str(tolerance_percent)) / Decimal("100")
     
@@ -59,7 +62,8 @@ class LiabilityGuard:
         self,
         contract_value: float,
         cap_percentage: float,
-        claimed_cap: float
+        claimed_cap: float,
+        tolerance_percent: Optional[float] = None,
     ) -> LiabilityResult:
         """
         Verify a simple liability cap calculation.
@@ -68,6 +72,9 @@ class LiabilityGuard:
             contract_value: Total value of the contract
             cap_percentage: Liability cap as percentage (e.g., 200 for 200%)
             claimed_cap: The cap amount claimed by the LLM
+            tolerance_percent: Deprecated compatibility argument. Ignored for
+                verification; liability caps must match exactly after currency
+                rounding unless a separate contractual rounding rule is modeled.
         
         Returns:
             LiabilityResult with verification status
@@ -78,9 +85,8 @@ class LiabilityGuard:
         
         computed = (cv * pct).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         difference = abs(computed - claimed)
-        tolerance_amount = computed * self.tolerance
         
-        verified = difference <= tolerance_amount
+        verified = difference == Decimal("0")
         
         if verified:
             message = f"✅ VERIFIED: Liability cap of ${claimed:,.2f} is correct."
@@ -89,7 +95,8 @@ class LiabilityGuard:
                 f"❌ ERROR: Liability cap mismatch. "
                 f"{cap_percentage}% of ${contract_value:,.2f} = ${computed:,.2f}, "
                 f"but LLM claimed ${claimed:,.2f}. "
-                f"Difference: ${difference:,.2f}"
+                f"Difference: ${difference:,.2f}. "
+                "Approximate tolerance is not accepted as legal proof."
             )
         
         return LiabilityResult(
@@ -133,9 +140,8 @@ class LiabilityGuard:
         
         claimed = Decimal(str(claimed_total))
         difference = abs(total_computed - claimed)
-        tolerance_amount = total_computed * self.tolerance if total_computed > 0 else Decimal("1")
         
-        verified = difference <= tolerance_amount
+        verified = difference == Decimal("0")
         
         if verified:
             message = f"✅ VERIFIED: Total tiered liability of ${claimed:,.2f} is correct."
@@ -144,7 +150,8 @@ class LiabilityGuard:
                 f"❌ ERROR: Tiered liability mismatch. "
                 f"Computed total: ${total_computed:,.2f}, "
                 f"but LLM claimed ${claimed:,.2f}. "
-                f"Difference: ${difference:,.2f}"
+                f"Difference: ${difference:,.2f}. "
+                "Approximate tolerance is not accepted as legal proof."
             )
         
         return TieredLiabilityResult(
@@ -180,9 +187,8 @@ class LiabilityGuard:
         
         computed = (fee * mult).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         difference = abs(computed - claimed)
-        tolerance_amount = computed * self.tolerance
         
-        verified = difference <= tolerance_amount
+        verified = difference == Decimal("0")
         
         if verified:
             message = f"✅ VERIFIED: Indemnity limit of ${claimed:,.2f} is correct."
@@ -190,7 +196,8 @@ class LiabilityGuard:
             message = (
                 f"❌ ERROR: Indemnity limit mismatch. "
                 f"{multiplier}x ${annual_fee:,.2f} = ${computed:,.2f}, "
-                f"but LLM claimed ${claimed:,.2f}."
+                f"but LLM claimed ${claimed:,.2f}. "
+                "Approximate tolerance is not accepted as legal proof."
             )
         
         return LiabilityResult(
