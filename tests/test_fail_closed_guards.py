@@ -451,6 +451,24 @@ class TestJurisdictionGuardFailClosed:
         assert result.conflicts == []
         assert not any("US state" in conflict for conflict in result.conflicts)
 
+    def test_state_law_does_not_match_colliding_party_country_code(self):
+        """US state laws must not match colliding foreign party country codes."""
+        delaware_result = self.guard.verify_choice_of_law(
+            parties_countries=["DE", "FR"],
+            governing_law="Delaware",
+            forum="Delaware",
+        )
+        indiana_result = self.guard.verify_choice_of_law(
+            parties_countries=["IN", "GB"],
+            governing_law="Indiana",
+            forum="Indiana",
+        )
+
+        for result in [delaware_result, indiana_result]:
+            assert result.verified is True
+            assert result.conflicts == []
+            assert not any("favors one party" in warning for warning in result.warnings)
+
     def test_conflict_message_includes_warning_count_when_both_exist(self):
         """Summary message should mention warnings when conflicts also exist."""
         result = self.guard.verify_choice_of_law(

@@ -400,7 +400,22 @@ class JurisdictionGuard:
             )
 
         # Check 5: Neutral jurisdiction suggestion
-        if len(parties_upper) >= 2 and governing_law_upper in parties_upper:
+        # Compare governing law to party countries using country-level semantics.
+        # US state laws (e.g., Delaware -> DE) should match US parties, not
+        # foreign party country codes that collide with state abbreviations
+        # (e.g., Germany -> DE, India -> IN).
+        governing_law_is_us_party_jurisdiction = self._is_us_jurisdiction(
+            governing_law_upper
+        ) and not self._is_non_us_country_reference(
+            governing_law, governing_law_upper
+        )
+        governing_law_matches_party_country = (
+            governing_law_is_us_party_jurisdiction and "US" in parties_upper
+        ) or (
+            not governing_law_is_us_party_jurisdiction
+            and governing_law_upper in parties_upper
+        )
+        if cross_border_parties and governing_law_matches_party_country:
             warnings.append(
                 f"Governing law '{governing_law}' favors one party's home jurisdiction. "
                 "Consider a neutral jurisdiction for balance."
