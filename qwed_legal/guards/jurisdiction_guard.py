@@ -229,6 +229,15 @@ class JurisdictionGuard:
         "DISTRICT OF COLUMBIA": "DC",
     }
 
+    COUNTRY_NAMES: Dict[str, str] = {
+        "GERMANY": "DE",
+        "INDIA": "IN",
+        "UNITED STATES": "US",
+        "UNITED STATES OF AMERICA": "US",
+        "UNITED KINGDOM": "UK",
+        "GREAT BRITAIN": "GB",
+    }
+
     def __init__(self):
         """Initialize JurisdictionGuard."""
         pass
@@ -239,6 +248,8 @@ class JurisdictionGuard:
         # If it's a full state name, convert to abbreviation
         if upper in self.US_STATE_NAMES:
             return self.US_STATE_NAMES[upper]
+        if upper in self.COUNTRY_NAMES:
+            return self.COUNTRY_NAMES[upper]
         return upper
 
     def verify_choice_of_law(
@@ -246,6 +257,8 @@ class JurisdictionGuard:
         parties_countries: List[str],
         governing_law: str,
         forum: Optional[str] = None,
+        forum_selection: Optional[str] = None,
+        contract_type: Optional[str] = None,
     ) -> JurisdictionResult:
         """
         Verify choice of law and forum selection clause.
@@ -254,18 +267,22 @@ class JurisdictionGuard:
             parties_countries: List of country codes for contract parties
             governing_law: The stated governing law (country or state)
             forum: The stated forum/venue (optional)
-            jurisdiction_type: Type of jurisdiction clause
+            forum_selection: Alias for forum, kept for compatibility with callers
+            contract_type: Optional contract type for convention-specific checks
 
         Returns:
             JurisdictionResult with verification status and any conflicts
         """
         conflicts = []
         warnings = []
+        selected_forum = forum if forum is not None else forum_selection
 
         # Normalize inputs (convert full state names to abbreviations)
         governing_law_upper = self._normalize_jurisdiction(governing_law)
-        parties_upper = [p.upper().strip() for p in parties_countries]
-        forum_upper = self._normalize_jurisdiction(forum) if forum else None
+        parties_upper = [self._normalize_jurisdiction(p) for p in parties_countries]
+        forum_upper = (
+            self._normalize_jurisdiction(selected_forum) if selected_forum else None
+        )
 
         # Check 1: Is governing law a recognized jurisdiction?
         if not self._is_valid_jurisdiction(governing_law_upper):
@@ -305,7 +322,7 @@ class JurisdictionGuard:
                 forum_upper
             ):
                 conflicts.append(
-                    f"Governing law '{governing_law}' (US state) but forum '{forum}' is non-US. "
+                    f"Governing law '{governing_law}' (US state) but forum '{selected_forum}' is non-US. "
                     "This may create enforcement issues."
                 )
             elif self._is_us_state(forum_upper) and not (
@@ -313,7 +330,7 @@ class JurisdictionGuard:
                 or governing_law_upper in ["US", "NY", "CA", "DE"]
             ):
                 conflicts.append(
-                    f"Forum '{forum}' (US state) but governing law '{governing_law}' is non-US. "
+                    f"Forum '{selected_forum}' (US state) but governing law '{governing_law}' is non-US. "
                     "Consider alignment for enforceability."
                 )
 
@@ -322,7 +339,12 @@ class JurisdictionGuard:
         foreign_party = any(
             c not in ["US"] and c not in self.US_STATES for c in parties_upper
         )
-        if us_party and foreign_party:
+        sale_of_goods = contract_type and contract_type.lower().strip() in {
+            "sale_of_goods",
+            "sale of goods",
+            "goods",
+        }
+        if (us_party and foreign_party) or (sale_of_goods and len(parties_upper) > 1):
             warnings.append(
                 "International sale of goods may be subject to CISG unless expressly excluded."
             )
@@ -334,10 +356,15 @@ class JurisdictionGuard:
                 "Consider a neutral jurisdiction for balance."
             )
 
-        verified = len(conflicts) == 0
+        verified = len(conflicts) == 0 and len(warnings) == 0
 
         if verified:
             message = "✅ VERIFIED: Jurisdiction clause appears consistent."
+        elif warnings and not conflicts:
+            message = (
+                f"⚠️ AMBIGUOUS / UNVERIFIABLE: {len(warnings)} unresolved "
+                "jurisdiction warning(s) require legal analysis before verification."
+            )
         else:
             message = f"❌ CONFLICTS DETECTED: {len(conflicts)} issue(s) found."
 
@@ -346,7 +373,7 @@ class JurisdictionGuard:
             conflicts=conflicts,
             warnings=warnings,
             governing_law=governing_law,
-            forum=forum,
+            forum=selected_forum,
             message=message,
         )
 
