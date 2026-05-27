@@ -82,16 +82,27 @@ class ClauseGuard:
             or p["min_term_days"] is not None
             or p["is_exclusive"]
         )
+        ambiguous = [p for p in propositions if p["ambiguous_termination_reference"]]
+        has_ambiguous = len(ambiguous) > 0
 
         if not conflicts:
-            if covered == 0:
+            if covered == 0 or has_ambiguous:
+                caveat = (
+                    "No heuristic propositions were extracted from the provided clauses."
+                    if covered == 0
+                    else (
+                        "Some clauses contain recognised heuristic propositions, but "
+                        "one or more clauses mention termination-related language "
+                        "ambiguously rather than as an operative termination right "
+                        "or restriction."
+                    )
+                )
                 return ClauseResult(
                     consistent=False,
                     conflicts=[],
                     status="heuristic_pass_limited",
                     message=(
-                        "HEURISTIC_PASS (LIMITED COVERAGE): No heuristic propositions "
-                        "were extracted from the provided clauses. ClauseGuard only "
+                        f"HEURISTIC_PASS (LIMITED COVERAGE): {caveat} ClauseGuard only "
                         "recognises termination, notice period, min-term, and exclusivity "
                         "patterns. The clauses may be consistent, but this guard cannot "
                         "confirm it — downstream consumers must not treat this as "
@@ -131,9 +142,13 @@ class ClauseGuard:
 
         for clause in clauses:
             lower = clause.lower()
+            can_terminate = self._has_operative_termination(lower)
             prop = {
                 "text": clause,
-                "can_terminate": self._has_termination(lower),
+                "can_terminate": can_terminate,
+                "ambiguous_termination_reference": (
+                    self._mentions_termination(lower) and not can_terminate
+                ),
                 "termination_notice_days": self._extract_days(lower, "notice"),
                 "min_term_days": self._extract_days(lower, "before"),
                 "is_exclusive": "exclusive" in lower or "only" in lower,
@@ -222,10 +237,28 @@ class ClauseGuard:
 
         return None
 
-    def _has_termination(self, text: str) -> bool:
-        """Check if clause discusses termination."""
+    def _mentions_termination(self, text: str) -> bool:
+        """Return True when text contains termination-related vocabulary."""
         terms = ["terminate", "termination", "cancel", "end the agreement"]
         return any(t in text for t in terms)
+
+    def _has_operative_termination(self, text: str) -> bool:
+        """
+        Check whether text states an operative termination right or restriction.
+
+        Raw keyword presence is not enough. For example, "may review the
+        termination process" mentions termination, but does not grant a right to
+        terminate. We only extract a termination proposition when modal/legal
+        language is tied directly to an operative verb such as terminate/cancel.
+        """
+        operative_patterns = [
+            r"\b(?:may|can|shall|must)\s+(?:not\s+)?(?:terminate|cancel)\b",
+            r"\bneither\s+party\s+may\s+(?:terminate|cancel)\b",
+            r"\b(?:allowed|entitled)\s+to\s+(?:terminate|cancel)\b",
+            r"\bright\s+to\s+(?:terminate|cancel)\b",
+            r"\b(?:may|can|shall|must)\s+(?:not\s+)?end\s+the\s+agreement\b",
+        ]
+        return any(re.search(pattern, text) for pattern in operative_patterns)
 
     def _extract_days(self, text: str, context: str) -> Optional[int]:
         """Extract number of days from text near a context word."""

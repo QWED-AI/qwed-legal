@@ -156,6 +156,34 @@ class TestClauseGuard:
         # Should detect conflict between permission and prohibition
         assert result.consistent is False or len(result.conflicts) >= 0
 
+    def test_non_operative_termination_reference_not_false_conflict(self):
+        """Issue #11: keyword mentions must not become legal termination rights."""
+        guard = ClauseGuard()
+        result = guard.check_consistency(
+            [
+                "The company may review the termination process annually.",
+                "The distributor may not terminate this agreement without board approval.",
+            ]
+        )
+        assert result.consistent is False
+        assert result.status == "heuristic_pass_limited"
+        assert result.conflicts == []
+        assert "LIMITED COVERAGE" in result.message.upper()
+
+    def test_may_review_cancellation_process_not_operative_permission(self):
+        """Non-operative process-review language should fail closed, not conflict."""
+        guard = ClauseGuard()
+        result = guard.check_consistency(
+            [
+                "The buyer may review the cancellation procedure quarterly.",
+                "The buyer may not cancel this agreement during the first year.",
+            ]
+        )
+        assert result.consistent is False
+        assert result.status == "heuristic_pass_limited"
+        assert result.conflicts == []
+        assert "LIMITED COVERAGE" in result.message.upper()
+
     def test_termination_conflict_detected_in_reverse_order(self):
         """Reverse ordering should still detect the termination/minimum-term conflict."""
         guard = ClauseGuard()
