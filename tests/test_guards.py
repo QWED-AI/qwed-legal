@@ -179,8 +179,10 @@ class TestClauseGuard:
                 "The buyer may not cancel this agreement during the first year.",
             ]
         )
+        assert result.consistent is False
         assert result.status == "heuristic_pass_limited"
         assert result.conflicts == []
+        assert "LIMITED COVERAGE" in result.message.upper()
 
     def test_termination_conflict_detected_in_reverse_order(self):
         """Reverse ordering should still detect the termination/minimum-term conflict."""

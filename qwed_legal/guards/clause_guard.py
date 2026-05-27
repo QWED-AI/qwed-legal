@@ -83,15 +83,18 @@ class ClauseGuard:
             or p["is_exclusive"]
         )
         ambiguous = [p for p in propositions if p["ambiguous_termination_reference"]]
+        has_ambiguous = len(ambiguous) > 0
 
         if not conflicts:
-            if covered == 0 or ambiguous:
+            if covered == 0 or has_ambiguous:
                 caveat = (
                     "No heuristic propositions were extracted from the provided clauses."
                     if covered == 0
                     else (
-                        "One or more clauses mention termination-related language, but "
-                        "not as an operative termination right or restriction."
+                        "Some clauses contain recognised heuristic propositions, but "
+                        "one or more clauses mention termination-related language "
+                        "ambiguously rather than as an operative termination right "
+                        "or restriction."
                     )
                 )
                 return ClauseResult(
