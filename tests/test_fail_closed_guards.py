@@ -413,3 +413,38 @@ class TestJurisdictionGuardFailClosed:
         assert result.verified is True
         assert result.conflicts == []
         assert not any("CISG" in warning for warning in result.warnings)
+
+    def test_governing_law_country_code_not_treated_as_us_state(self):
+        """DE as Germany must not be treated as Delaware in mismatch checks."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["FR", "IT"],
+            governing_law="DE",
+            forum="London",
+        )
+
+        assert result.conflicts == []
+        assert not any("US state" in conflict for conflict in result.conflicts)
+
+    def test_governing_law_country_name_not_treated_as_us_state(self):
+        """Germany normalizes to DE but must remain a country reference."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["FR", "IT"],
+            governing_law="Germany",
+            forum="London",
+        )
+
+        assert result.conflicts == []
+        assert not any("US state" in conflict for conflict in result.conflicts)
+
+    def test_conflict_message_includes_warning_count_when_both_exist(self):
+        """Summary message should mention warnings when conflicts also exist."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "UK"],
+            governing_law="Delaware",
+            forum="London",
+        )
+
+        assert result.conflicts
+        assert result.warnings
+        assert "CONFLICTS DETECTED" in result.message
+        assert "warning" in result.message.lower()

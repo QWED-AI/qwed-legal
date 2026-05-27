@@ -252,6 +252,26 @@ class JurisdictionGuard:
             return self.COUNTRY_NAMES[upper]
         return upper
 
+    def _is_non_us_country_reference(
+        self, jurisdiction: Optional[str], normalized: Optional[str]
+    ) -> bool:
+        """Check whether input explicitly names a non-US country.
+
+        This avoids treating normalized ISO country codes that collide with US
+        state abbreviations (for example, Germany -> DE) as US states.
+        """
+        if not jurisdiction or not normalized:
+            return False
+
+        upper = jurisdiction.upper().strip()
+        known_country_codes = (
+            self.COMMON_LAW_JURISDICTIONS | self.CIVIL_LAW_JURISDICTIONS
+        )
+        return (
+            (upper in self.COUNTRY_NAMES and normalized != "US")
+            or (upper in known_country_codes and upper != "US")
+        )
+
     def verify_choice_of_law(
         self,
         parties_countries: List[str],
@@ -318,16 +338,32 @@ class JurisdictionGuard:
 
         # Check 3: Forum vs governing law mismatch
         if forum_upper and governing_law_upper:
-            if self._is_us_state(governing_law_upper) and not self._is_us_jurisdiction(
+            governing_law_is_us_state = self._is_us_state(
+                governing_law_upper
+            ) and not self._is_non_us_country_reference(
+                governing_law, governing_law_upper
+            )
+            forum_is_us_state = self._is_us_state(
                 forum_upper
-            ):
+            ) and not self._is_non_us_country_reference(selected_forum, forum_upper)
+            forum_is_us_jurisdiction = self._is_us_jurisdiction(
+                forum_upper
+            ) and not self._is_non_us_country_reference(selected_forum, forum_upper)
+            governing_law_is_non_us_country = self._is_non_us_country_reference(
+                governing_law, governing_law_upper
+            )
+
+            if governing_law_is_us_state and not forum_is_us_jurisdiction:
                 conflicts.append(
                     f"Governing law '{governing_law}' (US state) but forum '{selected_forum}' is non-US. "
                     "This may create enforcement issues."
                 )
-            elif self._is_us_state(forum_upper) and not (
-                self._is_us_jurisdiction(governing_law_upper)
-                or governing_law_upper in ["US", "NY", "CA", "DE"]
+            elif forum_is_us_state and (
+                governing_law_is_non_us_country
+                or not (
+                    self._is_us_jurisdiction(governing_law_upper)
+                    or governing_law_upper in ["US", "NY", "CA", "DE"]
+                )
             ):
                 conflicts.append(
                     f"Forum '{selected_forum}' (US state) but governing law '{governing_law}' is non-US. "
@@ -367,6 +403,11 @@ class JurisdictionGuard:
             message = (
                 f"⚠️ AMBIGUOUS / UNVERIFIABLE: {len(warnings)} unresolved "
                 "jurisdiction warning(s) require legal analysis before verification."
+            )
+        elif conflicts and warnings:
+            message = (
+                f"❌ CONFLICTS DETECTED: {len(conflicts)} issue(s) found; "
+                f"⚠️ {len(warnings)} warning(s) also require review."
             )
         else:
             message = f"❌ CONFLICTS DETECTED: {len(conflicts)} issue(s) found."
