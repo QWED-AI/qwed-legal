@@ -93,9 +93,22 @@ class LegalGuard:
         """Verify a legal citation."""
         return self.citation.verify(citation)
 
-    def verify_jurisdiction(self, parties_countries: list[str], governing_law: str, forum: str = None):
+    def verify_jurisdiction(
+        self,
+        parties_countries: list[str],
+        governing_law: str,
+        forum: Optional[str] = None,
+        forum_selection: Optional[str] = None,
+        contract_type: Optional[str] = None,
+    ):
         """Verify choice of law and forum selection."""
-        return self.jurisdiction.verify_choice_of_law(parties_countries, governing_law, forum)
+        return self.jurisdiction.verify_choice_of_law(
+            parties_countries=parties_countries,
+            governing_law=governing_law,
+            forum=forum,
+            forum_selection=forum_selection,
+            contract_type=contract_type,
+        )
 
     def verify_statute_of_limitations(self, claim_type: str, jurisdiction: str, incident_date: str, filing_date: str):
         """Verify if claim is within statute of limitations."""
@@ -124,4 +137,5 @@ class LegalGuard:
     def verify_provenance(self, content: str, provenance: dict):
         """Verify AI-generated content provenance and disclosure compliance."""
         return self.provenance.verify_provenance(content, provenance)
+
 

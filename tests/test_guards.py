@@ -409,6 +409,21 @@ class TestLegalGuard:
             "HEURISTIC" in result.message.upper() or "LIMITED" in result.message.upper()
         )
 
+    def test_verify_jurisdiction_passes_new_optional_arguments(self):
+        """LegalGuard wrapper must expose JurisdictionGuard's full public API."""
+        guard = LegalGuard()
+        result = guard.verify_jurisdiction(
+            parties_countries=["Germany", "India"],
+            governing_law="New York",
+            forum_selection="New York",
+            contract_type="sale_of_goods",
+        )
+
+        assert result.verified is False
+        assert result.forum == "New York"
+        assert result.warnings
+        assert "UNVERIFIABLE" in result.message
+
 
 class TestJurisdictionGuard:
     """Test JurisdictionGuard functionality."""
