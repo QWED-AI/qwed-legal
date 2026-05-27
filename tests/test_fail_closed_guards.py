@@ -388,3 +388,28 @@ class TestJurisdictionGuardFailClosed:
         assert result.conflicts == []
         assert any("different legal systems" in warning for warning in result.warnings)
         assert "AMBIGUOUS" in result.message
+
+    def test_country_code_state_collision_does_not_hide_foreign_party(self):
+        """DE/IN country codes must not be treated as Delaware/Indiana parties."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "Germany"],
+            governing_law="New York",
+        )
+
+        assert result.verified is False
+        assert result.conflicts == []
+        assert any("CISG" in warning for warning in result.warnings)
+        assert "UNVERIFIABLE" in result.message
+
+    def test_domestic_sale_of_goods_does_not_trigger_international_warning(self):
+        """Domestic sale-of-goods contracts must not receive a CISG warning."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "US"],
+            governing_law="New York",
+            forum="New York",
+            contract_type="sale_of_goods",
+        )
+
+        assert result.verified is True
+        assert result.conflicts == []
+        assert not any("CISG" in warning for warning in result.warnings)

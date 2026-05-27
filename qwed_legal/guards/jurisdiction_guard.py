@@ -335,16 +335,19 @@ class JurisdictionGuard:
                 )
 
         # Check 4: CISG applicability warning
-        us_party = any(c in ["US"] or c in self.US_STATES for c in parties_upper)
-        foreign_party = any(
-            c not in ["US"] and c not in self.US_STATES for c in parties_upper
-        )
+        # `parties_countries` is country-level input. Do not infer US parties from
+        # US state abbreviations here because ISO country codes such as DE
+        # (Germany) and IN (India) collide with Delaware/Indiana.
+        party_country_set = set(parties_upper)
+        cross_border_parties = len(party_country_set) > 1
+        us_party = "US" in party_country_set
+        foreign_party = any(c != "US" for c in party_country_set)
         sale_of_goods = contract_type and contract_type.lower().strip() in {
             "sale_of_goods",
             "sale of goods",
             "goods",
         }
-        if (us_party and foreign_party) or (sale_of_goods and len(parties_upper) > 1):
+        if (us_party and foreign_party) or (sale_of_goods and cross_border_parties):
             warnings.append(
                 "International sale of goods may be subject to CISG unless expressly excluded."
             )
