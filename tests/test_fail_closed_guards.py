@@ -360,3 +360,124 @@ class TestJurisdictionGuardFailClosed:
         assert "ATLANTIS" in warning_text or any(
             "unrecognized" in w.lower() for w in result.warnings
         )
+
+    def test_choice_of_law_warnings_fail_closed(self):
+        """Issue #16: warning-only ambiguity must not return verified=True."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["Germany", "India"],
+            governing_law="New York",
+            forum_selection="New York",
+            contract_type="sale_of_goods",
+        )
+
+        assert result.verified is False
+        assert result.conflicts == []
+        assert result.warnings
+        assert "UNVERIFIABLE" in result.message
+        assert "VERIFIED" not in result.message
+
+    def test_cross_border_legal_system_warning_blocks_verification(self):
+        """Known cross-system parties are ambiguous unless further legal analysis resolves them."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["DE", "IN"],
+            governing_law="New York",
+            forum="New York",
+        )
+
+        assert result.verified is False
+        assert result.conflicts == []
+        assert any("different legal systems" in warning for warning in result.warnings)
+        assert "AMBIGUOUS" in result.message
+
+    def test_country_code_state_collision_does_not_hide_foreign_party(self):
+        """DE/IN country codes must not be treated as Delaware/Indiana parties."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "Germany"],
+            governing_law="New York",
+        )
+
+        assert result.verified is False
+        assert result.conflicts == []
+        assert any("CISG" in warning for warning in result.warnings)
+        assert "UNVERIFIABLE" in result.message
+
+    def test_domestic_sale_of_goods_does_not_trigger_international_warning(self):
+        """Domestic sale-of-goods contracts must not receive a CISG warning."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "US"],
+            governing_law="New York",
+            forum="New York",
+            contract_type="sale_of_goods",
+        )
+
+        assert result.verified is True
+        assert result.conflicts == []
+        assert not any("CISG" in warning for warning in result.warnings)
+
+    def test_party_country_normalization_does_not_treat_states_as_foreign(self):
+        """State names in party-country input must not become India/Germany."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["Indiana", "Delaware"],
+            governing_law="New York",
+            forum="New York",
+            contract_type="sale_of_goods",
+        )
+
+        assert result.verified is True
+        assert result.conflicts == []
+        assert not result.warnings
+
+    def test_ambiguous_de_code_still_supports_delaware_mismatch_check(self):
+        """Raw DE is ambiguous and must still support Delaware mismatch checks."""
+        # Raw "DE" can mean Delaware or Germany. In governing-law context, keep
+        # it eligible for US-state handling. Non-US parties avoid CISG noise so
+        # the assertion focuses on the forum/governing-law mismatch message.
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["FR", "IT"],
+            governing_law="DE",
+            forum="London",
+        )
+
+        assert any("US state" in conflict for conflict in result.conflicts)
+
+    def test_governing_law_country_name_not_treated_as_us_state(self):
+        """Germany normalizes to DE but must remain a country reference."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["FR", "IT"],
+            governing_law="Germany",
+            forum="London",
+        )
+
+        assert result.conflicts == []
+        assert not any("US state" in conflict for conflict in result.conflicts)
+
+    def test_state_law_does_not_match_colliding_party_country_code(self):
+        """US state laws must not match colliding foreign party country codes."""
+        delaware_result = self.guard.verify_choice_of_law(
+            parties_countries=["DE", "FR"],
+            governing_law="Delaware",
+            forum="Delaware",
+        )
+        indiana_result = self.guard.verify_choice_of_law(
+            parties_countries=["IN", "GB"],
+            governing_law="Indiana",
+            forum="Indiana",
+        )
+
+        for result in [delaware_result, indiana_result]:
+            assert result.verified is True
+            assert result.conflicts == []
+            assert not any("favors one party" in warning for warning in result.warnings)
+
+    def test_conflict_message_includes_warning_count_when_both_exist(self):
+        """Summary message should mention warnings when conflicts also exist."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "UK"],
+            governing_law="Delaware",
+            forum="London",
+        )
+
+        assert result.conflicts
+        assert result.warnings
+        assert "CONFLICTS DETECTED" in result.message
+        assert "warning" in result.message.lower()

@@ -229,6 +229,15 @@ class JurisdictionGuard:
         "DISTRICT OF COLUMBIA": "DC",
     }
 
+    COUNTRY_NAMES: Dict[str, str] = {
+        "GERMANY": "DE",
+        "INDIA": "IN",
+        "UNITED STATES": "US",
+        "UNITED STATES OF AMERICA": "US",
+        "UNITED KINGDOM": "UK",
+        "GREAT BRITAIN": "GB",
+    }
+
     def __init__(self):
         """Initialize JurisdictionGuard."""
         pass
@@ -239,13 +248,48 @@ class JurisdictionGuard:
         # If it's a full state name, convert to abbreviation
         if upper in self.US_STATE_NAMES:
             return self.US_STATE_NAMES[upper]
+        if upper in self.COUNTRY_NAMES:
+            return self.COUNTRY_NAMES[upper]
         return upper
+
+    def _normalize_party_country(self, country: str) -> str:
+        """Normalize party-country input using country-level semantics.
+
+        Unlike jurisdiction normalization, this must not turn raw two-letter
+        country codes such as DE/IN into US states. Full US state names are
+        treated as US to avoid misclassifying domestic contracts as foreign.
+        """
+        upper = country.upper().strip()
+        if upper in self.COUNTRY_NAMES:
+            return self.COUNTRY_NAMES[upper]
+        if upper in self.US_STATE_NAMES:
+            return "US"
+        return upper
+
+    def _is_non_us_country_reference(
+        self, jurisdiction: Optional[str], normalized: Optional[str]
+    ) -> bool:
+        """Check whether input explicitly names a non-US country.
+
+        This avoids treating normalized ISO country codes that collide with US
+        state abbreviations (for example, Germany -> DE) as US states.
+        """
+        if not jurisdiction or not normalized:
+            return False
+
+        upper = jurisdiction.upper().strip()
+        # Only full country names are unambiguous here. Raw two-letter values
+        # such as "DE" may mean either Germany or Delaware depending on context,
+        # so keep those eligible for US-state checks in governing-law/forum logic.
+        return upper in self.COUNTRY_NAMES and normalized != "US"
 
     def verify_choice_of_law(
         self,
         parties_countries: List[str],
         governing_law: str,
         forum: Optional[str] = None,
+        forum_selection: Optional[str] = None,
+        contract_type: Optional[str] = None,
     ) -> JurisdictionResult:
         """
         Verify choice of law and forum selection clause.
@@ -254,18 +298,22 @@ class JurisdictionGuard:
             parties_countries: List of country codes for contract parties
             governing_law: The stated governing law (country or state)
             forum: The stated forum/venue (optional)
-            jurisdiction_type: Type of jurisdiction clause
+            forum_selection: Alias for forum, kept for compatibility with callers
+            contract_type: Optional contract type for convention-specific checks
 
         Returns:
             JurisdictionResult with verification status and any conflicts
         """
         conflicts = []
         warnings = []
+        selected_forum = forum if forum is not None else forum_selection
 
         # Normalize inputs (convert full state names to abbreviations)
         governing_law_upper = self._normalize_jurisdiction(governing_law)
-        parties_upper = [p.upper().strip() for p in parties_countries]
-        forum_upper = self._normalize_jurisdiction(forum) if forum else None
+        parties_upper = [self._normalize_party_country(p) for p in parties_countries]
+        forum_upper = (
+            self._normalize_jurisdiction(selected_forum) if selected_forum else None
+        )
 
         # Check 1: Is governing law a recognized jurisdiction?
         if not self._is_valid_jurisdiction(governing_law_upper):
@@ -301,43 +349,92 @@ class JurisdictionGuard:
 
         # Check 3: Forum vs governing law mismatch
         if forum_upper and governing_law_upper:
-            if self._is_us_state(governing_law_upper) and not self._is_us_jurisdiction(
+            governing_law_is_us_state = self._is_us_state(
+                governing_law_upper
+            ) and not self._is_non_us_country_reference(
+                governing_law, governing_law_upper
+            )
+            forum_is_us_state = self._is_us_state(
                 forum_upper
-            ):
+            ) and not self._is_non_us_country_reference(selected_forum, forum_upper)
+            forum_is_us_jurisdiction = self._is_us_jurisdiction(
+                forum_upper
+            ) and not self._is_non_us_country_reference(selected_forum, forum_upper)
+            governing_law_is_non_us_country = self._is_non_us_country_reference(
+                governing_law, governing_law_upper
+            )
+
+            if governing_law_is_us_state and not forum_is_us_jurisdiction:
                 conflicts.append(
-                    f"Governing law '{governing_law}' (US state) but forum '{forum}' is non-US. "
+                    f"Governing law '{governing_law}' (US state) but forum '{selected_forum}' is non-US. "
                     "This may create enforcement issues."
                 )
-            elif self._is_us_state(forum_upper) and not (
-                self._is_us_jurisdiction(governing_law_upper)
-                or governing_law_upper in ["US", "NY", "CA", "DE"]
+            elif forum_is_us_state and (
+                governing_law_is_non_us_country
+                or not (
+                    self._is_us_jurisdiction(governing_law_upper)
+                    or governing_law_upper in ["US", "NY", "CA", "DE"]
+                )
             ):
                 conflicts.append(
-                    f"Forum '{forum}' (US state) but governing law '{governing_law}' is non-US. "
+                    f"Forum '{selected_forum}' (US state) but governing law '{governing_law}' is non-US. "
                     "Consider alignment for enforceability."
                 )
 
         # Check 4: CISG applicability warning
-        us_party = any(c in ["US"] or c in self.US_STATES for c in parties_upper)
-        foreign_party = any(
-            c not in ["US"] and c not in self.US_STATES for c in parties_upper
-        )
-        if us_party and foreign_party:
+        # `parties_countries` is country-level input. Do not infer US parties from
+        # US state abbreviations here because ISO country codes such as DE
+        # (Germany) and IN (India) collide with Delaware/Indiana.
+        party_country_set = set(parties_upper)
+        cross_border_parties = len(party_country_set) > 1
+        us_party = "US" in party_country_set
+        foreign_party = any(c != "US" for c in party_country_set)
+        sale_of_goods = contract_type and contract_type.lower().strip() in {
+            "sale_of_goods",
+            "sale of goods",
+            "goods",
+        }
+        if (us_party and foreign_party) or (sale_of_goods and cross_border_parties):
             warnings.append(
                 "International sale of goods may be subject to CISG unless expressly excluded."
             )
 
         # Check 5: Neutral jurisdiction suggestion
-        if len(parties_upper) >= 2 and governing_law_upper in parties_upper:
+        # Compare governing law to party countries using country-level semantics.
+        # US state laws (e.g., Delaware -> DE) should match US parties, not
+        # foreign party country codes that collide with state abbreviations
+        # (e.g., Germany -> DE, India -> IN).
+        governing_law_is_us_party_jurisdiction = self._is_us_jurisdiction(
+            governing_law_upper
+        ) and not self._is_non_us_country_reference(
+            governing_law, governing_law_upper
+        )
+        governing_law_matches_party_country = (
+            governing_law_is_us_party_jurisdiction and "US" in parties_upper
+        ) or (
+            not governing_law_is_us_party_jurisdiction
+            and governing_law_upper in parties_upper
+        )
+        if cross_border_parties and governing_law_matches_party_country:
             warnings.append(
                 f"Governing law '{governing_law}' favors one party's home jurisdiction. "
                 "Consider a neutral jurisdiction for balance."
             )
 
-        verified = len(conflicts) == 0
+        verified = len(conflicts) == 0 and len(warnings) == 0
 
         if verified:
             message = "✅ VERIFIED: Jurisdiction clause appears consistent."
+        elif warnings and not conflicts:
+            message = (
+                f"⚠️ AMBIGUOUS / UNVERIFIABLE: {len(warnings)} unresolved "
+                "jurisdiction warning(s) require legal analysis before verification."
+            )
+        elif conflicts and warnings:
+            message = (
+                f"❌ CONFLICTS DETECTED: {len(conflicts)} issue(s) found; "
+                f"⚠️ {len(warnings)} warning(s) also require review."
+            )
         else:
             message = f"❌ CONFLICTS DETECTED: {len(conflicts)} issue(s) found."
 
@@ -346,7 +443,7 @@ class JurisdictionGuard:
             conflicts=conflicts,
             warnings=warnings,
             governing_law=governing_law,
-            forum=forum,
+            forum=selected_forum,
             message=message,
         )
 
