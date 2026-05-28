@@ -77,11 +77,11 @@ yes."""
 def test_irac_whole_word_overlap():
     """CodeRabbit Major: Whole word overlap prevents false positives."""
     guard = IRACGuard()
-    # "candidate" contains "date" but should not match
+    # Rule keyword "date" is a substring of Application word "candidate"\n    # but must NOT count as overlap under whole-word matching.
     analysis = """
-    Issue: Was the mandate correct?
-    Rule: The specific mandate is critical for the election process.
-    Application: The man was hired.
+    Issue: Was the candidate selected?
+    Rule: The selection date is critical for the hiring process.
+    Application: The candidate appeared confident during review.
     Conclusion: Yes.
     """
     result = guard.verify(analysis)
