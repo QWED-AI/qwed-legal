@@ -22,7 +22,10 @@ def test_irac_nonsensical_analysis_fails_closed_or_unverifiable_but_never_verifi
 
     assert result.status in {STATUS_COHERENCE_INVALID, STATUS_UNVERIFIABLE_REASONING}
     assert result.verified is False
-    assert "REASONING UNVERIFIABLE" in result.message or "COHERENCE INVALID" in result.message
+    assert (
+        "REASONING UNVERIFIABLE" in result.message
+        or "COHERENCE INVALID" in result.message
+    )
 
 
 def test_irac_missing_section_is_structure_invalid():
@@ -55,7 +58,9 @@ def test_irac_rule_application_disconnect_is_coherence_invalid():
 
     assert result.structure_valid is False
     assert result.status == STATUS_COHERENCE_INVALID
-    assert any("shares no meaningful keywords" in issue for issue in result.coherence_issues)
+    assert any(
+        "shares no meaningful keywords" in issue for issue in result.coherence_issues
+    )
 
 
 def test_irac_multiline_sections():
@@ -74,6 +79,7 @@ yes."""
     assert "multiline" in result.components["issue"]
     assert "many things" in result.components["rule"]
 
+
 def test_irac_whole_word_overlap():
     """CodeRabbit Major: Whole word overlap prevents false positives."""
     guard = IRACGuard()
@@ -86,7 +92,8 @@ def test_irac_whole_word_overlap():
     """
     result = guard.verify(analysis)
     assert result.status == STATUS_COHERENCE_INVALID
-    
+
+
 def test_verify_structure_backward_compat():
     """Codex P2: verify_structure should return a dict."""
     guard = IRACGuard()

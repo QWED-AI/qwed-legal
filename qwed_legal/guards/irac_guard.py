@@ -110,7 +110,9 @@ class IRACGuard:
     _MIN_RULE_WORDS_FOR_OVERLAP = 4
 
     def __init__(self) -> None:
-        self._compiled = {k: re.compile(v, re.DOTALL) for k, v in self._SECTION_PATTERNS.items()}
+        self._compiled = {
+            k: re.compile(v, re.DOTALL) for k, v in self._SECTION_PATTERNS.items()
+        }
 
     def verify_structure(self, text: str) -> dict:
         result = self.verify(text)
@@ -220,7 +222,9 @@ class IRACGuard:
 
         rule_text = components.get("rule", "")
         app_text = components.get("application", "").lower()
-        rule_words = rule_text.lower().split()
+        import re as _re
+
+        rule_words = _re.findall(r"\b\w+\b", rule_text.lower())
         rule_keywords = [w for w in rule_words if len(w) >= self._MIN_KEYWORD_LEN]
 
         if len(rule_keywords) >= self._MIN_RULE_WORDS_FOR_OVERLAP:
