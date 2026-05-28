@@ -18,14 +18,11 @@ def test_irac_nonsensical_analysis_fails_closed_or_unverifiable_but_never_verifi
     Conclusion: The defendant is liable.
     """
 
-    result = guard.verify_structure(analysis)
+    result = guard.verify(analysis)
 
     assert result.status in {STATUS_COHERENCE_INVALID, STATUS_UNVERIFIABLE_REASONING}
     assert result.verified is False
-    assert (
-        "REASONING UNVERIFIABLE" in result.message
-        or "COHERENCE INVALID" in result.message
-    )
+    assert "REASONING UNVERIFIABLE" in result.message or "COHERENCE INVALID" in result.message
 
 
 def test_irac_missing_section_is_structure_invalid():
@@ -37,7 +34,7 @@ def test_irac_missing_section_is_structure_invalid():
     Conclusion: There was a breach.
     """
 
-    result = guard.verify_structure(analysis)
+    result = guard.verify(analysis)
 
     assert result.structure_valid is False
     assert result.status == STATUS_STRUCTURE_INVALID
@@ -54,8 +51,46 @@ def test_irac_rule_application_disconnect_is_coherence_invalid():
     Conclusion: Payment was due.
     """
 
-    result = guard.verify_structure(analysis)
+    result = guard.verify(analysis)
 
     assert result.structure_valid is False
     assert result.status == STATUS_COHERENCE_INVALID
     assert any("shares no meaningful keywords" in issue for issue in result.coherence_issues)
+
+    def test_irac_multiline_sections(self):
+        """CodeRabbit Major: Multiline sections should not be truncated."""
+        guard = IRACGuard()
+        analysis = """Issue: Is this multiline?
+Yes it is.
+Rule: The rule says
+many things.
+Application: It applies
+here.
+Conclusion: Therefore,
+yes."""
+        result = guard.verify(analysis)
+        assert result.structure_valid is True
+        assert "multiline" in result.components["issue"]
+        assert "many things" in result.components["rule"]
+
+    def test_irac_whole_word_overlap(self):
+        """CodeRabbit Major: Whole word overlap prevents false positives."""
+        guard = IRACGuard()
+        # "candidate" contains "date" but should not match
+        analysis = """
+        Issue: Was the date correct?
+        Rule: The date is critical.
+        Application: The candidate was hired.
+        Conclusion: Yes.
+        """
+        result = guard.verify(analysis)
+        assert result.status == STATUS_COHERENCE_INVALID
+
+    def test_verify_structure_backward_compat(self):
+        """Codex P2: verify_structure should return a dict."""
+        guard = IRACGuard()
+        analysis = "Issue: a\nRule: b\nApplication: c\nConclusion: d"
+        result = guard.verify_structure(analysis)
+        assert isinstance(result, dict)
+        assert result["verified"] is False
+        assert "status" in result

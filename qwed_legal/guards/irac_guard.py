@@ -100,21 +100,31 @@ class IRACGuard:
     """
 
     _SECTION_PATTERNS: Dict[str, str] = {
-        "issue": r"(?i)(?:issue|question presented|legal problem)\s*:?\s*(.*)",
-        "rule": r"(?i)(?:rule|law|statute|legal principle)\s*:?\s*(.*)",
-        "application": r"(?i)(?:application|analysis|reasoning|applying the law)\s*:?\s*(.*)",
-        "conclusion": r"(?i)(?:conclusion|holding|verdict)\s*:?\s*(.*)",
+        "issue": r"(?im)^\s*(?:\*\*?)?(?:issue|question presented|legal problem)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:rule|law|statute|legal principle|application|analysis|reasoning|applying the law|conclusion|holding|verdict)(?:\*\*?)?\s*:)|$)",
+        "rule": r"(?im)^\s*(?:\*\*?)?(?:rule|law|statute|legal principle)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:issue|question presented|legal problem|application|analysis|reasoning|applying the law|conclusion|holding|verdict)(?:\*\*?)?\s*:)|$)",
+        "application": r"(?im)^\s*(?:\*\*?)?(?:application|analysis|reasoning|applying the law)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:issue|question presented|legal problem|rule|law|statute|legal principle|conclusion|holding|verdict)(?:\*\*?)?\s*:)|$)",
+        "conclusion": r"(?im)^\s*(?:\*\*?)?(?:conclusion|holding|verdict)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:issue|question presented|legal problem|rule|law|statute|legal principle|application|analysis|reasoning|applying the law)(?:\*\*?)?\s*:)|$)",
     }
 
     _MIN_KEYWORD_LEN = 4
     _MIN_RULE_WORDS_FOR_OVERLAP = 4
 
     def __init__(self) -> None:
-        self._compiled = {
-            k: re.compile(v) for k, v in self._SECTION_PATTERNS.items()
+        self._compiled = {k: re.compile(v, re.DOTALL) for k, v in self._SECTION_PATTERNS.items()}
+
+    def verify_structure(self, text: str) -> dict:
+        result = self.verify(text)
+        return {
+            "verified": result.verified,
+            "status": result.status,
+            "components": result.components,
+            "missing": result.missing_sections,
+            "error": result.message,
+            "coherence_issues": result.coherence_issues,
+            "structure_valid": result.structure_valid,
         }
 
-    def verify_structure(self, text: str) -> IRACResult:
+    def verify(self, text: str) -> IRACResult:
         """
         Check whether text contains all four IRAC sections and passes
         basic structural coherence checks.
@@ -178,9 +188,7 @@ class IRACGuard:
             ),
         )
 
-    def _extract_sections(
-        self, text: str
-    ) -> Tuple[Dict[str, str], List[str]]:
+    def _extract_sections(self, text: str) -> Tuple[Dict[str, str], List[str]]:
         """Extract IRAC section content. Returns (components, missing_sections)."""
         components: Dict[str, str] = {}
         missing: List[str] = []
@@ -208,17 +216,18 @@ class IRACGuard:
 
         for section, content in components.items():
             if not content:
-                issues.append(
-                    f"'{section}' section heading found but has no content."
-                )
+                issues.append(f"'{section}' section heading found but has no content.")
 
         rule_text = components.get("rule", "")
         app_text = components.get("application", "").lower()
         rule_words = rule_text.lower().split()
         rule_keywords = [w for w in rule_words if len(w) >= self._MIN_KEYWORD_LEN]
 
-        if len(rule_words) >= self._MIN_RULE_WORDS_FOR_OVERLAP:
-            overlap = [w for w in rule_keywords if w in app_text]
+        if len(rule_keywords) >= self._MIN_RULE_WORDS_FOR_OVERLAP:
+            import re as _re
+
+            app_words = set(_re.findall(r"\b\w+\b", app_text))
+            overlap = [w for w in rule_keywords if w in app_words]
             if not overlap:
                 issues.append(
                     "Application section shares no meaningful keywords with "
