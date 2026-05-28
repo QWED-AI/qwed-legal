@@ -57,40 +57,41 @@ def test_irac_rule_application_disconnect_is_coherence_invalid():
     assert result.status == STATUS_COHERENCE_INVALID
     assert any("shares no meaningful keywords" in issue for issue in result.coherence_issues)
 
-    def test_irac_multiline_sections(self):
-        """CodeRabbit Major: Multiline sections should not be truncated."""
-        guard = IRACGuard()
-        analysis = """Issue: Is this multiline?
+
+def test_irac_multiline_sections():
+    """CodeRabbit Major: Multiline sections should not be truncated."""
+    guard = IRACGuard()
+    analysis = """Issue: Is this multiline?
 Yes it is.
 Rule: The rule says
 many things.
-Application: It applies
+Application: It applies the rule
 here.
 Conclusion: Therefore,
 yes."""
-        result = guard.verify(analysis)
-        assert result.structure_valid is True
-        assert "multiline" in result.components["issue"]
-        assert "many things" in result.components["rule"]
+    result = guard.verify(analysis)
+    assert result.structure_valid is True
+    assert "multiline" in result.components["issue"]
+    assert "many things" in result.components["rule"]
 
-    def test_irac_whole_word_overlap(self):
-        """CodeRabbit Major: Whole word overlap prevents false positives."""
-        guard = IRACGuard()
-        # "candidate" contains "date" but should not match
-        analysis = """
-        Issue: Was the date correct?
-        Rule: The date is critical.
-        Application: The candidate was hired.
-        Conclusion: Yes.
-        """
-        result = guard.verify(analysis)
-        assert result.status == STATUS_COHERENCE_INVALID
-
-    def test_verify_structure_backward_compat(self):
-        """Codex P2: verify_structure should return a dict."""
-        guard = IRACGuard()
-        analysis = "Issue: a\nRule: b\nApplication: c\nConclusion: d"
-        result = guard.verify_structure(analysis)
-        assert isinstance(result, dict)
-        assert result["verified"] is False
-        assert "status" in result
+def test_irac_whole_word_overlap():
+    """CodeRabbit Major: Whole word overlap prevents false positives."""
+    guard = IRACGuard()
+    # "candidate" contains "date" but should not match
+    analysis = """
+    Issue: Was the mandate correct?
+    Rule: The specific mandate is critical for the election process.
+    Application: The man was hired.
+    Conclusion: Yes.
+    """
+    result = guard.verify(analysis)
+    assert result.status == STATUS_COHERENCE_INVALID
+    
+def test_verify_structure_backward_compat():
+    """Codex P2: verify_structure should return a dict."""
+    guard = IRACGuard()
+    analysis = "Issue: a\nRule: b\nApplication: c\nConclusion: d"
+    result = guard.verify_structure(analysis)
+    assert isinstance(result, dict)
+    assert result["verified"] is False
+    assert "status" in result

@@ -100,10 +100,10 @@ class IRACGuard:
     """
 
     _SECTION_PATTERNS: Dict[str, str] = {
-        "issue": r"(?im)^\s*(?:\*\*?)?(?:issue|question presented|legal problem)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:rule|law|statute|legal principle|application|analysis|reasoning|applying the law|conclusion|holding|verdict)(?:\*\*?)?\s*:)|$)",
-        "rule": r"(?im)^\s*(?:\*\*?)?(?:rule|law|statute|legal principle)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:issue|question presented|legal problem|application|analysis|reasoning|applying the law|conclusion|holding|verdict)(?:\*\*?)?\s*:)|$)",
-        "application": r"(?im)^\s*(?:\*\*?)?(?:application|analysis|reasoning|applying the law)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:issue|question presented|legal problem|rule|law|statute|legal principle|conclusion|holding|verdict)(?:\*\*?)?\s*:)|$)",
-        "conclusion": r"(?im)^\s*(?:\*\*?)?(?:conclusion|holding|verdict)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:issue|question presented|legal problem|rule|law|statute|legal principle|application|analysis|reasoning|applying the law)(?:\*\*?)?\s*:)|$)",
+        "issue": r"(?im)^\s*(?:\*\*?)?(?:issue|question presented|legal problem)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:rule|law|statute|legal principle|application|analysis|reasoning|applying the law|conclusion|holding|verdict)(?:\*\*?)?\s*:)|\Z)",
+        "rule": r"(?im)^\s*(?:\*\*?)?(?:rule|law|statute|legal principle)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:issue|question presented|legal problem|application|analysis|reasoning|applying the law|conclusion|holding|verdict)(?:\*\*?)?\s*:)|\Z)",
+        "application": r"(?im)^\s*(?:\*\*?)?(?:application|analysis|reasoning|applying the law)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:issue|question presented|legal problem|rule|law|statute|legal principle|conclusion|holding|verdict)(?:\*\*?)?\s*:)|\Z)",
+        "conclusion": r"(?im)^\s*(?:\*\*?)?(?:conclusion|holding|verdict)(?:\*\*?)?\s*:?\s*\n?(.*?)(?=(?:\n\s*(?:\*\*?)?(?:issue|question presented|legal problem|rule|law|statute|legal principle|application|analysis|reasoning|applying the law)(?:\*\*?)?\s*:)|\Z)",
     }
 
     _MIN_KEYWORD_LEN = 4
