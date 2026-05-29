@@ -253,7 +253,8 @@ class ContradictionGuard:
         trace: list = None,
     ) -> dict:
         """Evaluate Z3 solver and build the final result dict."""
-        has_partial_modeling = has_unsupported or (unmodeled_supported > 0)
+        has_unmodeled_supported = unmodeled_supported > 0
+        has_partial_modeling = has_unsupported or has_unmodeled_supported
         sat_output = (
             "CONSISTENT: Z3 confirms no contradictions among modeled clauses."
             if not has_partial_modeling
@@ -269,7 +270,7 @@ class ContradictionGuard:
                 f" NOTE: clause(s) with unsupported categories "
                 f"({', '.join(unsupported_categories)}) were excluded from the Z3 model."
             )
-        if unmodeled_supported > 0:
+        if has_unmodeled_supported:
             coverage_note += (
                 f" NOTE: {unmodeled_supported} supported-category clause(s) had "
                 f"unrecognized keyword patterns and could not be encoded."
