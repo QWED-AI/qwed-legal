@@ -106,6 +106,12 @@ class TestStatuteVerificationTrace:
     def test_unsupported_step_is_not_proven(self):
         assert _statute(jurisdiction="MARS").verification_trace[0].is_proven() is False
 
+    def test_claim_mismatch_last_step_not_statute_conclusion(self):
+        result = _statute(claimed_within_period=False)
+        assert result.verified is False
+        assert result.verification_trace[-1].output == "CLAIM INCORRECT"
+        assert result.verification_trace[-1].is_proven() is True
+
 
 class TestContradictionVerificationTrace:
     def test_trace_key_present_in_dict(self):
@@ -195,3 +201,18 @@ class TestContradictionVerificationTrace:
     def test_conclusion_is_last_step(self):
         r = _contra([_clause("Max liability capped at 5000", "LIABILITY", 5000)])
         assert r["verification_trace"][-1].step == STEP_CONCLUSION
+
+    def test_partial_coverage_conclusion_is_deterministic(self):
+        r = _contra(
+            [
+                _clause("Max liability capped at 5000", "LIABILITY", 5000),
+                _clause("Payment due in 30 days", "PAYMENT", 30),
+            ]
+        )
+        assert r["status"] == "partial_coverage"
+        assert r["verification_trace"][-1].evidence_type == EVIDENCE_DETERMINISTIC
+
+    def test_message_mentions_only_present_supported_categories(self):
+        r = _contra([_clause("Max liability capped at 5000", "LIABILITY", 5000)])
+        assert "LIABILITY clauses" in r["message"]
+        assert "DURATION and LIABILITY clauses" not in r["message"]

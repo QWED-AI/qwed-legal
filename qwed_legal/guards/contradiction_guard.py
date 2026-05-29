@@ -135,6 +135,7 @@ class ContradictionGuard:
         trace = []
         # Step 1: Rule identified
         supported_cats = sorted({c.category for c in supported})
+        categories_text = " and ".join(supported_cats)
         trace.append(
             VerificationStep(
                 step=STEP_RULE_IDENTIFIED,
@@ -186,6 +187,7 @@ class ContradictionGuard:
             unsupported_categories=unsupported_categories,
             has_unsupported=bool(unsupported),
             unmodeled_supported=unmodeled_supported,
+            categories_text=categories_text,
             trace=trace,
         )
 
@@ -252,23 +254,20 @@ class ContradictionGuard:
             if not has_partial_modeling
             else "PARTIAL_COVERAGE: satisfiable among modeled clauses only."
         )
-        evidence = (
-            EVIDENCE_DETERMINISTIC if not has_partial_modeling else EVIDENCE_UNSUPPORTED
-        )
         return VerificationStep(
             step=STEP_CONCLUSION,
             description="Z3 solver evaluated: clauses are satisfiable.",
             inputs={"z3_result": "sat", "partial_coverage": has_partial_modeling},
             output=output,
-            evidence_type=evidence,
+            evidence_type=EVIDENCE_DETERMINISTIC,
         )
 
     @staticmethod
-    def _z3_message(verified: bool, coverage_note: str) -> str:
+    def _z3_message(verified: bool, coverage_note: str, categories_text: str) -> str:
         """Build human-readable SAT message aligned to coverage status."""
         return (
             f"{'✅ CONSISTENT' if verified else '⚠️  PARTIAL COVERAGE'} "
-            f"(modeled clauses): The DURATION and LIABILITY clauses "
+            f"(modeled clauses): The {categories_text} clauses "
             f"{'are logically satisfiable' if verified else 'were not fully verified because modeling is incomplete'}"
             f".{coverage_note}"
         )
@@ -279,6 +278,7 @@ class ContradictionGuard:
         unsupported_categories: list,
         has_unsupported: bool,
         unmodeled_supported: int,
+        categories_text: str,
         trace: list = None,
     ) -> dict:
         """Evaluate Z3 solver and build the final result dict."""
@@ -306,7 +306,9 @@ class ContradictionGuard:
             return {
                 "verified": verified,
                 "status": status,
-                "message": ContradictionGuard._z3_message(verified, coverage_note),
+                "message": ContradictionGuard._z3_message(
+                    verified, coverage_note, categories_text
+                ),
                 "unsupported": unsupported_categories,
                 "verification_trace": (trace or [])
                 + [ContradictionGuard._sat_trace_step(has_partial_modeling)],

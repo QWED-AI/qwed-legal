@@ -446,23 +446,22 @@ class StatuteOfLimitationsGuard:
                         if claim_matches
                         else "CLAIM INCORRECT"
                     ),
-                    evidence_type=(
-                        EVIDENCE_DETERMINISTIC if claim_matches else EVIDENCE_UNSUPPORTED
-                    ),
+                    evidence_type=EVIDENCE_DETERMINISTIC,
                 )
             )
-        trace.append(
-            VerificationStep(
-                step=STEP_CONCLUSION,
-                description="Determined whether the claim falls within the statute of limitations.",
-                inputs={
-                    "within_period": within_period,
-                    "days_remaining": days_remaining,
-                },
-                output="WITHIN STATUTE" if within_period else "EXPIRED",
-                evidence_type=EVIDENCE_DETERMINISTIC,
+        else:
+            trace.append(
+                VerificationStep(
+                    step=STEP_CONCLUSION,
+                    description="Determined whether the claim falls within the statute of limitations.",
+                    inputs={
+                        "within_period": within_period,
+                        "days_remaining": days_remaining,
+                    },
+                    output="WITHIN STATUTE" if within_period else "EXPIRED",
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                )
             )
-        )
         return StatuteResult(
             verified=verified,
             claim_type=claim_type,
