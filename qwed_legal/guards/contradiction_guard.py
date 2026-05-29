@@ -269,7 +269,7 @@ class ContradictionGuard:
         return (
             f"{'✅ CONSISTENT' if verified else '⚠️  PARTIAL COVERAGE'} "
             f"(modeled clauses): The DURATION and LIABILITY clauses "
-            f"{'are logically satisfiable' if verified else 'passed, but modeling is incomplete'}"
+            f"{'are logically satisfiable' if verified else 'were not fully verified because modeling is incomplete'}"
             f".{coverage_note}"
         )
 
