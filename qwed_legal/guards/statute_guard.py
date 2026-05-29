@@ -430,6 +430,26 @@ class StatuteOfLimitationsGuard:
                 ),
                 evidence_type=EVIDENCE_DETERMINISTIC,
             ),
+        ]
+        if claimed_within_period is not None:
+            claim_matches = claimed_within_period == within_period
+            trace.append(
+                VerificationStep(
+                    step=STEP_FACT_DERIVED,
+                    description="Compared claimed within-period answer to computed result.",
+                    inputs={
+                        "claimed_within_period": claimed_within_period,
+                        "computed_within_period": within_period,
+                    },
+                    output=(
+                        "CLAIM_MATCH"
+                        if claim_matches
+                        else "CLAIM_MISMATCH"
+                    ),
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                )
+            )
+        trace.append(
             VerificationStep(
                 step=STEP_CONCLUSION,
                 description="Determined whether the claim falls within the statute of limitations.",
@@ -439,8 +459,8 @@ class StatuteOfLimitationsGuard:
                 },
                 output="WITHIN STATUTE" if within_period else "EXPIRED",
                 evidence_type=EVIDENCE_DETERMINISTIC,
-            ),
-        ]
+            )
+        )
         return StatuteResult(
             verified=verified,
             claim_type=claim_type,

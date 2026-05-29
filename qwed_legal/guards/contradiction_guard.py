@@ -113,18 +113,23 @@ class ContradictionGuard:
         s.add(max_liability_usd >= 0)
 
         unmodeled_supported = 0
+        encoded_supported = []
 
         duration_clauses = [c for c in supported if c.category.upper() == "DURATION"]
         for clause in duration_clauses:
-            unmodeled_supported += self._add_duration_constraint(
-                s, clause, contract_duration_months
-            )
+            add_result = self._add_duration_constraint(s, clause, contract_duration_months)
+            if add_result == 0:
+                encoded_supported.append(clause)
+            else:
+                unmodeled_supported += 1
 
         liability_clauses = [c for c in supported if c.category.upper() == "LIABILITY"]
         for clause in liability_clauses:
-            unmodeled_supported += self._add_liability_constraint(
-                s, clause, max_liability_usd
-            )
+            add_result = self._add_liability_constraint(s, clause, max_liability_usd)
+            if add_result == 0:
+                encoded_supported.append(clause)
+            else:
+                unmodeled_supported += 1
 
         # Build trace steps
         trace = []
@@ -147,7 +152,7 @@ class ContradictionGuard:
             )
         )
         # Step 2: Fact derived per supported clause
-        for c in supported:
+        for c in encoded_supported:
             trace.append(
                 VerificationStep(
                     step=STEP_FACT_DERIVED,
@@ -283,8 +288,12 @@ class ContradictionGuard:
                     VerificationStep(
                         step=STEP_CONCLUSION,
                         description="Z3 solver evaluated: clauses are satisfiable.",
-                        inputs={"z3_result": "sat"},
-                        output="CONSISTENT: Z3 confirms no contradictions among modeled clauses.",
+                        inputs={"z3_result": "sat", "partial_coverage": has_partial_modeling},
+                        output=(
+                            "CONSISTENT: Z3 confirms no contradictions among modeled clauses."
+                            if not has_partial_modeling
+                            else "PARTIAL_COVERAGE: satisfiable among modeled clauses only."
+                        ),
                         evidence_type=EVIDENCE_DETERMINISTIC,
                     )
                 ],
