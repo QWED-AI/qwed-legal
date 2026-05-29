@@ -245,6 +245,35 @@ class ContradictionGuard:
         }
 
     @staticmethod
+    def _sat_trace_step(has_partial_modeling: bool) -> VerificationStep:
+        """Build conclusion trace step for a SAT solver outcome."""
+        output = (
+            "CONSISTENT: Z3 confirms no contradictions among modeled clauses."
+            if not has_partial_modeling
+            else "PARTIAL_COVERAGE: satisfiable among modeled clauses only."
+        )
+        evidence = (
+            EVIDENCE_DETERMINISTIC if not has_partial_modeling else EVIDENCE_UNSUPPORTED
+        )
+        return VerificationStep(
+            step=STEP_CONCLUSION,
+            description="Z3 solver evaluated: clauses are satisfiable.",
+            inputs={"z3_result": "sat", "partial_coverage": has_partial_modeling},
+            output=output,
+            evidence_type=evidence,
+        )
+
+    @staticmethod
+    def _z3_message(verified: bool, coverage_note: str) -> str:
+        """Build human-readable SAT message aligned to coverage status."""
+        return (
+            f"{'✅ CONSISTENT' if verified else '⚠️  PARTIAL COVERAGE'} "
+            f"(modeled clauses): The DURATION and LIABILITY clauses "
+            f"{'are logically satisfiable' if verified else 'passed, but modeling is incomplete'}"
+            f".{coverage_note}"
+        )
+
+    @staticmethod
     def _build_result(
         s: Solver,
         unsupported_categories: list,
@@ -255,14 +284,6 @@ class ContradictionGuard:
         """Evaluate Z3 solver and build the final result dict."""
         has_unmodeled_supported = unmodeled_supported > 0
         has_partial_modeling = has_unsupported or has_unmodeled_supported
-        sat_output = (
-            "CONSISTENT: Z3 confirms no contradictions among modeled clauses."
-            if not has_partial_modeling
-            else "PARTIAL_COVERAGE: satisfiable among modeled clauses only."
-        )
-        sat_evidence = (
-            EVIDENCE_DETERMINISTIC if not has_partial_modeling else EVIDENCE_UNSUPPORTED
-        )
 
         coverage_note = ""
         if has_unsupported:
@@ -285,23 +306,10 @@ class ContradictionGuard:
             return {
                 "verified": verified,
                 "status": status,
-                "message": (
-                    f"{'✅ CONSISTENT' if verified else '⚠️  PARTIAL COVERAGE'} "
-                    f"(modeled clauses): The DURATION and LIABILITY clauses "
-                    f"{'are logically satisfiable' if verified else 'passed, but modeling is incomplete'}"
-                    f".{coverage_note}"
-                ),
+                "message": ContradictionGuard._z3_message(verified, coverage_note),
                 "unsupported": unsupported_categories,
                 "verification_trace": (trace or [])
-                + [
-                    VerificationStep(
-                        step=STEP_CONCLUSION,
-                        description="Z3 solver evaluated: clauses are satisfiable.",
-                        inputs={"z3_result": "sat", "partial_coverage": has_partial_modeling},
-                        output=sat_output,
-                        evidence_type=sat_evidence,
-                    )
-                ],
+                + [ContradictionGuard._sat_trace_step(has_partial_modeling)],
             }
 
         if result == unknown:

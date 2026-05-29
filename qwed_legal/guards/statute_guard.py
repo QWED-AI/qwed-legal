@@ -435,18 +435,20 @@ class StatuteOfLimitationsGuard:
             claim_matches = claimed_within_period == within_period
             trace.append(
                 VerificationStep(
-                    step=STEP_FACT_DERIVED,
+                    step=STEP_CONCLUSION,
                     description="Compared claimed within-period answer to computed result.",
                     inputs={
                         "claimed_within_period": claimed_within_period,
                         "computed_within_period": within_period,
                     },
                     output=(
-                        "CLAIM_MATCH"
+                        "CLAIM VERIFIED"
                         if claim_matches
-                        else "CLAIM_MISMATCH"
+                        else "CLAIM INCORRECT"
                     ),
-                    evidence_type=EVIDENCE_DETERMINISTIC,
+                    evidence_type=(
+                        EVIDENCE_DETERMINISTIC if claim_matches else EVIDENCE_UNSUPPORTED
+                    ),
                 )
             )
         trace.append(
