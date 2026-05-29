@@ -254,6 +254,14 @@ class ContradictionGuard:
     ) -> dict:
         """Evaluate Z3 solver and build the final result dict."""
         has_partial_modeling = has_unsupported or (unmodeled_supported > 0)
+        sat_output = (
+            "CONSISTENT: Z3 confirms no contradictions among modeled clauses."
+            if not has_partial_modeling
+            else "PARTIAL_COVERAGE: satisfiable among modeled clauses only."
+        )
+        sat_evidence = (
+            EVIDENCE_DETERMINISTIC if not has_partial_modeling else EVIDENCE_UNSUPPORTED
+        )
 
         coverage_note = ""
         if has_unsupported:
@@ -289,12 +297,8 @@ class ContradictionGuard:
                         step=STEP_CONCLUSION,
                         description="Z3 solver evaluated: clauses are satisfiable.",
                         inputs={"z3_result": "sat", "partial_coverage": has_partial_modeling},
-                        output=(
-                            "CONSISTENT: Z3 confirms no contradictions among modeled clauses."
-                            if not has_partial_modeling
-                            else "PARTIAL_COVERAGE: satisfiable among modeled clauses only."
-                        ),
-                        evidence_type=EVIDENCE_DETERMINISTIC,
+                        output=sat_output,
+                        evidence_type=sat_evidence,
                     )
                 ],
             }

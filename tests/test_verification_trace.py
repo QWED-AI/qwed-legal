@@ -1,4 +1,4 @@
-﻿"""
+"""
 tests/test_verification_trace.py
 
 Phase-1 regression tests for verification_trace on StatuteGuard and ContradictionGuard.
