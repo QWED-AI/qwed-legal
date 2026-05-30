@@ -189,7 +189,7 @@ Some operate on partial rules or structured validation and should **not** be tre
 | `StatuteOfLimitationsGuard` | `PARTIAL / HEURISTIC` | Limitation-period calculations for supported jurisdictions and claim types |
 | `IRACGuard` | `PARTIAL / HEURISTIC` | IRAC structure and consistency checks, not proof of legal reasoning |
 | `ContradictionGuard` | `PARTIAL / HEURISTIC` | Structured contradiction checks for a limited set of modeled clause categories |
-| `FairnessGuard` | `PARTIAL / HEURISTIC` | Counterfactual consistency checks, not full fairness proof |
+| `FairnessGuard` | `HEURISTIC / FAIL-CLOSED` | Counterfactual consistency signal only; never returns `verified=True` — fairness cannot be proven by text substitution (issue #18) |
 
 ### Example: citation format check
 

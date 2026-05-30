@@ -31,6 +31,15 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
+from qwed_legal.models import (
+    VerificationStep,
+    STEP_RULE_IDENTIFIED,
+    STEP_AMBIGUITY_NOTED,
+    STEP_CONCLUSION,
+    EVIDENCE_INFERRED,
+    EVIDENCE_UNSUPPORTED,
+)
+
 # Status constants
 STATUS_STRUCTURE_INVALID = "structure_invalid"
 STATUS_COHERENCE_INVALID = "coherence_invalid"
@@ -63,6 +72,7 @@ class IRACResult:
     missing_sections: List[str] = field(default_factory=list)
     coherence_issues: List[str] = field(default_factory=list)
     message: str = ""
+    verification_trace: list = field(default_factory=list)
 
     @property
     def verified(self) -> bool:
@@ -158,6 +168,22 @@ class IRACGuard:
                     f"{', '.join(missing)}. Legal analysis must contain "
                     f"Issue, Rule, Application, and Conclusion."
                 ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Scanned text for the four IRAC sections.",
+                        inputs={"missing_sections": missing},
+                        output=f"Missing section(s): {', '.join(missing)}",
+                        evidence_type=EVIDENCE_INFERRED,
+                    ),
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="Required IRAC structure is incomplete.",
+                        inputs={"missing_count": len(missing)},
+                        output="STRUCTURE INVALID",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                ],
             )
 
         coherence_issues = self._check_coherence(components)
@@ -174,6 +200,22 @@ class IRACGuard:
                     f"NOTE: Even coherent structure does not prove the "
                     f"reasoning is legally correct."
                 ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="All four IRAC sections were located.",
+                        inputs={"sections": list(components.keys())},
+                        output="All IRAC sections present.",
+                        evidence_type=EVIDENCE_INFERRED,
+                    ),
+                    VerificationStep(
+                        step=STEP_AMBIGUITY_NOTED,
+                        description="Structural coherence checks failed.",
+                        inputs={"coherence_issues": coherence_issues},
+                        output="COHERENCE INVALID: structural signals inconsistent.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                ],
             )
 
         return IRACResult(
@@ -188,6 +230,25 @@ class IRACGuard:
                 "conclusion is legally correct. Structure check is not proof "
                 "of valid legal reasoning."
             ),
+            verification_trace=[
+                VerificationStep(
+                    step=STEP_RULE_IDENTIFIED,
+                    description="All four IRAC sections located and coherence checks passed.",
+                    inputs={"sections": list(components.keys())},
+                    output="Structure present and coherent (heuristic).",
+                    evidence_type=EVIDENCE_INFERRED,
+                ),
+                VerificationStep(
+                    step=STEP_CONCLUSION,
+                    description="Structure valid, but legal reasoning cannot be proven.",
+                    inputs={"reasoning_database_access": False},
+                    output=(
+                        "REASONING UNVERIFIABLE: structural validity is not proof "
+                        "of legally sound reasoning."
+                    ),
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                ),
+            ],
         )
 
     def _extract_sections(self, text: str) -> Tuple[Dict[str, str], List[str]]:

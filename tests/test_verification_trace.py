@@ -11,6 +11,7 @@ from qwed_legal.guards.liability_guard import LiabilityGuard
 from qwed_legal.guards.jurisdiction_guard import JurisdictionGuard
 from qwed_legal.guards.clause_guard import ClauseGuard
 from qwed_legal.guards.citation_guard import CitationGuard
+from qwed_legal.guards.irac_guard import IRACGuard
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -365,3 +366,33 @@ class TestCitationVerificationTrace:
         result = CitationGuard().check_statute_citation("42 U.S.C. § 1983")
         assert result.format_valid is True
         assert result.verification_trace[0].evidence_type == EVIDENCE_PARSED
+
+
+class TestIRACVerificationTrace:
+    _VALID = (
+        "Issue: Whether the contract is enforceable.\n"
+        "Rule: A contract requires offer, acceptance, and consideration.\n"
+        "Application: Here, offer and acceptance and consideration are present.\n"
+        "Conclusion: The contract is enforceable.\n"
+    )
+
+    def test_structure_valid_reasoning_unsupported(self):
+        result = IRACGuard().verify(self._VALID)
+        assert result.structure_valid is True
+        trace = result.verification_trace
+        assert trace[0].evidence_type == EVIDENCE_INFERRED
+        # Reasoning correctness can never be proven structurally.
+        assert trace[-1].evidence_type == EVIDENCE_UNSUPPORTED
+        assert trace[-1].is_proven() is False
+
+    def test_missing_section_unsupported(self):
+        result = IRACGuard().verify("Issue: something\nRule: a rule")
+        assert result.structure_valid is False
+        assert result.verification_trace[-1].evidence_type == EVIDENCE_UNSUPPORTED
+
+    def test_no_step_is_deterministic(self):
+        result = IRACGuard().verify(self._VALID)
+        assert all(
+            s.evidence_type != EVIDENCE_DETERMINISTIC
+            for s in result.verification_trace
+        )
