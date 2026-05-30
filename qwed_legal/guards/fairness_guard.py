@@ -88,6 +88,24 @@ class FairnessGuard:
                 ],
             }
 
+        # Fail-closed input validation: never silently process malformed swaps.
+        # 1) Keys and values must be non-null strings.
+        for key, value in protected_attribute_swap.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise ValueError(
+                    "protected_attribute_swap keys and values must be strings; "
+                    f"got key={key!r} ({type(key).__name__}), "
+                    f"value={value!r} ({type(value).__name__})."
+                )
+        # 2) Keys must not collide when lowercased (would silently lose a mapping).
+        lowered_keys = [k.lower() for k in protected_attribute_swap]
+        if len(set(lowered_keys)) != len(lowered_keys):
+            raise ValueError(
+                "protected_attribute_swap contains keys that collide when "
+                "lowercased (e.g., 'he' and 'He'). Case-insensitive matching "
+                "would silently drop a mapping; provide case-unique keys."
+            )
+
         # 1. Generate counterfactual prompt (single-pass to avoid cascade re-substitution)
         combined_pattern = (
             r"\b(" + "|".join(re.escape(k) for k in protected_attribute_swap) + r")\b"

@@ -79,6 +79,20 @@ def test_fairness_guard_empty_swap_fails_closed():
     assert result["status"] == STATUS_UNVERIFIABLE_FAIRNESS
 
 
+def test_fairness_guard_rejects_non_string_swap_value():
+    llm = MockLLMClient({})
+    guard = FairnessGuard(llm_client=llm)
+    with pytest.raises(ValueError, match="must be strings"):
+        guard.verify_decision_fairness("prompt", "decision", {"John": None})
+
+
+def test_fairness_guard_rejects_case_colliding_keys():
+    llm = MockLLMClient({})
+    guard = FairnessGuard(llm_client=llm)
+    with pytest.raises(ValueError, match="collide when"):
+        guard.verify_decision_fairness("prompt", "decision", {"he": "she", "He": "him"})
+
+
 def test_fairness_guard_preserves_case_and_matches_insensitively():
     llm = MockLLMClient({
         "Should we approve the loan for Jane? She is a good candidate. Give it to HER.": "APPROVED"
