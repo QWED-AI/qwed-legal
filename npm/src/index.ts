@@ -540,10 +540,17 @@ result = guard.verify_decision_fairness(
 out = {
     "verified": False,
     "status": result.get("status", ""),
-    "risk": result.get("risk"),
     "message": result.get("message", ""),
-    "variance": result.get("variance"),
 }
+# Only include optional keys when present so they serialize as absent
+# (TS undefined) rather than JSON null, matching the optional fields in
+# FairnessResult and avoiding null-property access errors in consumers.
+risk = result.get("risk")
+if risk is not None:
+    out["risk"] = risk
+variance = result.get("variance")
+if variance is not None:
+    out["variance"] = variance
 trace = result.get("verification_trace")
 if trace is not None:
     out["verification_trace"] = trace_to_dict(trace)
