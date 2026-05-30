@@ -320,6 +320,30 @@ class JurisdictionGuard:
         warnings = []
         selected_forum = forum if forum is not None else forum_selection
 
+        # Fail-closed: jurisdiction consistency cannot be verified without party
+        # information. An empty party list would otherwise produce no conflicts
+        # and falsely report verified=True.
+        if not parties_countries:
+            return JurisdictionResult(
+                verified=False,
+                conflicts=["No parties provided."],
+                governing_law=governing_law,
+                forum=selected_forum,
+                message=(
+                    "❌ UNVERIFIABLE: Cannot verify jurisdiction consistency "
+                    "without party country information."
+                ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="No party countries provided to assess jurisdiction.",
+                        inputs={"parties_countries": parties_countries},
+                        output="UNSUPPORTED: empty party list cannot be verified.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
         # Normalize inputs (convert full state names to abbreviations)
         governing_law_upper = self._normalize_jurisdiction(governing_law)
         parties_upper = [self._normalize_party_country(p) for p in parties_countries]

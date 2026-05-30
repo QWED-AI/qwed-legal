@@ -335,6 +335,15 @@ class TestJurisdictionVerificationTrace:
         assert result.verification_trace[0].step == STEP_RULE_IDENTIFIED
         assert result.verification_trace[-1].step == STEP_CONCLUSION
 
+    def test_choice_of_law_empty_parties_fail_closed(self):
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=[],
+            governing_law="California",
+            forum="California",
+        )
+        assert result.verified is False
+        assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
+
     def test_convention_all_members_deterministic(self):
         result = JurisdictionGuard().check_convention_applicability(
             ["US", "DE"], "CISG"
