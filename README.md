@@ -183,13 +183,14 @@ Some operate on partial rules or structured validation and should **not** be tre
 |-------|--------|----------------|
 | `DeadlineGuard` | `DETERMINISTIC` | Date arithmetic, business-day calculations, holiday-aware computations for supported inputs |
 | `LiabilityGuard` | `DETERMINISTIC` | Cap calculations, tiered amount computations for supported numeric inputs |
-| `ClauseGuard` | `PARTIAL / HEURISTIC` | Limited clause consistency and contradiction checks |
+| `ClauseGuard` | `PARTIAL / HEURISTIC` | Limited clause consistency and contradiction checks (explicit Z3 path is deterministic) |
 | `CitationGuard` | `PARTIAL / HEURISTIC` | Citation shape / format validation, not authoritative existence proof |
 | `JurisdictionGuard` | `PARTIAL / HEURISTIC` | Structured checks around governing law / forum combinations |
-| `StatuteOfLimitationsGuard` | `PARTIAL / HEURISTIC` | Limitation-period calculations for supported jurisdictions and claim types |
+| `StatuteOfLimitationsGuard` | `MIXED` | Deterministic date arithmetic over a parsed limitation-period lookup (lookup itself is `PARSED`, not authority proof) |
 | `IRACGuard` | `PARTIAL / HEURISTIC` | IRAC structure and consistency checks, not proof of legal reasoning |
-| `ContradictionGuard` | `PARTIAL / HEURISTIC` | Structured contradiction checks for a limited set of modeled clause categories |
+| `ContradictionGuard` | `MIXED` | Deterministic Z3 SAT/UNSAT over a limited set of modeled clause categories; unmodeled inputs fail closed |
 | `FairnessGuard` | `HEURISTIC / FAIL-CLOSED` | Counterfactual consistency signal only; never returns `verified=True` — fairness cannot be proven by text substitution (issue #18) |
+| `ProvenanceGuard` | `DETERMINISTIC` | AI-content provenance/disclosure checks: hash integrity, metadata completeness, timestamp validity, disclosure/model/human-review policy |
 
 ### Verification trace (auditability)
 
@@ -235,11 +236,13 @@ from qwed_legal import CitationGuard
 guard = CitationGuard()
 result = guard.verify("Brown v. Board of Education, 347 U.S. 483 (1954)")
 
-print(result.valid)
+print(result.format_valid)   # True if the string matches a known reporter pattern
+print(result.status)         # 'unverifiable_authority' even when format is valid
+print(result.verified)       # always False — authority cannot be proven
 print(result.parsed_components)
 ```
 
-Important: a valid format result does **not** prove that a cited authority exists or is controlling. It only means the citation matched a supported structural pattern.
+Important: a valid format result does **not** prove that a cited authority exists or is controlling. It only means the citation matched a supported structural pattern. `result.verified` is therefore always `False`, and `result.status` is `unverifiable_authority` whenever the format matches — CitationGuard has no case-law database.
 
 ---
 

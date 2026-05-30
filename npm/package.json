@@ -1,6 +1,6 @@
 {
     "name": "@qwed-ai/legal",
-    "version": "1.0.0",
+    "version": "0.4.0",
     "description": "TypeScript wrapper for QWED-Legal - Verification guards for legal contracts",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
