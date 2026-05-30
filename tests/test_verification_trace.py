@@ -9,6 +9,8 @@ from qwed_legal.guards.contradiction_guard import ContradictionGuard, Clause
 from qwed_legal.guards.deadline_guard import DeadlineGuard
 from qwed_legal.guards.liability_guard import LiabilityGuard
 from qwed_legal.guards.jurisdiction_guard import JurisdictionGuard
+from qwed_legal.guards.clause_guard import ClauseGuard
+from qwed_legal.guards.citation_guard import CitationGuard
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -306,3 +308,60 @@ class TestJurisdictionVerificationTrace:
         assert any(
             s.step == STEP_AMBIGUITY_NOTED for s in result.verification_trace
         )
+
+
+class TestClauseVerificationTrace:
+    def test_heuristic_conclusion_not_proven(self):
+        result = ClauseGuard().check_consistency(
+            [
+                "Seller may terminate with 30 days notice",
+                "Buyer may terminate with 60 days notice",
+            ]
+        )
+        trace = result.verification_trace
+        assert trace[-1].step == STEP_CONCLUSION
+        assert trace[-1].is_proven() is False
+        assert trace[-1].evidence_type == EVIDENCE_INFERRED
+
+    def test_limited_coverage_unsupported_step(self):
+        result = ClauseGuard().check_consistency(
+            ["The sky is blue", "Grass is green"]
+        )
+        assert result.status == "heuristic_pass_limited"
+        assert any(
+            s.evidence_type == EVIDENCE_UNSUPPORTED for s in result.verification_trace
+        )
+
+    def test_z3_path_is_deterministic(self):
+        from z3 import Bool
+
+        p = Bool("p")
+        result = ClauseGuard().verify_using_z3([p, p])
+        assert result.consistent is True
+        assert result.verification_trace[-1].evidence_type == EVIDENCE_DETERMINISTIC
+        assert result.verification_trace[-1].is_proven() is True
+
+    def test_z3_empty_unsupported(self):
+        result = ClauseGuard().verify_using_z3([])
+        assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
+
+
+class TestCitationVerificationTrace:
+    def test_format_valid_authority_unsupported(self):
+        result = CitationGuard().verify("Brown v. Board, 347 U.S. 483")
+        assert result.format_valid is True
+        trace = result.verification_trace
+        assert trace[0].evidence_type == EVIDENCE_PARSED
+        # Authority can never be proven by format match.
+        assert trace[-1].evidence_type == EVIDENCE_UNSUPPORTED
+        assert trace[-1].is_proven() is False
+
+    def test_format_invalid_trace(self):
+        result = CitationGuard().verify("not a citation")
+        assert result.format_valid is False
+        assert result.verification_trace[-1].output == "FORMAT INVALID"
+
+    def test_statute_format_trace(self):
+        result = CitationGuard().check_statute_citation("42 U.S.C. § 1983")
+        assert result.format_valid is True
+        assert result.verification_trace[0].evidence_type == EVIDENCE_PARSED
