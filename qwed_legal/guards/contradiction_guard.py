@@ -14,6 +14,17 @@ from typing import List
 
 from z3 import Int, Solver, sat, unknown
 
+from qwed_legal.models import (
+    VerificationStep,
+    STEP_RULE_IDENTIFIED,
+    STEP_FACT_DERIVED,
+    STEP_AMBIGUITY_NOTED,
+    STEP_CONCLUSION,
+    EVIDENCE_DETERMINISTIC,
+    EVIDENCE_PARSED,
+    EVIDENCE_UNSUPPORTED,
+)
+
 
 @dataclass
 class Clause:
@@ -60,6 +71,15 @@ class ContradictionGuard:
                     "An empty clause list cannot be proven consistent."
                 ),
                 unsupported=[],
+                trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="No clauses provided to verify.",
+                        inputs={"clauses": []},
+                        output="UNSUPPORTED: empty input cannot be proven consistent.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
 
         supported, unsupported = self._partition_clauses(clauses)
@@ -75,6 +95,15 @@ class ContradictionGuard:
                     f"Cannot prove consistency for inputs that are not modeled."
                 ),
                 unsupported=unsupported_categories,
+                trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Clause categories partitioned: none are supported by this guard.",
+                        inputs={"categories_received": unsupported_categories},
+                        output=f"UNSUPPORTED: all categories unmodeled — {', '.join(unsupported_categories)}.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
 
         s = Solver()
@@ -84,17 +113,73 @@ class ContradictionGuard:
         s.add(max_liability_usd >= 0)
 
         unmodeled_supported = 0
+        encoded_supported = []
 
         duration_clauses = [c for c in supported if c.category.upper() == "DURATION"]
         for clause in duration_clauses:
-            unmodeled_supported += self._add_duration_constraint(
-                s, clause, contract_duration_months
-            )
+            add_result = self._add_duration_constraint(s, clause, contract_duration_months)
+            if add_result == 0:
+                encoded_supported.append(clause)
+            else:
+                unmodeled_supported += 1
 
         liability_clauses = [c for c in supported if c.category.upper() == "LIABILITY"]
         for clause in liability_clauses:
-            unmodeled_supported += self._add_liability_constraint(
-                s, clause, max_liability_usd
+            add_result = self._add_liability_constraint(s, clause, max_liability_usd)
+            if add_result == 0:
+                encoded_supported.append(clause)
+            else:
+                unmodeled_supported += 1
+
+        # Build trace steps
+        trace = []
+        # Step 1: Rule identified
+        supported_cats = sorted({c.category for c in supported})
+        categories_text = " and ".join(supported_cats)
+        trace.append(
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Partitioned clauses into supported and unsupported categories.",
+                inputs={"categories_all": sorted({c.category for c in clauses})},
+                output=(
+                    f"Supported: {', '.join(supported_cats)}"
+                    + (
+                        f". Unsupported: {', '.join(unsupported_categories)}"
+                        if unsupported_categories
+                        else ""
+                    )
+                ),
+                evidence_type=EVIDENCE_PARSED,
+            )
+        )
+        # Step 2: Fact derived per supported clause
+        for c in encoded_supported:
+            trace.append(
+                VerificationStep(
+                    step=STEP_FACT_DERIVED,
+                    description=f"Encoded Z3 constraint for {c.category} clause.",
+                    inputs={
+                        "clause_text": c.text,
+                        "clause_category": c.category,
+                        "clause_value": c.value,
+                    },
+                    output=f"Z3 constraint added for '{c.text}' (value={c.value})",
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                )
+            )
+        # Step 3: Ambiguity noted if partial coverage
+        if unsupported_categories or unmodeled_supported > 0:
+            trace.append(
+                VerificationStep(
+                    step=STEP_AMBIGUITY_NOTED,
+                    description="Partial coverage detected — not all clauses could be modeled.",
+                    inputs={
+                        "unsupported_categories": unsupported_categories,
+                        "unmodeled_count": unmodeled_supported,
+                    },
+                    output="PARTIAL_COVERAGE: verification result reflects incomplete modeling.",
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                )
             )
 
         return self._build_result(
@@ -102,6 +187,8 @@ class ContradictionGuard:
             unsupported_categories=unsupported_categories,
             has_unsupported=bool(unsupported),
             unmodeled_supported=unmodeled_supported,
+            categories_text=categories_text,
+            trace=trace,
         )
 
     # ── private helpers ────────────────────────────────────────────────────────
@@ -148,13 +235,42 @@ class ContradictionGuard:
         return 0
 
     @staticmethod
-    def _unverifiable_result(message: str, unsupported: list) -> dict:
+    def _unverifiable_result(
+        message: str, unsupported: list, trace: list = None
+    ) -> dict:
         return {
             "verified": False,
             "status": "unverifiable",
             "message": message,
             "unsupported": unsupported,
+            "verification_trace": trace or [],
         }
+
+    @staticmethod
+    def _sat_trace_step(has_partial_modeling: bool) -> VerificationStep:
+        """Build conclusion trace step for a SAT solver outcome."""
+        output = (
+            "CONSISTENT: Z3 confirms no contradictions among modeled clauses."
+            if not has_partial_modeling
+            else "PARTIAL_COVERAGE: satisfiable among modeled clauses only."
+        )
+        return VerificationStep(
+            step=STEP_CONCLUSION,
+            description="Z3 solver evaluated: clauses are satisfiable.",
+            inputs={"z3_result": "sat", "partial_coverage": has_partial_modeling},
+            output=output,
+            evidence_type=EVIDENCE_DETERMINISTIC,
+        )
+
+    @staticmethod
+    def _z3_message(verified: bool, coverage_note: str, categories_text: str) -> str:
+        """Build human-readable SAT message aligned to coverage status."""
+        return (
+            f"{'✅ CONSISTENT' if verified else '⚠️  PARTIAL COVERAGE'} "
+            f"(modeled clauses): The {categories_text} clauses "
+            f"{'are logically satisfiable' if verified else 'were not fully verified because modeling is incomplete'}"
+            f".{coverage_note}"
+        )
 
     @staticmethod
     def _build_result(
@@ -162,9 +278,12 @@ class ContradictionGuard:
         unsupported_categories: list,
         has_unsupported: bool,
         unmodeled_supported: int,
+        categories_text: str,
+        trace: list = None,
     ) -> dict:
         """Evaluate Z3 solver and build the final result dict."""
-        has_partial_modeling = has_unsupported or (unmodeled_supported > 0)
+        has_unmodeled_supported = unmodeled_supported > 0
+        has_partial_modeling = has_unsupported or has_unmodeled_supported
 
         coverage_note = ""
         if has_unsupported:
@@ -172,7 +291,7 @@ class ContradictionGuard:
                 f" NOTE: clause(s) with unsupported categories "
                 f"({', '.join(unsupported_categories)}) were excluded from the Z3 model."
             )
-        if unmodeled_supported > 0:
+        if has_unmodeled_supported:
             coverage_note += (
                 f" NOTE: {unmodeled_supported} supported-category clause(s) had "
                 f"unrecognized keyword patterns and could not be encoded."
@@ -187,13 +306,12 @@ class ContradictionGuard:
             return {
                 "verified": verified,
                 "status": status,
-                "message": (
-                    f"{'✅ CONSISTENT' if verified else '⚠️  PARTIAL COVERAGE'} "
-                    f"(modeled clauses): The DURATION and LIABILITY clauses "
-                    f"{'are logically satisfiable' if verified else 'passed, but modeling is incomplete'}"
-                    f".{coverage_note}"
+                "message": ContradictionGuard._z3_message(
+                    verified, coverage_note, categories_text
                 ),
                 "unsupported": unsupported_categories,
+                "verification_trace": (trace or [])
+                + [ContradictionGuard._sat_trace_step(has_partial_modeling)],
             }
 
         if result == unknown:
@@ -206,6 +324,16 @@ class ContradictionGuard:
                     f"Cannot determine consistency.{coverage_note}"
                 ),
                 "unsupported": unsupported_categories,
+                "verification_trace": (trace or [])
+                + [
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="Z3 returned unknown — constraints too complex or timeout.",
+                        inputs={"z3_result": "unknown"},
+                        output="UNVERIFIABLE: Z3 could not determine satisfiability.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             }
 
         # result == unsat → contradiction
@@ -218,4 +346,14 @@ class ContradictionGuard:
                 f"duration).{coverage_note}"
             ),
             "unsupported": unsupported_categories,
+            "verification_trace": (trace or [])
+            + [
+                VerificationStep(
+                    step=STEP_CONCLUSION,
+                    description="Z3 evaluated: clauses are mutually contradictory.",
+                    inputs={"z3_result": "unsat"},
+                    output="CONTRADICTION: no assignment satisfies all constraints.",
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                )
+            ],
         }

@@ -5,9 +5,16 @@ Catches percentage miscalculations, cap verification errors, and multi-tier liab
 """
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
+
+from qwed_legal.models import (
+    VerificationStep,
+    STEP_FACT_DERIVED,
+    STEP_CONCLUSION,
+    EVIDENCE_DETERMINISTIC,
+)
 
 
 @dataclass
@@ -20,6 +27,7 @@ class LiabilityResult:
     computed_cap: Decimal
     difference: Decimal
     message: str
+    verification_trace: list = field(default_factory=list)
 
 
 @dataclass
@@ -30,6 +38,7 @@ class TieredLiabilityResult:
     total_computed: Decimal
     claimed_total: Decimal
     message: str
+    verification_trace: list = field(default_factory=list)
 
 
 class LiabilityGuard:
@@ -115,7 +124,26 @@ class LiabilityGuard:
             claimed_cap=claimed,
             computed_cap=computed,
             difference=difference,
-            message=message
+            message=message,
+            verification_trace=[
+                VerificationStep(
+                    step=STEP_FACT_DERIVED,
+                    description="Computed liability cap as percentage of contract value.",
+                    inputs={
+                        "contract_value": str(cv),
+                        "cap_percentage": str(cap_percentage),
+                    },
+                    output=f"Computed cap: {computed}",
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                ),
+                VerificationStep(
+                    step=STEP_CONCLUSION,
+                    description="Compared claimed cap to computed cap (exact match required).",
+                    inputs={"claimed_cap": str(claimed), "computed_cap": str(computed)},
+                    output="CAP VERIFIED" if verified else "CAP MISMATCH",
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                ),
+            ],
         )
     
     def verify_tiered_liability(
@@ -168,7 +196,26 @@ class LiabilityGuard:
             tiers=computed_tiers,
             total_computed=total_computed,
             claimed_total=claimed,
-            message=message
+            message=message,
+            verification_trace=[
+                VerificationStep(
+                    step=STEP_FACT_DERIVED,
+                    description="Computed total liability across all tiers.",
+                    inputs={"tier_count": len(tiers)},
+                    output=f"Computed total: {total_computed}",
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                ),
+                VerificationStep(
+                    step=STEP_CONCLUSION,
+                    description="Compared claimed total to computed total (exact match required).",
+                    inputs={
+                        "claimed_total": str(claimed),
+                        "computed_total": str(total_computed),
+                    },
+                    output="TOTAL VERIFIED" if verified else "TOTAL MISMATCH",
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                ),
+            ],
         )
     
     def verify_indemnity_limit(
@@ -216,5 +263,21 @@ class LiabilityGuard:
             claimed_cap=claimed,
             computed_cap=computed,
             difference=difference,
-            message=message
+            message=message,
+            verification_trace=[
+                VerificationStep(
+                    step=STEP_FACT_DERIVED,
+                    description="Computed indemnity limit as multiplier of annual fee.",
+                    inputs={"annual_fee": str(fee), "multiplier": str(mult)},
+                    output=f"Computed limit: {computed}",
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                ),
+                VerificationStep(
+                    step=STEP_CONCLUSION,
+                    description="Compared claimed limit to computed limit (exact match required).",
+                    inputs={"claimed_limit": str(claimed), "computed_limit": str(computed)},
+                    output="LIMIT VERIFIED" if verified else "LIMIT MISMATCH",
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                ),
+            ],
         )

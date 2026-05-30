@@ -26,6 +26,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from qwed_legal.models import (
+    VerificationStep,
+    STEP_RULE_IDENTIFIED,
+    STEP_CONCLUSION,
+    EVIDENCE_PARSED,
+    EVIDENCE_UNSUPPORTED,
+)
+
 
 # Status constants — use these instead of comparing strings directly
 #
@@ -76,6 +84,7 @@ class CitationResult:
     issues: List[str] = field(default_factory=list)
     message: str = ""
     risk: Optional[str] = None
+    verification_trace: list = field(default_factory=list)
 
     # ── Backward-compatibility properties ─────────────────────────────────────
     @property
@@ -238,6 +247,7 @@ class CitationGuard:
                     f"this case exists or is correctly identified. "
                     f"Format match is not proof of legal authority."
                 ),
+                verification_trace=self._format_match_trace(citation_type, text),
             )
 
         # Statute check (done after case patterns to avoid dual-matching)
@@ -262,6 +272,7 @@ class CitationGuard:
                     "FORMAT INVALID: Citation is missing a case name "
                     "(expected 'Party v. Party, ...' format for this reporter)."
                 ),
+                verification_trace=self._format_invalid_trace(text, "Missing case name"),
             )
 
         # Unknown/invalid reporter pattern
@@ -276,6 +287,7 @@ class CitationGuard:
                     "abbreviation. Supported reporters: "
                     f"{', '.join(self.CASE_PATTERNS.keys())}."
                 ),
+                verification_trace=self._format_invalid_trace(text, "Unknown reporter"),
             )
 
         return CitationResult(
@@ -284,6 +296,7 @@ class CitationGuard:
             citation=text,
             issues=["No valid citation found"],
             message="FORMAT INVALID: No recognizable citation pattern found in the text.",
+            verification_trace=self._format_invalid_trace(text, "No valid citation found"),
         )
 
     def verify_citation_format(self, text: str) -> Dict[str, Any]:
@@ -338,6 +351,7 @@ class CitationGuard:
                         f"AUTHORITY UNVERIFIABLE: CitationGuard cannot confirm "
                         f"this statute section exists or applies as cited."
                     ),
+                    verification_trace=self._format_match_trace(citation_type, text),
                 )
 
         return CitationResult(
@@ -349,6 +363,7 @@ class CitationGuard:
                 "FORMAT INVALID: No recognized statute citation pattern found. "
                 f"Supported patterns: {', '.join(self.STATUTE_PATTERNS.keys())}."
             ),
+            verification_trace=self._format_invalid_trace(text, "Invalid statute format"),
         )
 
     def verify_batch(self, citations: List[str]) -> BatchCitationResult:
@@ -367,6 +382,49 @@ class CitationGuard:
         )
 
     # ── Private helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _format_match_trace(citation_type: str, text: str) -> list:
+        """Trace for a format-matching citation. Format match is PARSED, not authority proof."""
+        return [
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Matched citation string against a known reporter pattern.",
+                inputs={"citation": text, "citation_type": citation_type},
+                output=f"Format matched reporter pattern: {citation_type}",
+                evidence_type=EVIDENCE_PARSED,
+            ),
+            VerificationStep(
+                step=STEP_CONCLUSION,
+                description="Format is valid, but legal authority cannot be confirmed.",
+                inputs={"authority_database_access": False},
+                output=(
+                    "AUTHORITY UNVERIFIABLE: format match is not proof the cited "
+                    "authority exists."
+                ),
+                evidence_type=EVIDENCE_UNSUPPORTED,
+            ),
+        ]
+
+    @staticmethod
+    def _format_invalid_trace(text: str, issue: str) -> list:
+        """Trace for a citation that does not match any known format."""
+        return [
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Checked citation string against known reporter patterns.",
+                inputs={"citation": text},
+                output=f"No matching pattern: {issue}",
+                evidence_type=EVIDENCE_PARSED,
+            ),
+            VerificationStep(
+                step=STEP_CONCLUSION,
+                description="Citation format is invalid.",
+                inputs={"issue": issue},
+                output="FORMAT INVALID",
+                evidence_type=EVIDENCE_UNSUPPORTED,
+            ),
+        ]
 
     @staticmethod
     def _parse_components(groupdict: Dict[str, Any]) -> Dict[str, Any]:

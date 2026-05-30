@@ -5,11 +5,21 @@ Supports optional typed Z3 constraints for power users who model legal meaning
 explicitly outside this guard.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 from typing import Any, List, Optional, Tuple
 
 from z3 import BoolRef, Solver, sat, unknown, unsat
+
+from qwed_legal.models import (
+    VerificationStep,
+    STEP_RULE_IDENTIFIED,
+    STEP_AMBIGUITY_NOTED,
+    STEP_CONCLUSION,
+    EVIDENCE_DETERMINISTIC,
+    EVIDENCE_INFERRED,
+    EVIDENCE_UNSUPPORTED,
+)
 
 
 @dataclass
@@ -25,6 +35,7 @@ class ClauseResult:
     #   "contradiction"               — at least one conflict detected
     #   "heuristic_pass_limited"      — no propositions extracted; guard has no coverage
     #                                   consistent=False but NOT a detected contradiction
+    verification_trace: list = field(default_factory=list)
 
 
 class ClauseGuard:
@@ -63,6 +74,15 @@ class ClauseGuard:
                 consistent=True,
                 conflicts=[],
                 message="Single clause - no conflicts possible.",
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="Fewer than two clauses provided — no pair to compare.",
+                        inputs={"clause_count": len(clauses)},
+                        output="NO CONFLICT POSSIBLE (single clause)",
+                        evidence_type=EVIDENCE_INFERRED,
+                    )
+                ],
             )
 
         # Extract logical propositions from clauses
@@ -84,6 +104,16 @@ class ClauseGuard:
         )
         ambiguous = [p for p in propositions if p["ambiguous_termination_reference"]]
         has_ambiguous = len(ambiguous) > 0
+
+        rule_step = VerificationStep(
+            step=STEP_RULE_IDENTIFIED,
+            description="Extracted heuristic propositions from clause text.",
+            inputs={"clause_count": len(clauses), "covered_propositions": covered},
+            output=(
+                "Heuristic patterns: termination, notice period, min-term, exclusivity."
+            ),
+            evidence_type=EVIDENCE_INFERRED,
+        )
 
         if not conflicts:
             if covered == 0 or has_ambiguous:
@@ -108,6 +138,16 @@ class ClauseGuard:
                         "confirm it — downstream consumers must not treat this as "
                         "verified consistency."
                     ),
+                    verification_trace=[
+                        rule_step,
+                        VerificationStep(
+                            step=STEP_AMBIGUITY_NOTED,
+                            description="Coverage is limited or ambiguous — cannot confirm consistency.",
+                            inputs={"covered": covered, "has_ambiguous": has_ambiguous},
+                            output="UNSUPPORTED: limited heuristic coverage, not verified.",
+                            evidence_type=EVIDENCE_UNSUPPORTED,
+                        ),
+                    ],
                 )
             return ClauseResult(
                 consistent=True,
@@ -118,6 +158,16 @@ class ClauseGuard:
                     "min-term, exclusivity) found no conflicts. This is a heuristic "
                     "result — not deterministic legal verification."
                 ),
+                verification_trace=[
+                    rule_step,
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="No conflicts found by supported heuristic checks.",
+                        inputs={"conflict_count": 0},
+                        output="NO CONFLICT DETECTED (heuristic, not proof)",
+                        evidence_type=EVIDENCE_INFERRED,
+                    ),
+                ],
             )
 
         conflict_msgs = []
@@ -134,6 +184,16 @@ class ClauseGuard:
                 f"WARNING: {len(conflicts)} potential conflict(s) detected:\n"
                 + "\n".join(conflict_msgs)
             ),
+            verification_trace=[
+                rule_step,
+                VerificationStep(
+                    step=STEP_CONCLUSION,
+                    description="Heuristic checks detected potential conflict(s).",
+                    inputs={"conflict_count": len(conflicts)},
+                    output=f"POTENTIAL CONFLICT(S): {len(conflicts)} (heuristic, not proof)",
+                    evidence_type=EVIDENCE_INFERRED,
+                ),
+            ],
         )
 
     def _extract_propositions(self, clauses: List[str]) -> List[dict]:
@@ -318,6 +378,15 @@ class ClauseGuard:
                     "UNVERIFIABLE: verify_using_z3 requires explicit Z3 "
                     "constraint expressions. Empty input cannot be proven."
                 ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="No Z3 constraints provided.",
+                        inputs={"constraint_count": 0},
+                        output="UNSUPPORTED: empty constraint input.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
 
         invalid_positions = [
@@ -335,6 +404,15 @@ class ClauseGuard:
                     "Boolean expressions. Unsupported constraint(s) at "
                     f"position(s): {positions}."
                 ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="One or more inputs are not Z3 Boolean expressions.",
+                        inputs={"invalid_positions": invalid_positions},
+                        output="UNSUPPORTED: non-Boolean constraint input.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
 
         solver = Solver()
@@ -346,6 +424,15 @@ class ClauseGuard:
                 consistent=True,
                 conflicts=[],
                 message="VERIFIED: Provided Z3 constraints are satisfiable.",
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="Z3 evaluated explicit constraints as satisfiable.",
+                        inputs={"z3_result": "sat", "constraint_count": len(constraints)},
+                        output="SATISFIABLE: no contradiction among provided constraints.",
+                        evidence_type=EVIDENCE_DETERMINISTIC,
+                    )
+                ],
             )
 
         if result == unsat:
@@ -356,6 +443,15 @@ class ClauseGuard:
                     "CONTRADICTION: Provided Z3 constraints are "
                     "unsatisfiable (contradiction exists)."
                 ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="Z3 evaluated explicit constraints as unsatisfiable.",
+                        inputs={"z3_result": "unsat", "constraint_count": len(constraints)},
+                        output="CONTRADICTION: no assignment satisfies all constraints.",
+                        evidence_type=EVIDENCE_DETERMINISTIC,
+                    )
+                ],
             )
 
         if result == unknown:
@@ -363,10 +459,28 @@ class ClauseGuard:
                 consistent=False,
                 conflicts=[],
                 message="UNVERIFIABLE: Z3 returned unknown for the provided constraints.",
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="Z3 returned unknown — cannot determine satisfiability.",
+                        inputs={"z3_result": "unknown"},
+                        output="UNSUPPORTED: Z3 could not determine satisfiability.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
 
         return ClauseResult(
             consistent=False,
             conflicts=[],
             message="UNVERIFIABLE: Z3 returned an unsupported satisfiability state.",
+            verification_trace=[
+                VerificationStep(
+                    step=STEP_CONCLUSION,
+                    description="Z3 returned an unsupported satisfiability state.",
+                    inputs={"z3_result": str(result)},
+                    output="UNSUPPORTED: unexpected Z3 state.",
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                )
+            ],
         )

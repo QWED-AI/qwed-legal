@@ -8,6 +8,17 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Set
 from enum import Enum
 
+from qwed_legal.models import (
+    VerificationStep,
+    STEP_RULE_IDENTIFIED,
+    STEP_AMBIGUITY_NOTED,
+    STEP_CONCLUSION,
+    EVIDENCE_DETERMINISTIC,
+    EVIDENCE_PARSED,
+    EVIDENCE_INFERRED,
+    EVIDENCE_UNSUPPORTED,
+)
+
 
 class JurisdictionType(Enum):
     """Types of jurisdiction clauses."""
@@ -27,6 +38,7 @@ class JurisdictionResult:
     governing_law: Optional[str] = None
     forum: Optional[str] = None
     message: str = ""
+    verification_trace: list = field(default_factory=list)
 
 
 class JurisdictionGuard:
@@ -308,6 +320,30 @@ class JurisdictionGuard:
         warnings = []
         selected_forum = forum if forum is not None else forum_selection
 
+        # Fail-closed: jurisdiction consistency cannot be verified without party
+        # information. An empty party list would otherwise produce no conflicts
+        # and falsely report verified=True.
+        if not parties_countries:
+            return JurisdictionResult(
+                verified=False,
+                conflicts=["No parties provided."],
+                governing_law=governing_law,
+                forum=selected_forum,
+                message=(
+                    "❌ UNVERIFIABLE: Cannot verify jurisdiction consistency "
+                    "without party country information."
+                ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="No party countries provided to assess jurisdiction.",
+                        inputs={"parties_countries": parties_countries},
+                        output="UNSUPPORTED: empty party list cannot be verified.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
         # Normalize inputs (convert full state names to abbreviations)
         governing_law_upper = self._normalize_jurisdiction(governing_law)
         parties_upper = [self._normalize_party_country(p) for p in parties_countries]
@@ -438,6 +474,46 @@ class JurisdictionGuard:
         else:
             message = f"❌ CONFLICTS DETECTED: {len(conflicts)} issue(s) found."
 
+        trace = [
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Normalized and classified jurisdiction inputs from lookup tables.",
+                inputs={
+                    "governing_law": governing_law,
+                    "forum": selected_forum,
+                    "parties_countries": parties_countries,
+                },
+                output=(
+                    f"Governing law: {governing_law_upper}; "
+                    f"forum: {forum_upper}; parties: {parties_upper}"
+                ),
+                evidence_type=EVIDENCE_PARSED,
+            )
+        ]
+        if warnings:
+            trace.append(
+                VerificationStep(
+                    step=STEP_AMBIGUITY_NOTED,
+                    description="Heuristic cross-border/forum checks produced warnings.",
+                    inputs={"warnings": warnings},
+                    output="AMBIGUITY: warnings require human legal analysis.",
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                )
+            )
+        trace.append(
+            VerificationStep(
+                step=STEP_CONCLUSION,
+                description="Assessed jurisdiction consistency via lookup and heuristic checks.",
+                inputs={
+                    "conflict_count": len(conflicts),
+                    "warning_count": len(warnings),
+                },
+                output="CONSISTENT" if verified else "NOT VERIFIED",
+                # Conflict/warning detection is heuristic, not formal proof.
+                evidence_type=EVIDENCE_INFERRED,
+            )
+        )
+
         return JurisdictionResult(
             verified=verified,
             conflicts=conflicts,
@@ -445,6 +521,7 @@ class JurisdictionGuard:
             governing_law=governing_law,
             forum=selected_forum,
             message=message,
+            verification_trace=trace,
         )
 
     def verify_forum_selection(
@@ -479,11 +556,51 @@ class JurisdictionGuard:
                     "jurisdiction threshold ($75,000) for US federal court."
                 )
 
-        verified = len(conflicts) == 0
-        message = (
-            "✅ VERIFIED: Forum selection is valid."
-            if verified
-            else f"❌ {conflicts[0]}"
+        # Fail-closed and consistent with verify_choice_of_law: warnings (e.g.
+        # an unresolved diversity-jurisdiction threshold) are ambiguities that
+        # must not pass verification.
+        verified = len(conflicts) == 0 and len(warnings) == 0
+        if conflicts:
+            message = f"❌ {conflicts[0]}"
+        elif warnings:
+            message = (
+                f"⚠️ AMBIGUOUS / UNVERIFIABLE: {len(warnings)} unresolved forum "
+                "warning(s) require legal analysis before verification."
+            )
+        else:
+            message = "✅ VERIFIED: Forum selection is valid."
+
+        trace = [
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Normalized forum and checked against known jurisdictions.",
+                inputs={"forum": forum, "contract_value": contract_value},
+                output=f"Normalized forum: {forum_upper}",
+                evidence_type=EVIDENCE_PARSED,
+            )
+        ]
+        if warnings:
+            trace.append(
+                VerificationStep(
+                    step=STEP_AMBIGUITY_NOTED,
+                    description="Heuristic threshold check produced warning(s).",
+                    inputs={"warnings": warnings},
+                    output="AMBIGUITY: warning(s) require human legal analysis.",
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                )
+            )
+        trace.append(
+            VerificationStep(
+                step=STEP_CONCLUSION,
+                description="Assessed forum validity via lookup membership.",
+                inputs={
+                    "conflict_count": len(conflicts),
+                    "warning_count": len(warnings),
+                },
+                output="FORUM VALID" if verified else "FORUM NOT VERIFIED",
+                # Forum recognition is a parsed lookup, not formal legal proof.
+                evidence_type=EVIDENCE_INFERRED,
+            )
         )
 
         return JurisdictionResult(
@@ -492,6 +609,7 @@ class JurisdictionGuard:
             warnings=warnings,
             forum=forum,
             message=message,
+            verification_trace=trace,
         )
 
     def check_convention_applicability(
@@ -510,22 +628,70 @@ class JurisdictionGuard:
         convention_upper = convention.upper().replace(" ", "_")
         parties_upper = [p.upper().strip() for p in parties_countries]
 
+        # Fail-closed: with no parties, all([]) would be True and falsely report
+        # the convention as applicable. An empty party list cannot be verified.
+        if not parties_upper:
+            return JurisdictionResult(
+                verified=False,
+                conflicts=["No parties provided."],
+                message=(
+                    f"❌ UNVERIFIABLE: Cannot determine {convention} applicability "
+                    "with no parties specified."
+                ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="No party countries provided to evaluate membership.",
+                        inputs={"parties": parties_upper, "convention": convention},
+                        output="UNSUPPORTED: empty party list cannot be verified.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
         if convention_upper not in self.INTERNATIONAL_CONVENTIONS:
             return JurisdictionResult(
                 verified=False,
                 conflicts=[f"Unknown convention: '{convention}'"],
                 message=f"❌ Unknown convention: '{convention}'",
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Looked up the requested convention in the known set.",
+                        inputs={"convention": convention},
+                        output=f"UNSUPPORTED: unknown convention '{convention}'.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
 
         member_countries = self.INTERNATIONAL_CONVENTIONS[convention_upper]
         all_members = all(c in member_countries for c in parties_upper)
         some_members = any(c in member_countries for c in parties_upper)
 
+        rule_step = VerificationStep(
+            step=STEP_RULE_IDENTIFIED,
+            description="Matched parties against the convention's member states.",
+            inputs={"convention": convention_upper, "parties": parties_upper},
+            output=f"Member set resolved for {convention_upper}.",
+            evidence_type=EVIDENCE_PARSED,
+        )
+
         if all_members:
             return JurisdictionResult(
                 verified=True,
                 message=f"✅ {convention} applies - all parties are from member states.",
                 warnings=[],
+                verification_trace=[
+                    rule_step,
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="All parties are members of the convention (set membership).",
+                        inputs={"all_members": True},
+                        output=f"{convention_upper} APPLIES",
+                        evidence_type=EVIDENCE_DETERMINISTIC,
+                    ),
+                ],
             )
         elif some_members:
             non_members = [c for c in parties_upper if c not in member_countries]
@@ -533,12 +699,39 @@ class JurisdictionGuard:
                 verified=False,
                 warnings=[f"Not all parties are {convention} members: {non_members}"],
                 message=f"⚠️ {convention} may not apply to all parties.",
+                verification_trace=[
+                    rule_step,
+                    VerificationStep(
+                        step=STEP_AMBIGUITY_NOTED,
+                        description="Only some parties are convention members.",
+                        inputs={"non_members": non_members},
+                        output="AMBIGUITY: partial membership — applicability unclear.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="Convention may not apply to all parties.",
+                        inputs={"all_members": False, "some_members": True},
+                        output=f"{convention_upper} MAY NOT APPLY",
+                        evidence_type=EVIDENCE_DETERMINISTIC,
+                    ),
+                ],
             )
         else:
             return JurisdictionResult(
                 verified=False,
                 conflicts=[f"No parties are {convention} member states."],
                 message=f"❌ {convention} does not apply.",
+                verification_trace=[
+                    rule_step,
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="No parties are members of the convention (set membership).",
+                        inputs={"some_members": False},
+                        output=f"{convention_upper} DOES NOT APPLY",
+                        evidence_type=EVIDENCE_DETERMINISTIC,
+                    ),
+                ],
             )
 
     def _is_valid_jurisdiction(self, jurisdiction: str) -> bool:

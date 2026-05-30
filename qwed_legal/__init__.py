@@ -18,6 +18,7 @@ from qwed_legal.guards.irac_guard import IRACGuard
 from qwed_legal.guards.fairness_guard import FairnessGuard
 from qwed_legal.guards.contradiction_guard import ContradictionGuard, Clause
 from qwed_legal.guards.provenance_guard import ProvenanceGuard, ProvenanceRecord
+from qwed_legal.models import VerificationStep, trace_to_dict
 from qwed_legal.rag.sac_processor import SACProcessor
 
 __version__ = "0.4.0"
@@ -34,6 +35,8 @@ __all__ = [
     "Clause",
     "ProvenanceGuard",
     "ProvenanceRecord",
+    "VerificationStep",
+    "trace_to_dict",
     "SACProcessor",
     "LegalGuard",
 ]
@@ -77,7 +80,9 @@ class LegalGuard:
         """Verify a deadline calculation."""
         return self.deadline.verify(signing_date, term, claimed_deadline)
 
-    def verify_liability_cap(self, contract_value: float, cap_percentage: float, claimed_cap: float):
+    def verify_liability_cap(
+        self, contract_value: float, cap_percentage: float, claimed_cap: float
+    ):
         """Verify a liability cap calculation."""
         return self.liability.verify_cap(contract_value, cap_percentage, claimed_cap)
 
@@ -110,7 +115,9 @@ class LegalGuard:
             contract_type=contract_type,
         )
 
-    def verify_statute_of_limitations(self, claim_type: str, jurisdiction: str, incident_date: str, filing_date: str):
+    def verify_statute_of_limitations(
+        self, claim_type: str, jurisdiction: str, incident_date: str, filing_date: str
+    ):
         """Verify if claim is within statute of limitations."""
         return self.statute.verify(claim_type, jurisdiction, incident_date, filing_date)
 
@@ -127,15 +134,20 @@ class LegalGuard:
         """
         return self.contradiction.verify_consistency(clauses)
 
-    def verify_fairness(self, original_prompt: str, original_decision: str, protected_attribute_swap: dict[str, str]):
+    def verify_fairness(
+        self,
+        original_prompt: str,
+        original_decision: str,
+        protected_attribute_swap: dict[str, str],
+    ):
         """Test for algorithmic bias using counterfactual testing.
 
         Requires ``llm_client`` to be provided at init time.
         """
-        return self.fairness.verify_decision_fairness(original_prompt, original_decision, protected_attribute_swap)
+        return self.fairness.verify_decision_fairness(
+            original_prompt, original_decision, protected_attribute_swap
+        )
 
     def verify_provenance(self, content: str, provenance: dict):
         """Verify AI-generated content provenance and disclosure compliance."""
         return self.provenance.verify_provenance(content, provenance)
-
-

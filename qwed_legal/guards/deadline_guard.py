@@ -4,7 +4,7 @@ DeadlineGuard: Verify date calculations in legal contracts.
 Handles business days, calendar days, leap years, and holiday exclusions.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
 import re
@@ -12,6 +12,16 @@ import re
 from dateutil.parser import parse as parse_date
 from dateutil.relativedelta import relativedelta
 import holidays
+
+from qwed_legal.models import (
+    VerificationStep,
+    STEP_RULE_IDENTIFIED,
+    STEP_FACT_DERIVED,
+    STEP_CONCLUSION,
+    EVIDENCE_DETERMINISTIC,
+    EVIDENCE_PARSED,
+    EVIDENCE_UNSUPPORTED,
+)
 
 
 @dataclass
@@ -26,6 +36,7 @@ class DeadlineResult:
     message: str
     is_computable: bool = True  # False if term is ambiguous/unparseable
     verification_mode: str = "SYMBOLIC"  # Always SYMBOLIC for legal (SymPy/Z3)
+    verification_trace: list = field(default_factory=list)
 
 
 class DeadlineGuard:
@@ -53,10 +64,20 @@ class DeadlineGuard:
         """
         self.country = country
         self.state = state
+        # Track whether the requested holiday calendar was actually built.
+        # QWED principle: no silent degradation. If we fall back to a different
+        # calendar, business-day computations must not be presented as proven.
+        self.holiday_calendar_valid = True
+        self.holiday_fallback_reason = None
         try:
             self.holiday_calendar = holidays.country_holidays(country, subdiv=state)
-        except Exception:
+        except Exception as e:
             self.holiday_calendar = holidays.US()
+            self.holiday_calendar_valid = False
+            self.holiday_fallback_reason = (
+                f"Could not build holiday calendar for country={country!r}, "
+                f"state={state!r}: {e}. Fell back to US() calendar."
+            )
     
     def verify(
         self,
@@ -91,10 +112,22 @@ class DeadlineGuard:
                 difference_days=None,
                 message=f"Failed to parse dates: {e}",
                 is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Date parsing failed — cannot proceed.",
+                        inputs={
+                            "signing_date": signing_date,
+                            "claimed_deadline": claimed_deadline,
+                        },
+                        output=f"UNSUPPORTED: parse error: {e}",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
         
         # Parse term and calculate deadline
-        computed = self._calculate_deadline(signing, term)
+        computed, used_business_days = self._calculate_deadline(signing, term)
         
         # Fail-closed: if the term is ambiguous, do not verify
         if computed is None:
@@ -113,13 +146,41 @@ class DeadlineGuard:
                     f"human legal interpretation."
                 ),
                 is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Term parsed for a deterministic time quantity and unit.",
+                        inputs={"term": term},
+                        output=(
+                            "UNSUPPORTED: ambiguous term — no provable "
+                            "quantity/unit to compute a deadline."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
-        
+
         # Check difference
         diff = abs((claimed - computed).days)
         verified = diff <= tolerance_days
-        
-        if verified:
+
+        # QWED: if business days were used but the requested holiday calendar
+        # could not be built, the computation may rest on the wrong calendar.
+        # Do not present such a result as deterministic proof — fail closed.
+        calendar_unreliable = used_business_days and not self.holiday_calendar_valid
+        compute_evidence = (
+            EVIDENCE_UNSUPPORTED if calendar_unreliable else EVIDENCE_DETERMINISTIC
+        )
+
+        if calendar_unreliable:
+            verified = False
+            message = (
+                "⚠️ UNVERIFIABLE: This deadline uses business days, but the "
+                f"requested holiday calendar could not be built. "
+                f"{self.holiday_fallback_reason} Business-day results cannot be "
+                "proven against the wrong calendar."
+            )
+        elif verified:
             message = "✅ VERIFIED: Deadline calculation is correct."
         else:
             message = (
@@ -128,7 +189,58 @@ class DeadlineGuard:
                 f"but LLM claimed {claimed.strftime('%Y-%m-%d')}. "
                 f"Difference: {diff} days."
             )
-        
+
+        if calendar_unreliable:
+            conclusion_output = "UNSUPPORTED: business-day calendar unavailable"
+        elif verified:
+            conclusion_output = "DEADLINE VERIFIED"
+        else:
+            conclusion_output = "DEADLINE MISMATCH"
+
+        trace = [
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Parsed term into a deterministic time quantity and unit.",
+                inputs={"term": term, "tolerance_days": tolerance_days},
+                output=f"Parsed term: '{term}'",
+                evidence_type=EVIDENCE_PARSED,
+            ),
+            VerificationStep(
+                step=STEP_FACT_DERIVED,
+                description="Computed deadline from signing date and parsed term.",
+                inputs={
+                    "signing_date": str(signing),
+                    "term": term,
+                    "used_business_days": used_business_days,
+                    "holiday_calendar_valid": self.holiday_calendar_valid,
+                },
+                output=f"Computed deadline: {computed.strftime('%Y-%m-%d')}",
+                evidence_type=compute_evidence,
+            ),
+            VerificationStep(
+                step=STEP_FACT_DERIVED,
+                description="Computed difference between claimed and computed deadline.",
+                inputs={
+                    "claimed_deadline": str(claimed),
+                    "computed_deadline": str(computed),
+                    "tolerance_days": tolerance_days,
+                },
+                output=f"Difference: {diff} day(s)",
+                evidence_type=compute_evidence,
+            ),
+            VerificationStep(
+                step=STEP_CONCLUSION,
+                description="Determined whether the claimed deadline matches within tolerance.",
+                inputs={
+                    "difference_days": diff,
+                    "tolerance_days": tolerance_days,
+                    "calendar_unreliable": calendar_unreliable,
+                },
+                output=conclusion_output,
+                evidence_type=compute_evidence,
+            ),
+        ]
+
         return DeadlineResult(
             verified=verified,
             signing_date=signing,
@@ -136,14 +248,20 @@ class DeadlineGuard:
             computed_deadline=computed,
             term_parsed=term,
             difference_days=diff,
-            message=message
+            message=message,
+            is_computable=True,
+            verification_trace=trace,
         )
     
-    def _calculate_deadline(self, start_date: datetime, term: str) -> Optional[datetime]:
+    def _calculate_deadline(
+        self, start_date: datetime, term: str
+    ) -> "tuple[Optional[datetime], bool]":
         """Calculate the actual deadline from a term description.
         
-        Returns None if the term is ambiguous and cannot be parsed into
-        a deterministic deadline (fail-closed).
+        Returns a tuple of (deadline, used_business_days). deadline is None if
+        the term is ambiguous and cannot be parsed into a deterministic
+        deadline (fail-closed); used_business_days indicates whether the
+        holiday calendar was relied upon.
         """
         term_lower = term.lower().strip()
         
@@ -151,7 +269,7 @@ class DeadlineGuard:
         numbers = re.findall(r'\d+', term_lower)
         if not numbers:
             # Fail-closed: no numeric quantity found — term is ambiguous
-            return None
+            return None, False
         
         num = int(numbers[0])
         
@@ -160,20 +278,20 @@ class DeadlineGuard:
         is_business_days = bool(re.search(r'\b(?:business|working|work)\b', term_lower))
         
         if re.search(r'\byears?\b', term_lower):
-            return start_date + relativedelta(years=num)
+            return start_date + relativedelta(years=num), False
         elif re.search(r'\bmonths?\b', term_lower):
-            return start_date + relativedelta(months=num)
+            return start_date + relativedelta(months=num), False
         elif re.search(r'\bweeks?\b', term_lower):
             if is_business_days:
-                return self._add_business_days(start_date, num * 5)
-            return start_date + timedelta(weeks=num)
+                return self._add_business_days(start_date, num * 5), True
+            return start_date + timedelta(weeks=num), False
         elif re.search(r'\b(?:days?|calendar\s+days?)\b', term_lower):
             if is_business_days:
-                return self._add_business_days(start_date, num)
-            return start_date + timedelta(days=num)
+                return self._add_business_days(start_date, num), True
+            return start_date + timedelta(days=num), False
         else:
             # Fail-closed: number found but no recognizable time unit
-            return None
+            return None, False
     
     def _add_business_days(self, start_date: datetime, days: int) -> datetime:
         """Add business days to a date, excluding weekends and holidays."""
