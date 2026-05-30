@@ -74,7 +74,11 @@ export interface LiabilityResult {
 
 export interface ClauseResult {
     consistent: boolean;
-    conflicts: string[];
+    /**
+     * Detected conflicts as `[clauseIndex1, clauseIndex2, reason]` tuples.
+     * Matches the Python `List[Tuple[int, int, str]]` contract.
+     */
+    conflicts: [number, number, string][];
     status: string;
     message: string;
     verification_trace: VerificationStep[];
@@ -463,8 +467,8 @@ print(json.dumps(period))
  *
  * Fail-closed: NEVER returns verified=true. A consistent outcome is
  * `UNVERIFIABLE_FAIRNESS`; a differing outcome is a `HEURISTIC_BIAS_SIGNAL`
- * for human review. Requires a Python-side LLM client; this wrapper expects
- * the caller to expose one via a module path.
+ * for human review. Requires a Python-side LLM client; this wrapper resolves
+ * the client safely via importlib (no raw code execution).
  */
 export class FairnessVerifier {
     private pythonPath: string;
@@ -479,23 +483,39 @@ export class FairnessVerifier {
      * @param originalPrompt        The original prompt text.
      * @param originalDecision      The original decision text.
      * @param protectedAttributeSwap  Map of protected-attribute substitutions.
-     * @param clientFactory         Python expression that evaluates to an object
-     *                              exposing `.generate(prompt) -> str`. Required,
-     *                              because fairness cannot be assessed without
-     *                              a counterfactual generator (fail-closed).
+     * @param client                A structured, safe descriptor of the Python
+     *                              callable that builds the LLM client. The
+     *                              factory is resolved via `importlib` +
+     *                              `getattr` — never evaluated as raw code. The
+     *                              resolved attribute is called with no args and
+     *                              must return an object exposing
+     *                              `.generate(prompt) -> str`.
      */
     async verifyDecisionFairness(
         originalPrompt: string,
         originalDecision: string,
         protectedAttributeSwap: Record<string, string>,
-        clientFactory: string
+        client: { module: string; factory: string }
     ): Promise<FairnessResult> {
+        // Validate the import descriptor so it can only name a module path and
+        // attribute — not arbitrary Python. This blocks code-injection via the
+        // factory descriptor (e.g. "os.system('...')").
+        const identifierRe = /^[A-Za-z_][A-Za-z0-9_.]*$/;
+        if (!identifierRe.test(client.module) || !identifierRe.test(client.factory)) {
+            throw new Error(
+                'FairnessVerifier client.module and client.factory must be ' +
+                'dotted Python identifiers (no expressions or calls).'
+            );
+        }
+
         const swapJson = JSON.stringify(protectedAttributeSwap);
         const script = `
 from qwed_legal import FairnessGuard, trace_to_dict
+import importlib
 import json
 
-client = ${clientFactory}
+module = importlib.import_module("${escapePythonString(client.module)}")
+client = getattr(module, "${escapePythonString(client.factory)}")()
 guard = FairnessGuard(llm_client=client)
 result = guard.verify_decision_fairness(
     "${escapePythonString(originalPrompt)}",
@@ -503,8 +523,11 @@ result = guard.verify_decision_fairness(
     ${swapJson},
 )
 
+# Fail-closed contract: FairnessGuard never verifies fairness. Hardcode
+# verified=false at the boundary so a Python-side regression or version skew
+# can never leak verified=true to SDK consumers.
 out = {
-    "verified": result.get("verified", False),
+    "verified": False,
     "status": result.get("status", ""),
     "risk": result.get("risk"),
     "message": result.get("message", ""),
