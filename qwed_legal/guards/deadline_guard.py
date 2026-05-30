@@ -28,8 +28,8 @@ from qwed_legal.models import (
 class DeadlineResult:
     """Result of deadline verification."""
     verified: bool
-    signing_date: datetime
-    claimed_deadline: datetime
+    signing_date: Optional[datetime]
+    claimed_deadline: Optional[datetime]
     computed_deadline: Optional[datetime]
     term_parsed: str
     difference_days: Optional[int]
@@ -105,8 +105,8 @@ class DeadlineGuard:
         except Exception as e:
             return DeadlineResult(
                 verified=False,
-                signing_date=datetime.min,
-                claimed_deadline=datetime.min,
+                signing_date=None,
+                claimed_deadline=None,
                 computed_deadline=None,
                 term_parsed="ERROR",
                 difference_days=None,
