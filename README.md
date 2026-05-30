@@ -191,6 +191,42 @@ Some operate on partial rules or structured validation and should **not** be tre
 | `ContradictionGuard` | `PARTIAL / HEURISTIC` | Structured contradiction checks for a limited set of modeled clause categories |
 | `FairnessGuard` | `HEURISTIC / FAIL-CLOSED` | Counterfactual consistency signal only; never returns `verified=True` — fairness cannot be proven by text substitution (issue #18) |
 
+### Verification trace (auditability)
+
+Every guard returns a `verification_trace` — an ordered list of `VerificationStep`
+records that make each decision auditable. A trace is **not** a narrative
+explanation; each step carries an `evidence_type` that classifies *how* its
+output was derived:
+
+| `evidence_type` | Meaning | `is_proven()` |
+|-----------------|---------|---------------|
+| `DETERMINISTIC` | Proven by math/logic (Z3, date arithmetic, exact compare) | `True` |
+| `PARSED` | Read/matched from structure or lookup table — not authority proof | `False` |
+| `INFERRED` | Pattern/keyword derived — may be wrong on edge cases | `False` |
+| `HEURISTIC` | Approximate/statistical signal | `False` |
+| `UNSUPPORTED` | Guard cannot model this input — fail-closed | `False` |
+
+Only `DETERMINISTIC` steps constitute actual proof. `PARSED`, `INFERRED`,
+`HEURISTIC`, and `UNSUPPORTED` steps must **not** be treated as verification.
+
+```python
+from qwed_legal import StatuteOfLimitationsGuard, trace_to_dict
+
+result = StatuteOfLimitationsGuard().verify(
+    claim_type="breach_of_contract",
+    jurisdiction="California",
+    incident_date="2020-01-01",
+    filing_date="2023-01-01",
+)
+
+for step in result.verification_trace:
+    print(step.step, step.evidence_type, "->", step.output)
+
+# JSON-safe export for audit logs / external consumers
+serialized = trace_to_dict(result.verification_trace)
+# each entry includes an explicit "is_proven" flag
+```
+
 ### Example: citation format check
 
 ```python

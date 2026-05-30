@@ -556,12 +556,19 @@ class JurisdictionGuard:
                     "jurisdiction threshold ($75,000) for US federal court."
                 )
 
-        verified = len(conflicts) == 0
-        message = (
-            "✅ VERIFIED: Forum selection is valid."
-            if verified
-            else f"❌ {conflicts[0]}"
-        )
+        # Fail-closed and consistent with verify_choice_of_law: warnings (e.g.
+        # an unresolved diversity-jurisdiction threshold) are ambiguities that
+        # must not pass verification.
+        verified = len(conflicts) == 0 and len(warnings) == 0
+        if conflicts:
+            message = f"❌ {conflicts[0]}"
+        elif warnings:
+            message = (
+                f"⚠️ AMBIGUOUS / UNVERIFIABLE: {len(warnings)} unresolved forum "
+                "warning(s) require legal analysis before verification."
+            )
+        else:
+            message = "✅ VERIFIED: Forum selection is valid."
 
         trace = [
             VerificationStep(
@@ -586,7 +593,10 @@ class JurisdictionGuard:
             VerificationStep(
                 step=STEP_CONCLUSION,
                 description="Assessed forum validity via lookup membership.",
-                inputs={"conflict_count": len(conflicts)},
+                inputs={
+                    "conflict_count": len(conflicts),
+                    "warning_count": len(warnings),
+                },
                 output="FORUM VALID" if verified else "FORUM NOT VERIFIED",
                 # Forum recognition is a parsed lookup, not formal legal proof.
                 evidence_type=EVIDENCE_INFERRED,

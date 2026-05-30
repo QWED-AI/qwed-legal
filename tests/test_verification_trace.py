@@ -335,6 +335,17 @@ class TestJurisdictionVerificationTrace:
         assert result.verification_trace[0].step == STEP_RULE_IDENTIFIED
         assert result.verification_trace[-1].step == STEP_CONCLUSION
 
+    def test_forum_selection_warning_is_not_verified(self):
+        # Below diversity-jurisdiction threshold -> warning -> must NOT verify.
+        result = JurisdictionGuard().verify_forum_selection(
+            "California", contract_value=50000
+        )
+        assert result.verified is False
+        assert any(
+            s.step == STEP_AMBIGUITY_NOTED for s in result.verification_trace
+        )
+        assert result.verification_trace[-1].output == "FORUM NOT VERIFIED"
+
     def test_choice_of_law_empty_parties_fail_closed(self):
         result = JurisdictionGuard().verify_choice_of_law(
             parties_countries=[],
