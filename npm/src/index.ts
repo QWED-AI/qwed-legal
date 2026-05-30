@@ -498,13 +498,19 @@ export class FairnessVerifier {
         client: { module: string; factory: string }
     ): Promise<FairnessResult> {
         // Validate the import descriptor so it can only name a module path and
-        // attribute — not arbitrary Python. This blocks code-injection via the
-        // factory descriptor (e.g. "os.system('...')").
-        const identifierRe = /^[A-Za-z_][A-Za-z0-9_.]*$/;
-        if (!identifierRe.test(client.module) || !identifierRe.test(client.factory)) {
+        // a single attribute — not arbitrary Python. This blocks code-injection
+        // via the factory descriptor (e.g. "os.system('...')").
+        //
+        // `module` may be a dotted import path (e.g. "pkg.sub.mod"); `factory`
+        // must be a single attribute name, because Python's getattr(module,
+        // "a.b") looks up a literal attribute "a.b" rather than traversing
+        // nested attributes — a dotted factory would silently fail at runtime.
+        const moduleRe = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+        const factoryRe = /^[A-Za-z_][A-Za-z0-9_]*$/;
+        if (!moduleRe.test(client.module) || !factoryRe.test(client.factory)) {
             throw new Error(
-                'FairnessVerifier client.module and client.factory must be ' +
-                'dotted Python identifiers (no expressions or calls).'
+                'FairnessVerifier client.module must be a dotted module path ' +
+                'and client.factory must be a single attribute name.'
             );
         }
 
@@ -514,13 +520,18 @@ from qwed_legal import FairnessGuard, trace_to_dict
 import importlib
 import json
 
+# Parse the swap map from a JSON string rather than embedding JS literals
+# directly: JSON null/true/false are not valid Python tokens, and embedding
+# them would crash the subprocess before any guard validation runs.
+protected_attribute_swap = json.loads(${JSON.stringify(swapJson)})
+
 module = importlib.import_module("${escapePythonString(client.module)}")
 client = getattr(module, "${escapePythonString(client.factory)}")()
 guard = FairnessGuard(llm_client=client)
 result = guard.verify_decision_fairness(
     "${escapePythonString(originalPrompt)}",
     "${escapePythonString(originalDecision)}",
-    ${swapJson},
+    protected_attribute_swap,
 )
 
 # Fail-closed contract: FairnessGuard never verifies fairness. Hardcode
