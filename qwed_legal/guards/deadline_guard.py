@@ -190,11 +190,12 @@ class DeadlineGuard:
                 f"Difference: {diff} days."
             )
 
-        conclusion_output = (
-            "UNSUPPORTED: business-day calendar unavailable"
-            if calendar_unreliable
-            else ("DEADLINE VERIFIED" if verified else "DEADLINE MISMATCH")
-        )
+        if calendar_unreliable:
+            conclusion_output = "UNSUPPORTED: business-day calendar unavailable"
+        elif verified:
+            conclusion_output = "DEADLINE VERIFIED"
+        else:
+            conclusion_output = "DEADLINE MISMATCH"
 
         trace = [
             VerificationStep(
@@ -248,7 +249,7 @@ class DeadlineGuard:
             term_parsed=term,
             difference_days=diff,
             message=message,
-            is_computable=not calendar_unreliable,
+            is_computable=True,
             verification_trace=trace,
         )
     
