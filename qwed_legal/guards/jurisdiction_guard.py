@@ -594,6 +594,27 @@ class JurisdictionGuard:
         convention_upper = convention.upper().replace(" ", "_")
         parties_upper = [p.upper().strip() for p in parties_countries]
 
+        # Fail-closed: with no parties, all([]) would be True and falsely report
+        # the convention as applicable. An empty party list cannot be verified.
+        if not parties_upper:
+            return JurisdictionResult(
+                verified=False,
+                conflicts=["No parties provided."],
+                message=(
+                    f"❌ UNVERIFIABLE: Cannot determine {convention} applicability "
+                    "with no parties specified."
+                ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="No party countries provided to evaluate membership.",
+                        inputs={"parties": parties_upper, "convention": convention},
+                        output="UNSUPPORTED: empty party list cannot be verified.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
         if convention_upper not in self.INTERNATIONAL_CONVENTIONS:
             return JurisdictionResult(
                 verified=False,

@@ -358,6 +358,11 @@ class TestJurisdictionVerificationTrace:
             s.step == STEP_AMBIGUITY_NOTED for s in result.verification_trace
         )
 
+    def test_convention_empty_parties_fail_closed(self):
+        result = JurisdictionGuard().check_convention_applicability([], "CISG")
+        assert result.verified is False
+        assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
+
 
 class TestClauseVerificationTrace:
     def test_heuristic_conclusion_not_proven(self):
