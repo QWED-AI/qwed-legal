@@ -4,7 +4,7 @@ DeadlineGuard: Verify date calculations in legal contracts.
 Handles business days, calendar days, leap years, and holiday exclusions.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
 import re
@@ -12,6 +12,16 @@ import re
 from dateutil.parser import parse as parse_date
 from dateutil.relativedelta import relativedelta
 import holidays
+
+from qwed_legal.models import (
+    VerificationStep,
+    STEP_RULE_IDENTIFIED,
+    STEP_FACT_DERIVED,
+    STEP_CONCLUSION,
+    EVIDENCE_DETERMINISTIC,
+    EVIDENCE_PARSED,
+    EVIDENCE_UNSUPPORTED,
+)
 
 
 @dataclass
@@ -26,6 +36,7 @@ class DeadlineResult:
     message: str
     is_computable: bool = True  # False if term is ambiguous/unparseable
     verification_mode: str = "SYMBOLIC"  # Always SYMBOLIC for legal (SymPy/Z3)
+    verification_trace: list = field(default_factory=list)
 
 
 class DeadlineGuard:
@@ -91,6 +102,18 @@ class DeadlineGuard:
                 difference_days=None,
                 message=f"Failed to parse dates: {e}",
                 is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Date parsing failed — cannot proceed.",
+                        inputs={
+                            "signing_date": signing_date,
+                            "claimed_deadline": claimed_deadline,
+                        },
+                        output=f"UNSUPPORTED: parse error: {e}",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
         
         # Parse term and calculate deadline
@@ -113,6 +136,18 @@ class DeadlineGuard:
                     f"human legal interpretation."
                 ),
                 is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Term parsed for a deterministic time quantity and unit.",
+                        inputs={"term": term},
+                        output=(
+                            "UNSUPPORTED: ambiguous term — no provable "
+                            "quantity/unit to compute a deadline."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
         
         # Check difference
@@ -129,6 +164,41 @@ class DeadlineGuard:
                 f"Difference: {diff} days."
             )
         
+        trace = [
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Parsed term into a deterministic time quantity and unit.",
+                inputs={"term": term, "tolerance_days": tolerance_days},
+                output=f"Parsed term: '{term}'",
+                evidence_type=EVIDENCE_PARSED,
+            ),
+            VerificationStep(
+                step=STEP_FACT_DERIVED,
+                description="Computed deadline from signing date and parsed term.",
+                inputs={"signing_date": str(signing), "term": term},
+                output=f"Computed deadline: {computed.strftime('%Y-%m-%d')}",
+                evidence_type=EVIDENCE_DETERMINISTIC,
+            ),
+            VerificationStep(
+                step=STEP_FACT_DERIVED,
+                description="Computed difference between claimed and computed deadline.",
+                inputs={
+                    "claimed_deadline": str(claimed),
+                    "computed_deadline": str(computed),
+                    "tolerance_days": tolerance_days,
+                },
+                output=f"Difference: {diff} day(s)",
+                evidence_type=EVIDENCE_DETERMINISTIC,
+            ),
+            VerificationStep(
+                step=STEP_CONCLUSION,
+                description="Determined whether the claimed deadline matches within tolerance.",
+                inputs={"difference_days": diff, "tolerance_days": tolerance_days},
+                output="DEADLINE VERIFIED" if verified else "DEADLINE MISMATCH",
+                evidence_type=EVIDENCE_DETERMINISTIC,
+            ),
+        ]
+        
         return DeadlineResult(
             verified=verified,
             signing_date=signing,
@@ -136,7 +206,8 @@ class DeadlineGuard:
             computed_deadline=computed,
             term_parsed=term,
             difference_days=diff,
-            message=message
+            message=message,
+            verification_trace=trace,
         )
     
     def _calculate_deadline(self, start_date: datetime, term: str) -> Optional[datetime]:

@@ -6,6 +6,9 @@ Phase-1 regression tests for verification_trace on StatuteGuard and Contradictio
 
 from qwed_legal.guards.statute_guard import StatuteOfLimitationsGuard
 from qwed_legal.guards.contradiction_guard import ContradictionGuard, Clause
+from qwed_legal.guards.deadline_guard import DeadlineGuard
+from qwed_legal.guards.liability_guard import LiabilityGuard
+from qwed_legal.guards.jurisdiction_guard import JurisdictionGuard
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -14,6 +17,7 @@ from qwed_legal.models import (
     STEP_CONCLUSION,
     EVIDENCE_DETERMINISTIC,
     EVIDENCE_PARSED,
+    EVIDENCE_INFERRED,
     EVIDENCE_UNSUPPORTED,
 )
 
@@ -216,3 +220,89 @@ class TestContradictionVerificationTrace:
         r = _contra([_clause("Max liability capped at 5000", "LIABILITY", 5000)])
         assert "LIABILITY clauses" in r["message"]
         assert "DURATION and LIABILITY clauses" not in r["message"]
+
+
+class TestDeadlineVerificationTrace:
+    def _verify(self, **kwargs):
+        defaults = dict(
+            signing_date="2026-01-15",
+            term="30 days",
+            claimed_deadline="2026-02-14",
+        )
+        defaults.update(kwargs)
+        return DeadlineGuard().verify(**defaults)
+
+    def test_trace_present_and_steps(self):
+        trace = self._verify().verification_trace
+        assert trace[0].step == STEP_RULE_IDENTIFIED
+        assert trace[0].evidence_type == EVIDENCE_PARSED
+        assert trace[-1].step == STEP_CONCLUSION
+        assert trace[-1].is_proven() is True
+
+    def test_ambiguous_term_unsupported(self):
+        result = self._verify(term="a reasonable period")
+        assert result.verified is False
+        assert len(result.verification_trace) == 1
+        assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
+
+    def test_parse_error_unsupported(self):
+        result = self._verify(signing_date="not-a-date")
+        assert result.verified is False
+        assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
+
+
+class TestLiabilityVerificationTrace:
+    def test_cap_trace_deterministic(self):
+        result = LiabilityGuard().verify_cap(5_000_000, 200, 10_000_000)
+        trace = result.verification_trace
+        assert result.verified is True
+        assert trace[-1].step == STEP_CONCLUSION
+        assert trace[-1].is_proven() is True
+        assert all(isinstance(s, VerificationStep) for s in trace)
+
+    def test_cap_mismatch_conclusion(self):
+        result = LiabilityGuard().verify_cap(5_000_000, 200, 15_000_000)
+        assert result.verified is False
+        assert result.verification_trace[-1].output == "CAP MISMATCH"
+
+    def test_tiered_trace(self):
+        result = LiabilityGuard().verify_tiered_liability(
+            [{"base": 1_000_000, "percentage": 100}], 1_000_000
+        )
+        assert result.verification_trace[-1].step == STEP_CONCLUSION
+
+    def test_indemnity_trace(self):
+        result = LiabilityGuard().verify_indemnity_limit(100_000, 3, 300_000)
+        assert result.verification_trace[-1].is_proven() is True
+
+
+class TestJurisdictionVerificationTrace:
+    def test_trace_present(self):
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=["US"],
+            governing_law="California",
+            forum="California",
+        )
+        trace = result.verification_trace
+        assert trace[0].step == STEP_RULE_IDENTIFIED
+        assert trace[0].evidence_type == EVIDENCE_PARSED
+        assert trace[-1].step == STEP_CONCLUSION
+
+    def test_conclusion_is_inferred_not_proof(self):
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=["US"],
+            governing_law="California",
+            forum="California",
+        )
+        assert result.verification_trace[-1].evidence_type == EVIDENCE_INFERRED
+        assert result.verification_trace[-1].is_proven() is False
+
+    def test_warnings_emit_ambiguity_step(self):
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=["US", "DE"],
+            governing_law="California",
+            forum="California",
+        )
+        assert any(
+            s.step == STEP_AMBIGUITY_NOTED for s in result.verification_trace
+        )

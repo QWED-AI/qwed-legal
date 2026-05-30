@@ -8,6 +8,16 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Set
 from enum import Enum
 
+from qwed_legal.models import (
+    VerificationStep,
+    STEP_RULE_IDENTIFIED,
+    STEP_AMBIGUITY_NOTED,
+    STEP_CONCLUSION,
+    EVIDENCE_PARSED,
+    EVIDENCE_INFERRED,
+    EVIDENCE_UNSUPPORTED,
+)
+
 
 class JurisdictionType(Enum):
     """Types of jurisdiction clauses."""
@@ -27,6 +37,7 @@ class JurisdictionResult:
     governing_law: Optional[str] = None
     forum: Optional[str] = None
     message: str = ""
+    verification_trace: list = field(default_factory=list)
 
 
 class JurisdictionGuard:
@@ -438,6 +449,46 @@ class JurisdictionGuard:
         else:
             message = f"❌ CONFLICTS DETECTED: {len(conflicts)} issue(s) found."
 
+        trace = [
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Normalized and classified jurisdiction inputs from lookup tables.",
+                inputs={
+                    "governing_law": governing_law,
+                    "forum": selected_forum,
+                    "parties_countries": parties_countries,
+                },
+                output=(
+                    f"Governing law: {governing_law_upper}; "
+                    f"forum: {forum_upper}; parties: {parties_upper}"
+                ),
+                evidence_type=EVIDENCE_PARSED,
+            )
+        ]
+        if warnings:
+            trace.append(
+                VerificationStep(
+                    step=STEP_AMBIGUITY_NOTED,
+                    description="Heuristic cross-border/forum checks produced warnings.",
+                    inputs={"warnings": warnings},
+                    output="AMBIGUITY: warnings require human legal analysis.",
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                )
+            )
+        trace.append(
+            VerificationStep(
+                step=STEP_CONCLUSION,
+                description="Assessed jurisdiction consistency via lookup and heuristic checks.",
+                inputs={
+                    "conflict_count": len(conflicts),
+                    "warning_count": len(warnings),
+                },
+                output="CONSISTENT" if verified else "NOT VERIFIED",
+                # Conflict/warning detection is heuristic, not formal proof.
+                evidence_type=EVIDENCE_INFERRED,
+            )
+        )
+
         return JurisdictionResult(
             verified=verified,
             conflicts=conflicts,
@@ -445,6 +496,7 @@ class JurisdictionGuard:
             governing_law=governing_law,
             forum=selected_forum,
             message=message,
+            verification_trace=trace,
         )
 
     def verify_forum_selection(
