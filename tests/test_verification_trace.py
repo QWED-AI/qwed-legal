@@ -253,6 +253,14 @@ class TestDeadlineVerificationTrace:
         assert result.verified is False
         assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
 
+    def test_parse_error_dates_are_none(self):
+        # Contract: on parse failure, dates are None (not datetime.min) so the
+        # SDK serializes them to null per the `string | null` type contract.
+        result = self._verify(signing_date="not-a-date")
+        assert result.signing_date is None
+        assert result.claimed_deadline is None
+        assert result.computed_deadline is None
+
     def test_calendar_days_remain_deterministic(self):
         result = self._verify(term="30 days")
         assert result.verification_trace[-1].evidence_type == EVIDENCE_DETERMINISTIC

@@ -1,33 +1,66 @@
 /**
  * QWED-Legal TypeScript SDK
- * 
+ *
  * Bridges to the Python qwed-legal package for Node.js environments.
- * 
+ *
+ * Trust-boundary note:
+ *   Every result includes a `verification_trace` of structured steps. Each step
+ *   carries an `evidence_type` (DETERMINISTIC | PARSED | INFERRED | HEURISTIC |
+ *   UNSUPPORTED) and an `is_proven` flag. Only DETERMINISTIC steps constitute
+ *   proof. PARSED/INFERRED/HEURISTIC/UNSUPPORTED steps must NOT be treated as
+ *   verified legal authority or proof.
+ *
  * @example
  * ```typescript
- * import { DeadlineVerifier, JurisdictionVerifier } from '@qwed-ai/legal';
- * 
+ * import { DeadlineVerifier } from '@qwed-ai/legal';
+ *
  * const deadline = new DeadlineVerifier();
  * const result = await deadline.verify("2026-01-15", "30 days", "2026-02-14");
- * console.log(result.verified);
+ * console.log(result.verified, result.verification_trace);
  * ```
  */
 
 import { PythonShell, Options } from 'python-shell';
 
 // ============================================================================
-// Types
+// Shared trace types
+// ============================================================================
+
+/** Evidence classification for a single verification step. */
+export type EvidenceType =
+    | 'DETERMINISTIC'
+    | 'PARSED'
+    | 'INFERRED'
+    | 'HEURISTIC'
+    | 'UNSUPPORTED';
+
+/**
+ * A single auditable step of a verification_trace.
+ * `is_proven` is true ONLY when evidence_type === 'DETERMINISTIC'.
+ */
+export interface VerificationStep {
+    step: string;
+    description: string;
+    inputs: Record<string, unknown>;
+    output: string;
+    evidence_type: EvidenceType;
+    is_proven: boolean;
+}
+
+// ============================================================================
+// Result types
 // ============================================================================
 
 export interface DeadlineResult {
     verified: boolean;
-    signing_date: string;
-    claimed_deadline: string;
+    signing_date: string | null;
+    claimed_deadline: string | null;
     computed_deadline: string | null;
     term_parsed: string;
     difference_days: number | null;
     message: string;
     is_computable: boolean;
+    verification_trace: VerificationStep[];
 }
 
 export interface LiabilityResult {
@@ -36,20 +69,38 @@ export interface LiabilityResult {
     liability_cap: number;
     computed_cap: number;
     message: string;
+    verification_trace: VerificationStep[];
 }
 
 export interface ClauseResult {
     consistent: boolean;
-    conflicts: string[];
+    /**
+     * Detected conflicts as `[clauseIndex1, clauseIndex2, reason]` tuples.
+     * Matches the Python `List[Tuple[int, int, str]]` contract.
+     */
+    conflicts: [number, number, string][];
+    status: string;
     message: string;
+    verification_trace: VerificationStep[];
 }
 
+/**
+ * Citation FORMAT check result.
+ *
+ * `format_valid` means the string matched a known reporter pattern — it does
+ * NOT mean the cited authority exists. `verified` is therefore always false:
+ * CitationGuard has no case-law database and cannot prove authority.
+ */
 export interface CitationResult {
-    valid: boolean;
+    format_valid: boolean;
+    verified: false;
+    status: string;
     citation: string;
-    parsed_components: Record<string, string>;
+    citation_type: string | null;
+    parsed_components: Record<string, unknown>;
     issues: string[];
     message: string;
+    verification_trace: VerificationStep[];
 }
 
 export interface JurisdictionResult {
@@ -59,6 +110,7 @@ export interface JurisdictionResult {
     governing_law?: string;
     forum?: string;
     message: string;
+    verification_trace: VerificationStep[];
 }
 
 export interface StatuteResult {
@@ -73,16 +125,32 @@ export interface StatuteResult {
     message: string;
     jurisdiction_matched: boolean;
     claim_type_matched: boolean;
+    verification_trace: VerificationStep[];
+}
+
+/**
+ * Fairness result (#18 fail-closed contract).
+ *
+ * FairnessGuard NEVER returns verified=true. A consistent counterfactual is
+ * `UNVERIFIABLE_FAIRNESS`; a differing outcome is a `HEURISTIC_BIAS_SIGNAL`
+ * that warrants human review. This is a heuristic signal, not proof.
+ */
+export interface FairnessResult {
+    verified: false;
+    status: string;
+    risk?: string;
+    message: string;
+    variance?: { original: string; counterfactual: string };
+    verification_trace?: VerificationStep[];
 }
 
 // ============================================================================
-// Security Helper
+// Security helper
 // ============================================================================
 
 /**
  * Escape a string for safe interpolation into Python string literals.
  * Escapes backslashes first, then quotes, then control characters.
- * This prevents injection attacks via quotes, backslashes, or newlines.
  */
 function escapePythonString(str: string): string {
     return str
@@ -93,7 +161,7 @@ function escapePythonString(str: string): string {
 }
 
 // ============================================================================
-// Base Runner
+// Base runner
 // ============================================================================
 
 async function runPythonScript<T>(script: string, pythonPath: string = 'python'): Promise<T> {
@@ -121,9 +189,7 @@ async function runPythonScript<T>(script: string, pythonPath: string = 'python')
 // DeadlineVerifier
 // ============================================================================
 
-/**
- * Verify deadline calculations in contracts
- */
+/** Verify deadline calculations in contracts. */
 export class DeadlineVerifier {
     private pythonPath: string;
 
@@ -131,9 +197,6 @@ export class DeadlineVerifier {
         this.pythonPath = pythonPath;
     }
 
-    /**
-     * Verify a deadline calculation
-     */
     async verify(
         signingDate: string,
         term: string,
@@ -141,7 +204,7 @@ export class DeadlineVerifier {
         country: string = 'US'
     ): Promise<DeadlineResult> {
         const script = `
-from qwed_legal import DeadlineGuard
+from qwed_legal import DeadlineGuard, trace_to_dict
 import json
 
 guard = DeadlineGuard(country="${escapePythonString(country)}")
@@ -155,7 +218,8 @@ print(json.dumps({
     "term_parsed": result.term_parsed,
     "difference_days": result.difference_days,
     "message": result.message,
-    "is_computable": result.is_computable
+    "is_computable": result.is_computable,
+    "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;
         return runPythonScript<DeadlineResult>(script, this.pythonPath);
@@ -166,9 +230,7 @@ print(json.dumps({
 // LiabilityVerifier
 // ============================================================================
 
-/**
- * Verify liability cap calculations
- */
+/** Verify liability cap calculations. */
 export class LiabilityVerifier {
     private pythonPath: string;
 
@@ -176,16 +238,13 @@ export class LiabilityVerifier {
         this.pythonPath = pythonPath;
     }
 
-    /**
-     * Verify a liability cap calculation
-     */
     async verifyCap(
         contractValue: number,
         capPercentage: number,
         claimedCap: number
     ): Promise<LiabilityResult> {
         const script = `
-from qwed_legal import LiabilityGuard
+from qwed_legal import LiabilityGuard, trace_to_dict
 import json
 
 guard = LiabilityGuard()
@@ -196,7 +255,8 @@ print(json.dumps({
     "contract_value": float(result.contract_value),
     "liability_cap": float(result.claimed_cap),
     "computed_cap": float(result.computed_cap),
-    "message": result.message
+    "message": result.message,
+    "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;
         return runPythonScript<LiabilityResult>(script, this.pythonPath);
@@ -207,9 +267,7 @@ print(json.dumps({
 // ClauseVerifier
 // ============================================================================
 
-/**
- * Detect contradictory clauses in contracts
- */
+/** Detect contradictory clauses in contracts (heuristic). */
 export class ClauseVerifier {
     private pythonPath: string;
 
@@ -217,13 +275,10 @@ export class ClauseVerifier {
         this.pythonPath = pythonPath;
     }
 
-    /**
-     * Check clauses for logical contradictions
-     */
     async checkConsistency(clauses: string[]): Promise<ClauseResult> {
         const clausesJson = JSON.stringify(clauses);
         const script = `
-from qwed_legal import ClauseGuard
+from qwed_legal import ClauseGuard, trace_to_dict
 import json
 
 guard = ClauseGuard()
@@ -232,7 +287,9 @@ result = guard.check_consistency(${clausesJson})
 print(json.dumps({
     "consistent": result.consistent,
     "conflicts": result.conflicts,
-    "message": result.message
+    "status": result.status,
+    "message": result.message,
+    "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;
         return runPythonScript<ClauseResult>(script, this.pythonPath);
@@ -244,7 +301,8 @@ print(json.dumps({
 // ============================================================================
 
 /**
- * Validate legal citations (Bluebook format)
+ * Validate legal citation FORMAT (not authority).
+ * Authority is never proven — see CitationResult.
  */
 export class CitationVerifier {
     private pythonPath: string;
@@ -253,23 +311,24 @@ export class CitationVerifier {
         this.pythonPath = pythonPath;
     }
 
-    /**
-     * Verify a legal citation
-     */
     async verify(citation: string): Promise<CitationResult> {
         const script = `
-from qwed_legal import CitationGuard
+from qwed_legal import CitationGuard, trace_to_dict
 import json
 
 guard = CitationGuard()
 result = guard.verify("${escapePythonString(citation)}")
 
 print(json.dumps({
-    "valid": result.valid,
+    "format_valid": result.format_valid,
+    "verified": False,
+    "status": result.status,
     "citation": result.citation,
+    "citation_type": result.citation_type,
     "parsed_components": result.parsed_components,
     "issues": result.issues,
-    "message": result.message
+    "message": result.message,
+    "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;
         return runPythonScript<CitationResult>(script, this.pythonPath);
@@ -280,9 +339,7 @@ print(json.dumps({
 // JurisdictionVerifier
 // ============================================================================
 
-/**
- * Verify jurisdiction-related claims in contracts
- */
+/** Verify jurisdiction-related claims in contracts. */
 export class JurisdictionVerifier {
     private pythonPath: string;
 
@@ -290,9 +347,6 @@ export class JurisdictionVerifier {
         this.pythonPath = pythonPath;
     }
 
-    /**
-     * Verify choice of law and forum selection
-     */
     async verifyChoiceOfLaw(
         partiesCountries: string[],
         governingLaw: string,
@@ -301,7 +355,7 @@ export class JurisdictionVerifier {
         const partiesJson = JSON.stringify(partiesCountries);
         const forumArg = forum ? `"${escapePythonString(forum)}"` : 'None';
         const script = `
-from qwed_legal import JurisdictionGuard
+from qwed_legal import JurisdictionGuard, trace_to_dict
 import json
 
 guard = JurisdictionGuard()
@@ -313,22 +367,20 @@ print(json.dumps({
     "warnings": result.warnings,
     "governing_law": result.governing_law,
     "forum": result.forum,
-    "message": result.message
+    "message": result.message,
+    "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;
         return runPythonScript<JurisdictionResult>(script, this.pythonPath);
     }
 
-    /**
-     * Check if an international convention applies
-     */
     async checkConvention(
         partiesCountries: string[],
         convention: string
     ): Promise<JurisdictionResult> {
         const partiesJson = JSON.stringify(partiesCountries);
         const script = `
-from qwed_legal import JurisdictionGuard
+from qwed_legal import JurisdictionGuard, trace_to_dict
 import json
 
 guard = JurisdictionGuard()
@@ -338,7 +390,8 @@ print(json.dumps({
     "verified": result.verified,
     "conflicts": result.conflicts if hasattr(result, 'conflicts') else [],
     "warnings": result.warnings if hasattr(result, 'warnings') else [],
-    "message": result.message
+    "message": result.message,
+    "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;
         return runPythonScript<JurisdictionResult>(script, this.pythonPath);
@@ -349,9 +402,7 @@ print(json.dumps({
 // StatuteVerifier
 // ============================================================================
 
-/**
- * Verify statute of limitations claims
- */
+/** Verify statute of limitations claims. */
 export class StatuteVerifier {
     private pythonPath: string;
 
@@ -359,9 +410,6 @@ export class StatuteVerifier {
         this.pythonPath = pythonPath;
     }
 
-    /**
-     * Verify if a claim is within the statute of limitations
-     */
     async verify(
         claimType: string,
         jurisdiction: string,
@@ -369,7 +417,7 @@ export class StatuteVerifier {
         filingDate: string
     ): Promise<StatuteResult> {
         const script = `
-from qwed_legal import StatuteOfLimitationsGuard
+from qwed_legal import StatuteOfLimitationsGuard, trace_to_dict
 import json
 
 guard = StatuteOfLimitationsGuard()
@@ -386,15 +434,13 @@ print(json.dumps({
     "days_remaining": result.days_remaining,
     "message": result.message,
     "jurisdiction_matched": result.jurisdiction_matched,
-    "claim_type_matched": result.claim_type_matched
+    "claim_type_matched": result.claim_type_matched,
+    "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;
         return runPythonScript<StatuteResult>(script, this.pythonPath);
     }
 
-    /**
-     * Get the limitation period for a claim type
-     */
     async getLimitationPeriod(
         claimType: string,
         jurisdiction: string
@@ -413,12 +459,112 @@ print(json.dumps(period))
 }
 
 // ============================================================================
-// LegalGuard (All-in-One)
+// FairnessVerifier (#18 fail-closed)
 // ============================================================================
 
 /**
- * All-in-one legal verification guard
+ * Heuristic counterfactual fairness check.
+ *
+ * Fail-closed: NEVER returns verified=true. A consistent outcome is
+ * `UNVERIFIABLE_FAIRNESS`; a differing outcome is a `HEURISTIC_BIAS_SIGNAL`
+ * for human review. Requires a Python-side LLM client; this wrapper resolves
+ * the client safely via importlib (no raw code execution).
  */
+export class FairnessVerifier {
+    private pythonPath: string;
+
+    constructor(pythonPath: string = 'python') {
+        this.pythonPath = pythonPath;
+    }
+
+    /**
+     * Run a counterfactual fairness check.
+     *
+     * @param originalPrompt        The original prompt text.
+     * @param originalDecision      The original decision text.
+     * @param protectedAttributeSwap  Map of protected-attribute substitutions.
+     * @param client                A structured, safe descriptor of the Python
+     *                              callable that builds the LLM client. The
+     *                              factory is resolved via `importlib` +
+     *                              `getattr` — never evaluated as raw code. The
+     *                              resolved attribute is called with no args and
+     *                              must return an object exposing
+     *                              `.generate(prompt) -> str`.
+     */
+    async verifyDecisionFairness(
+        originalPrompt: string,
+        originalDecision: string,
+        protectedAttributeSwap: Record<string, string>,
+        client: { module: string; factory: string }
+    ): Promise<FairnessResult> {
+        // Validate the import descriptor so it can only name a module path and
+        // a single attribute — not arbitrary Python. This blocks code-injection
+        // via the factory descriptor (e.g. "os.system('...')").
+        //
+        // `module` may be a dotted import path (e.g. "pkg.sub.mod"); `factory`
+        // must be a single attribute name, because Python's getattr(module,
+        // "a.b") looks up a literal attribute "a.b" rather than traversing
+        // nested attributes — a dotted factory would silently fail at runtime.
+        const moduleRe = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+        const factoryRe = /^[A-Za-z_][A-Za-z0-9_]*$/;
+        if (!moduleRe.test(client.module) || !factoryRe.test(client.factory)) {
+            throw new Error(
+                'FairnessVerifier client.module must be a dotted module path ' +
+                'and client.factory must be a single attribute name.'
+            );
+        }
+
+        const swapJson = JSON.stringify(protectedAttributeSwap);
+        const script = `
+from qwed_legal import FairnessGuard, trace_to_dict
+import importlib
+import json
+
+# Parse the swap map from a JSON string rather than embedding JS literals
+# directly: JSON null/true/false are not valid Python tokens, and embedding
+# them would crash the subprocess before any guard validation runs.
+protected_attribute_swap = json.loads(${JSON.stringify(swapJson)})
+
+module = importlib.import_module("${escapePythonString(client.module)}")
+client = getattr(module, "${escapePythonString(client.factory)}")()
+guard = FairnessGuard(llm_client=client)
+result = guard.verify_decision_fairness(
+    "${escapePythonString(originalPrompt)}",
+    "${escapePythonString(originalDecision)}",
+    protected_attribute_swap,
+)
+
+# Fail-closed contract: FairnessGuard never verifies fairness. Hardcode
+# verified=false at the boundary so a Python-side regression or version skew
+# can never leak verified=true to SDK consumers.
+out = {
+    "verified": False,
+    "status": result.get("status", ""),
+    "message": result.get("message", ""),
+}
+# Only include optional keys when present so they serialize as absent
+# (TS undefined) rather than JSON null, matching the optional fields in
+# FairnessResult and avoiding null-property access errors in consumers.
+risk = result.get("risk")
+if risk is not None:
+    out["risk"] = risk
+variance = result.get("variance")
+if variance is not None:
+    out["variance"] = variance
+trace = result.get("verification_trace")
+if trace is not None:
+    out["verification_trace"] = trace_to_dict(trace)
+print(json.dumps(out))
+`;
+        return runPythonScript<FairnessResult>(script, this.pythonPath);
+    }
+}
+
+// ============================================================================
+// LegalGuard (all-in-one)
+// ============================================================================
+
+/** All-in-one legal verification guard. */
 export class LegalGuard {
     public deadline: DeadlineVerifier;
     public liability: LiabilityVerifier;
@@ -426,6 +572,7 @@ export class LegalGuard {
     public citation: CitationVerifier;
     public jurisdiction: JurisdictionVerifier;
     public statute: StatuteVerifier;
+    public fairness: FairnessVerifier;
 
     constructor(pythonPath: string = 'python') {
         this.deadline = new DeadlineVerifier(pythonPath);
@@ -434,6 +581,7 @@ export class LegalGuard {
         this.citation = new CitationVerifier(pythonPath);
         this.jurisdiction = new JurisdictionVerifier(pythonPath);
         this.statute = new StatuteVerifier(pythonPath);
+        this.fairness = new FairnessVerifier(pythonPath);
     }
 }
 
@@ -448,5 +596,6 @@ export default {
     CitationVerifier,
     JurisdictionVerifier,
     StatuteVerifier,
+    FairnessVerifier,
     LegalGuard
 };
