@@ -18,7 +18,7 @@ from qwed_legal.guards.irac_guard import IRACGuard
 from qwed_legal.guards.fairness_guard import FairnessGuard
 from qwed_legal.guards.contradiction_guard import ContradictionGuard, Clause
 from qwed_legal.guards.provenance_guard import ProvenanceGuard, ProvenanceRecord
-from qwed_legal.models import VerificationStep
+from qwed_legal.models import VerificationStep, trace_to_dict
 from qwed_legal.rag.sac_processor import SACProcessor
 
 __version__ = "0.4.0"
@@ -36,6 +36,7 @@ __all__ = [
     "ProvenanceGuard",
     "ProvenanceRecord",
     "VerificationStep",
+    "trace_to_dict",
     "SACProcessor",
     "LegalGuard",
 ]

@@ -95,3 +95,43 @@ class VerificationStep:
         Convenience helper — does not substitute for checking evidence_type.
         """
         return self.evidence_type == EVIDENCE_DETERMINISTIC
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Return a JSON-safe dict representation of this step for export/audit.
+
+        The ``is_proven`` flag is included explicitly so external consumers do
+        not have to re-derive proof semantics from ``evidence_type``. Input
+        values are coerced to JSON-safe primitives; any non-serializable value
+        is stringified rather than dropped (no silent loss).
+        """
+        return {
+            "step": self.step,
+            "description": self.description,
+            "inputs": _json_safe(self.inputs),
+            "output": self.output,
+            "evidence_type": self.evidence_type,
+            "is_proven": self.is_proven(),
+        }
+
+
+def _json_safe(value: Any) -> Any:
+    """Coerce a value into a JSON-serializable structure without losing data."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    # Fail-safe: stringify anything not natively JSON-serializable.
+    return str(value)
+
+
+def trace_to_dict(trace: "list") -> "list":
+    """
+    Serialize a verification_trace (list of VerificationStep) to a list of dicts.
+
+    Accepts any iterable of VerificationStep instances and returns JSON-safe
+    dicts via :meth:`VerificationStep.to_dict`.
+    """
+    return [step.to_dict() for step in trace]
