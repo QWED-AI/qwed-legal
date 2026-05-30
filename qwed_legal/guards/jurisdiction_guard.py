@@ -13,6 +13,7 @@ from qwed_legal.models import (
     STEP_RULE_IDENTIFIED,
     STEP_AMBIGUITY_NOTED,
     STEP_CONCLUSION,
+    EVIDENCE_DETERMINISTIC,
     EVIDENCE_PARSED,
     EVIDENCE_INFERRED,
     EVIDENCE_UNSUPPORTED,
@@ -538,12 +539,43 @@ class JurisdictionGuard:
             else f"❌ {conflicts[0]}"
         )
 
+        trace = [
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Normalized forum and checked against known jurisdictions.",
+                inputs={"forum": forum, "contract_value": contract_value},
+                output=f"Normalized forum: {forum_upper}",
+                evidence_type=EVIDENCE_PARSED,
+            )
+        ]
+        if warnings:
+            trace.append(
+                VerificationStep(
+                    step=STEP_AMBIGUITY_NOTED,
+                    description="Heuristic threshold check produced warning(s).",
+                    inputs={"warnings": warnings},
+                    output="AMBIGUITY: warning(s) require human legal analysis.",
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                )
+            )
+        trace.append(
+            VerificationStep(
+                step=STEP_CONCLUSION,
+                description="Assessed forum validity via lookup membership.",
+                inputs={"conflict_count": len(conflicts)},
+                output="FORUM VALID" if verified else "FORUM NOT VERIFIED",
+                # Forum recognition is a parsed lookup, not formal legal proof.
+                evidence_type=EVIDENCE_INFERRED,
+            )
+        )
+
         return JurisdictionResult(
             verified=verified,
             conflicts=conflicts,
             warnings=warnings,
             forum=forum,
             message=message,
+            verification_trace=trace,
         )
 
     def check_convention_applicability(
@@ -567,17 +599,44 @@ class JurisdictionGuard:
                 verified=False,
                 conflicts=[f"Unknown convention: '{convention}'"],
                 message=f"❌ Unknown convention: '{convention}'",
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Looked up the requested convention in the known set.",
+                        inputs={"convention": convention},
+                        output=f"UNSUPPORTED: unknown convention '{convention}'.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
 
         member_countries = self.INTERNATIONAL_CONVENTIONS[convention_upper]
         all_members = all(c in member_countries for c in parties_upper)
         some_members = any(c in member_countries for c in parties_upper)
 
+        rule_step = VerificationStep(
+            step=STEP_RULE_IDENTIFIED,
+            description="Matched parties against the convention's member states.",
+            inputs={"convention": convention_upper, "parties": parties_upper},
+            output=f"Member set resolved for {convention_upper}.",
+            evidence_type=EVIDENCE_PARSED,
+        )
+
         if all_members:
             return JurisdictionResult(
                 verified=True,
                 message=f"✅ {convention} applies - all parties are from member states.",
                 warnings=[],
+                verification_trace=[
+                    rule_step,
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="All parties are members of the convention (set membership).",
+                        inputs={"all_members": True},
+                        output=f"{convention_upper} APPLIES",
+                        evidence_type=EVIDENCE_DETERMINISTIC,
+                    ),
+                ],
             )
         elif some_members:
             non_members = [c for c in parties_upper if c not in member_countries]
@@ -585,12 +644,39 @@ class JurisdictionGuard:
                 verified=False,
                 warnings=[f"Not all parties are {convention} members: {non_members}"],
                 message=f"⚠️ {convention} may not apply to all parties.",
+                verification_trace=[
+                    rule_step,
+                    VerificationStep(
+                        step=STEP_AMBIGUITY_NOTED,
+                        description="Only some parties are convention members.",
+                        inputs={"non_members": non_members},
+                        output="AMBIGUITY: partial membership — applicability unclear.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="Convention may not apply to all parties.",
+                        inputs={"all_members": False, "some_members": True},
+                        output=f"{convention_upper} MAY NOT APPLY",
+                        evidence_type=EVIDENCE_DETERMINISTIC,
+                    ),
+                ],
             )
         else:
             return JurisdictionResult(
                 verified=False,
                 conflicts=[f"No parties are {convention} member states."],
                 message=f"❌ {convention} does not apply.",
+                verification_trace=[
+                    rule_step,
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="No parties are members of the convention (set membership).",
+                        inputs={"some_members": False},
+                        output=f"{convention_upper} DOES NOT APPLY",
+                        evidence_type=EVIDENCE_DETERMINISTIC,
+                    ),
+                ],
             )
 
     def _is_valid_jurisdiction(self, jurisdiction: str) -> bool:

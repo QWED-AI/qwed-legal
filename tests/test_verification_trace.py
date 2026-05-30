@@ -253,6 +253,25 @@ class TestDeadlineVerificationTrace:
         assert result.verified is False
         assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
 
+    def test_calendar_days_remain_deterministic(self):
+        result = self._verify(term="30 days")
+        assert result.verification_trace[-1].evidence_type == EVIDENCE_DETERMINISTIC
+
+    def test_business_days_with_invalid_calendar_fail_closed(self):
+        # Force an invalid holiday calendar; business-day result must not be proven.
+        guard = DeadlineGuard(country="ZZ_NOT_A_COUNTRY")
+        assert guard.holiday_calendar_valid is False
+        result = guard.verify("2026-01-15", "10 business days", "2026-01-29")
+        assert result.verified is False
+        assert result.verification_trace[-1].evidence_type == EVIDENCE_UNSUPPORTED
+        assert result.verification_trace[-1].is_proven() is False
+
+    def test_business_days_with_valid_calendar_deterministic(self):
+        guard = DeadlineGuard(country="US")
+        assert guard.holiday_calendar_valid is True
+        result = guard.verify("2026-01-15", "10 business days", "2026-01-29")
+        assert result.verification_trace[-1].evidence_type == EVIDENCE_DETERMINISTIC
+
 
 class TestLiabilityVerificationTrace:
     def test_cap_trace_deterministic(self):
@@ -305,6 +324,35 @@ class TestJurisdictionVerificationTrace:
             parties_countries=["US", "DE"],
             governing_law="California",
             forum="California",
+        )
+        assert any(
+            s.step == STEP_AMBIGUITY_NOTED for s in result.verification_trace
+        )
+
+    def test_forum_selection_has_trace(self):
+        result = JurisdictionGuard().verify_forum_selection("California")
+        assert len(result.verification_trace) >= 2
+        assert result.verification_trace[0].step == STEP_RULE_IDENTIFIED
+        assert result.verification_trace[-1].step == STEP_CONCLUSION
+
+    def test_convention_all_members_deterministic(self):
+        result = JurisdictionGuard().check_convention_applicability(
+            ["US", "DE"], "CISG"
+        )
+        assert result.verified is True
+        assert result.verification_trace[-1].evidence_type == EVIDENCE_DETERMINISTIC
+        assert result.verification_trace[-1].is_proven() is True
+
+    def test_convention_unknown_unsupported(self):
+        result = JurisdictionGuard().check_convention_applicability(
+            ["US"], "MADE_UP_CONVENTION"
+        )
+        assert result.verified is False
+        assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
+
+    def test_convention_partial_membership_has_trace(self):
+        result = JurisdictionGuard().check_convention_applicability(
+            ["US", "ZZ"], "CISG"
         )
         assert any(
             s.step == STEP_AMBIGUITY_NOTED for s in result.verification_trace
