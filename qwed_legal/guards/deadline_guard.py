@@ -258,11 +258,16 @@ class DeadlineGuard:
     # A time expression pairs a number with its immediately adjacent unit.
     # Positional pairing prevents compound terms like "30 days and 2 months"
     # from combining the first number in the term with the last matching
-    # unit branch (issue #39).
+    # unit branch (issue #39). The lookbehind requires a token boundary
+    # before the number, so decimals ("1.5 years"), signed values
+    # ("-30 days"), and numbers embedded in words ("section30days") are
+    # never matched partially as a shorter suffix quantity.
     _TIME_EXPRESSION_RE = re.compile(
-        r"(\d+)\s*(business\s+|working\s+|work\s+)?(?:calendar\s+)?"
-        r"(days?|weeks?|months?|years?)\b"
+        r"(?<![\w.,+-])(\d+)\s*(business\s+|working\s+|work\s+)?"
+        r"(?:calendar\s+)?(days?|weeks?|months?|years?)\b"
     )
+    # Any numeric token in the term, integer or decimal ("4.2", "1,000").
+    _ANY_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
 
     def _calculate_deadline(
         self, start_date: datetime, term: str
@@ -289,8 +294,23 @@ class DeadlineGuard:
             return None, False
 
         num_str, business_qualifier, unit = expressions[0]
+
+        # Every numeric token in the term must be the paired quantity.
+        # An unmatched number ("30 or 60 days", "30 days and 48 hours",
+        # a clause reference like "4.2") leaves the term ambiguous — the
+        # guard cannot prove which quantity applies, so fail closed.
+        all_numbers = self._ANY_NUMBER_RE.findall(term_lower)
+        if len(all_numbers) != 1 or all_numbers[0] != num_str:
+            return None, False
+
         num = int(num_str)
         is_business_days = bool(business_qualifier)
+
+        # "business months" / "working years" have no deterministic
+        # calendar meaning — fail closed rather than silently computing
+        # calendar months/years.
+        if is_business_days and not unit.startswith(("day", "week")):
+            return None, False
 
         if unit.startswith("year"):
             return start_date + relativedelta(years=num), False

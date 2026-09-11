@@ -240,6 +240,31 @@ class TestStatuteGuardTimelineOrder:
         )
         assert result.verified is True
 
+    def test_same_calendar_day_with_time_of_day_is_allowed(self):
+        """Filing earlier in the day than the incident occurred is still
+        same-calendar-day filing — ordering is compared at date
+        granularity, not full datetime."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-01 15:00",
+            filing_date="2024-01-01 09:00",
+            claimed_within_period=True,
+        )
+        assert result.verified is True
+
+    def test_inverted_timeline_with_time_component_fails_closed(self):
+        """Time-of-day must not rescue an inverted calendar timeline."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2030-01-01 09:00",
+            filing_date="2020-01-01 23:00",
+        )
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert "UNVERIFIABLE" in result.message
+
     def test_inverted_timeline_carries_trace_step(self):
         """The rejection must be recorded as an UNSUPPORTED trace step."""
         result = self.guard.verify(
