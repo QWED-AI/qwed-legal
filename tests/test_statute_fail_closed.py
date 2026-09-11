@@ -177,3 +177,146 @@ class TestStatuteGuardFailClosed:
         assert result.verified is False
         assert result.jurisdiction_matched is False
         assert result.incident_date is None
+
+
+class TestStatuteGuardTimelineOrder:
+    """Issue #38: filing date before incident date must not verify."""
+
+    def setup_method(self):
+        self.guard = StatuteOfLimitationsGuard()
+
+    def test_inverted_timeline_with_claim_is_unverifiable(self):
+        """Incident 2030, filed 2020 — the exact #38 time-travel repro."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2030-01-01",
+            filing_date="2020-01-01",
+            claimed_within_period=True,
+        )
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert result.expiration_date is None
+        assert result.limitation_period_years is None
+        assert "UNVERIFIABLE" in result.message
+        assert result.jurisdiction_matched is True
+        assert result.claim_type_matched is True
+
+    def test_inverted_timeline_without_claim_is_unverifiable(self):
+        """Same inversion in computation-only mode must also fail closed."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2030-01-01",
+            filing_date="2020-01-01",
+        )
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert "UNVERIFIABLE" in result.message
+
+    def test_timeline_inversion_does_not_admit_expired_claim(self):
+        """An expired-but-correct claim must still read EXPIRED, not
+        be caught by the ordering check (ordering check only fires
+        when filing < incident)."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2020-01-01",
+            filing_date="2030-01-01",
+            claimed_within_period=False,
+        )
+        assert result.verified is True
+        assert result.days_remaining is not None
+        assert result.days_remaining < 0
+
+    def test_same_day_filing_is_allowed(self):
+        """Filing on the incident date itself is a possible timeline."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-01",
+            filing_date="2024-01-01",
+            claimed_within_period=True,
+        )
+        assert result.verified is True
+
+    def test_earlier_same_day_timestamp_fails_closed(self):
+        """When callers supply time-of-day, full timestamps are compared:
+        a 09:00 filing against a 15:00 incident is an impossible timeline
+        even on the same calendar date."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-01 15:00",
+            filing_date="2024-01-01 09:00",
+            claimed_within_period=True,
+        )
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert "UNVERIFIABLE" in result.message
+        assert "2024-01-01 09:00:00" in result.message
+        assert "2024-01-01 15:00:00" in result.message
+
+    def test_mixed_timezone_awareness_fails_closed(self):
+        """One timezone-aware and one naive datetime cannot be compared
+        (TypeError) — must return an unverified result, never crash."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-02T00:00:00+00:00",
+            filing_date="2024-01-01",
+        )
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert result.expiration_date is None
+        assert "UNVERIFIABLE" in result.message
+        assert "timezone" in result.message.lower()
+
+    def test_mixed_timezone_awareness_reversed_order_fails_closed(self):
+        """Awareness mismatch fails closed regardless of which input is
+        aware."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2020-01-01",
+            filing_date="2030-01-01T00:00:00+00:00",
+        )
+        assert result.verified is False
+        assert "UNVERIFIABLE" in result.message
+
+    def test_both_timezone_aware_comparable(self):
+        """Two aware datetimes compare correctly across offsets — the
+        filing instant after the incident instant is a valid timeline."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-01T00:00:00+00:00",
+            filing_date="2024-01-01T19:00:00-05:00",
+            claimed_within_period=True,
+        )
+        assert result.verified is True
+
+    def test_inverted_timeline_with_time_component_fails_closed(self):
+        """Time-of-day must not rescue an inverted calendar timeline."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2030-01-01 09:00",
+            filing_date="2020-01-01 23:00",
+        )
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert "UNVERIFIABLE" in result.message
+
+    def test_inverted_timeline_carries_trace_step(self):
+        """The rejection must be recorded as an UNSUPPORTED trace step."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2030-01-01",
+            filing_date="2020-01-01",
+        )
+        assert len(result.verification_trace) == 1
+        step = result.verification_trace[0]
+        assert step.evidence_type == "UNSUPPORTED"
+        assert "precedes incident date" in step.output

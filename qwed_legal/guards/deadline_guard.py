@@ -139,21 +139,23 @@ class DeadlineGuard:
                 term_parsed=term,
                 difference_days=None,
                 message=(
-                    f"⚠️ UNVERIFIABLE: Term '{term}' does not contain a "
-                    f"provable time quantity and unit. Cannot compute a "
-                    f"deterministic deadline. Ambiguous legal language "
-                    f"(e.g., 'reasonable period', 'promptly') requires "
+                    f"⚠️ UNVERIFIABLE: Term '{term}' does not contain exactly "
+                    f"one provable time quantity and unit. Cannot compute a "
+                    f"deterministic deadline. Compound terms (e.g., '30 days "
+                    f"and 2 months') and ambiguous legal language "
+                    f"(e.g., 'reasonable period', 'promptly') require "
                     f"human legal interpretation."
                 ),
                 is_computable=False,
                 verification_trace=[
                     VerificationStep(
                         step=STEP_RULE_IDENTIFIED,
-                        description="Term parsed for a deterministic time quantity and unit.",
+                        description="Term parsed for exactly one deterministic time quantity and unit.",
                         inputs={"term": term},
                         output=(
                             "UNSUPPORTED: ambiguous term — no provable "
-                            "quantity/unit to compute a deadline."
+                            "quantity/unit, or multiple conflicting time "
+                            "expressions."
                         ),
                         evidence_type=EVIDENCE_UNSUPPORTED,
                     )
@@ -253,45 +255,75 @@ class DeadlineGuard:
             verification_trace=trace,
         )
     
+    # A time expression pairs a number with its immediately adjacent unit.
+    # Positional pairing prevents compound terms like "30 days and 2 months"
+    # from combining the first number in the term with the last matching
+    # unit branch (issue #39). The lookbehind requires a token boundary
+    # before the number, so decimals ("1.5 years"), signed values
+    # ("-30 days"), and numbers embedded in words ("section30days") are
+    # never matched partially as a shorter suffix quantity.
+    _TIME_EXPRESSION_RE = re.compile(
+        r"(?<![\w.,+-])(\d+)\s*(business\s+|working\s+|work\s+)?"
+        r"(?:calendar\s+)?(days?|weeks?|months?|years?)\b"
+    )
+    # Any numeric token in the term, integer or decimal ("4.2", "1,000").
+    _ANY_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+
     def _calculate_deadline(
         self, start_date: datetime, term: str
     ) -> "tuple[Optional[datetime], bool]":
         """Calculate the actual deadline from a term description.
-        
+
         Returns a tuple of (deadline, used_business_days). deadline is None if
-        the term is ambiguous and cannot be parsed into a deterministic
+        the term is ambiguous and cannot be parsed into a single deterministic
         deadline (fail-closed); used_business_days indicates whether the
         holiday calendar was relied upon.
         """
         term_lower = term.lower().strip()
-        
-        # Extract number
-        numbers = re.findall(r'\d+', term_lower)
-        if not numbers:
-            # Fail-closed: no numeric quantity found — term is ambiguous
+
+        # Pair each number with its adjacent unit. A term containing more
+        # than one time expression (e.g., "30 days and 2 months") is a
+        # compound legal term — which quantities combine is a legal
+        # interpretation, not a deterministic computation, so fail closed.
+        expressions = self._TIME_EXPRESSION_RE.findall(term_lower)
+        if not expressions:
+            # Fail-closed: no numeric quantity paired with a time unit
             return None, False
-        
-        num = int(numbers[0])
-        
-        # Determine unit and type (word-boundary matching to prevent
-        # false positives like 'today' matching 'day')
-        is_business_days = bool(re.search(r'\b(?:business|working|work)\b', term_lower))
-        
-        if re.search(r'\byears?\b', term_lower):
+        if len(expressions) > 1:
+            # Fail-closed: multiple time expressions — ambiguous
+            return None, False
+
+        num_str, business_qualifier, unit = expressions[0]
+
+        # Every numeric token in the term must be the paired quantity.
+        # An unmatched number ("30 or 60 days", "30 days and 48 hours",
+        # a clause reference like "4.2") leaves the term ambiguous — the
+        # guard cannot prove which quantity applies, so fail closed.
+        all_numbers = self._ANY_NUMBER_RE.findall(term_lower)
+        if len(all_numbers) != 1 or all_numbers[0] != num_str:
+            return None, False
+
+        num = int(num_str)
+        is_business_days = bool(business_qualifier)
+
+        # "business months" / "working years" have no deterministic
+        # calendar meaning — fail closed rather than silently computing
+        # calendar months/years.
+        if is_business_days and not unit.startswith(("day", "week")):
+            return None, False
+
+        if unit.startswith("year"):
             return start_date + relativedelta(years=num), False
-        elif re.search(r'\bmonths?\b', term_lower):
+        elif unit.startswith("month"):
             return start_date + relativedelta(months=num), False
-        elif re.search(r'\bweeks?\b', term_lower):
+        elif unit.startswith("week"):
             if is_business_days:
                 return self._add_business_days(start_date, num * 5), True
             return start_date + timedelta(weeks=num), False
-        elif re.search(r'\b(?:days?|calendar\s+days?)\b', term_lower):
+        else:
             if is_business_days:
                 return self._add_business_days(start_date, num), True
             return start_date + timedelta(days=num), False
-        else:
-            # Fail-closed: number found but no recognizable time unit
-            return None, False
     
     def _add_business_days(self, start_date: datetime, days: int) -> datetime:
         """Add business days to a date, excluding weekends and holidays."""

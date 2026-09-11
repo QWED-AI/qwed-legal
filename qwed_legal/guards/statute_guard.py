@@ -368,6 +368,85 @@ class StatuteOfLimitationsGuard:
                 ],
             )
 
+        # Fail-closed: timezone-aware and timezone-naive datetimes cannot
+        # be compared (TypeError) — reject the mixed input rather than
+        # crash, so callers always get an unverified result.
+        if (incident.tzinfo is None) != (filing.tzinfo is None):
+            return StatuteResult(
+                verified=False,
+                claim_type=claim_type,
+                jurisdiction=jurisdiction,
+                incident_date=incident,
+                filing_date=filing,
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=(
+                    "⚠️ UNVERIFIABLE: Mixed timezone inputs — one date is "
+                    "timezone-aware and the other is timezone-naive. "
+                    "Supply both dates with or both without a timezone."
+                ),
+                jurisdiction_matched=True,
+                claim_type_matched=True,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Validated timezone consistency between incident and filing dates.",
+                        inputs={
+                            "incident_date": incident.isoformat(sep=" "),
+                            "filing_date": filing.isoformat(sep=" "),
+                        },
+                        output=(
+                            "UNSUPPORTED: mixed timezone-aware and "
+                            "timezone-naive inputs — cannot compare."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
+        # Fail-closed: date-order integrity. A filing before the incident
+        # is a factually impossible timeline — computing days_remaining
+        # from it would verify a time-travel claim. Full timestamps are
+        # respected when the caller supplies time-of-day; date-only
+        # inputs (the documented contract) both parse to midnight, so
+        # same-day filing passes without rejecting sub-daily noise.
+        if filing < incident:
+            return StatuteResult(
+                verified=False,
+                claim_type=claim_type,
+                jurisdiction=jurisdiction,
+                incident_date=incident,
+                filing_date=filing,
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: Filing timestamp "
+                    f"({filing.isoformat(sep=' ')}) precedes incident "
+                    f"timestamp ({incident.isoformat(sep=' ')}) — timeline "
+                    f"cannot be verified. A claim cannot be filed before "
+                    f"the incident occurred."
+                ),
+                jurisdiction_matched=True,
+                claim_type_matched=True,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Validated date ordering between incident and filing dates.",
+                        inputs={
+                            "incident_date": incident.isoformat(sep=" "),
+                            "filing_date": filing.isoformat(sep=" "),
+                        },
+                        output=(
+                            "UNSUPPORTED: filing date precedes incident date — "
+                            "impossible timeline."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
         period_years = limits[claim_type_lower]
 
         # Calculate expiration date
@@ -398,6 +477,43 @@ class StatuteOfLimitationsGuard:
                 f"Filing date is {abs(days_remaining)} days past expiration."
             )
 
+        trace = self._build_verification_trace(
+            jurisdiction_upper=jurisdiction_upper,
+            claim_type_lower=claim_type_lower,
+            period_years=period_years,
+            incident=incident,
+            filing=filing,
+            expiration=expiration,
+            days_remaining=days_remaining,
+            within_period=within_period,
+            claimed_within_period=claimed_within_period,
+        )
+        return StatuteResult(
+            verified=verified,
+            claim_type=claim_type,
+            jurisdiction=jurisdiction,
+            incident_date=incident,
+            filing_date=filing,
+            limitation_period_years=period_years,
+            expiration_date=expiration,
+            days_remaining=days_remaining,
+            message=message,
+            verification_trace=trace,
+        )
+
+    def _build_verification_trace(
+        self,
+        jurisdiction_upper: str,
+        claim_type_lower: str,
+        period_years: float,
+        incident: datetime,
+        filing: datetime,
+        expiration: datetime,
+        days_remaining: int,
+        within_period: bool,
+        claimed_within_period: Optional[bool],
+    ) -> list:
+        """Build the ordered verification trace for a computed statute result."""
         trace = [
             VerificationStep(
                 step=STEP_RULE_IDENTIFIED,
@@ -462,18 +578,7 @@ class StatuteOfLimitationsGuard:
                     evidence_type=EVIDENCE_DETERMINISTIC,
                 )
             )
-        return StatuteResult(
-            verified=verified,
-            claim_type=claim_type,
-            jurisdiction=jurisdiction,
-            incident_date=incident,
-            filing_date=filing,
-            limitation_period_years=period_years,
-            expiration_date=expiration,
-            days_remaining=days_remaining,
-            message=message,
-            verification_trace=trace,
-        )
+        return trace
 
     def get_limitation_period(
         self, claim_type: str, jurisdiction: str
