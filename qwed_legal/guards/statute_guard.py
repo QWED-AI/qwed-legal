@@ -368,13 +368,13 @@ class StatuteOfLimitationsGuard:
                 ],
             )
 
-        # Fail-closed: date-order integrity. A filing date before the
-        # incident date is a factually impossible timeline — computing
-        # days_remaining from it would verify a time-travel claim.
-        # Compared at calendar-day granularity: filing on the same
-        # calendar day as the incident (even earlier in the day) is
-        # still same-day filing.
-        if filing.date() < incident.date():
+        # Fail-closed: date-order integrity. A filing before the incident
+        # is a factually impossible timeline — computing days_remaining
+        # from it would verify a time-travel claim. Full timestamps are
+        # respected when the caller supplies time-of-day; date-only
+        # inputs (the documented contract) both parse to midnight, so
+        # same-day filing passes without rejecting sub-daily noise.
+        if filing < incident:
             return StatuteResult(
                 verified=False,
                 claim_type=claim_type,

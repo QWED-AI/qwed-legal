@@ -61,6 +61,9 @@ packages = ["qwed_legal"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+required-version = "==0.16.1"
+
+[tool.ruff.lint]
 # Pin the lint gate to the stable default ruleset. Ruff's default rule
 # selection expanded in newer releases, which silently changed what
 # `ruff check .` enforces in CI; an explicit select keeps the gate stable.

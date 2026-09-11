@@ -47,6 +47,7 @@ jobs:
       - name: Check code style (Python 3.11 only)
         if: matrix.python-version == '3.11'
         run: |
-          pip install ruff
+          # Pinned to match required-version in pyproject [tool.ruff]
+          pip install ruff==0.16.1
           ruff check .
 

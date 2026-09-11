@@ -15,10 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DeadlineGuard`: numeric tokens must be complete — decimals ("2.5 years" no longer parses as 5 years), signed values ("-30 days"), and numbers embedded in words ("section30days") fail closed instead of matching a partial quantity.
 - `DeadlineGuard`: terms containing an unmatched numeric token ("30 or 60 days", "30 days and 48 hours", a clause reference like "4.2") fail closed as ambiguous instead of silently ignoring the extra quantity.
 - `DeadlineGuard`: business/working qualifiers on month and year units ("business months", "working years") fail closed instead of silently computing calendar periods.
-- `StatuteOfLimitationsGuard`: date-order integrity is enforced at calendar-day granularity — filing earlier in the day than the incident on the same calendar date is still valid same-day filing.
+- `StatuteOfLimitationsGuard`: date-order integrity compares full timestamps when the caller supplies time-of-day — a filing earlier in the day than the incident is an impossible timeline. Date-only inputs both parse to midnight, so same-day filing passes.
 
 ### Build / Tooling
-- Pinned the ruff lint gate to the stable default ruleset (`select = ["E4", "E7", "E9", "F"]`). Ruff's default rule selection expanded in newer releases, which flipped CI red on unchanged code.
+- Pinned the ruff lint gate to the stable default ruleset (`select = ["E4", "E7", "E9", "F"]` under `[tool.ruff.lint]`). Ruff's default rule selection expanded in newer releases, which flipped CI red on unchanged code.
+- Pinned ruff to `0.16.1` in CI and via `required-version` in pyproject so the gate cannot drift with future ruff releases.
 
 ## [0.4.0] - 2026-05-30
 

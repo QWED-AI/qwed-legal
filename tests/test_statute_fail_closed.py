@@ -240,10 +240,10 @@ class TestStatuteGuardTimelineOrder:
         )
         assert result.verified is True
 
-    def test_same_calendar_day_with_time_of_day_is_allowed(self):
-        """Filing earlier in the day than the incident occurred is still
-        same-calendar-day filing — ordering is compared at date
-        granularity, not full datetime."""
+    def test_earlier_same_day_timestamp_fails_closed(self):
+        """When callers supply time-of-day, full timestamps are compared:
+        a 09:00 filing against a 15:00 incident is an impossible timeline
+        even on the same calendar date."""
         result = self.guard.verify(
             claim_type="negligence",
             jurisdiction="Texas",
@@ -251,7 +251,9 @@ class TestStatuteGuardTimelineOrder:
             filing_date="2024-01-01 09:00",
             claimed_within_period=True,
         )
-        assert result.verified is True
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert "UNVERIFIABLE" in result.message
 
     def test_inverted_timeline_with_time_component_fails_closed(self):
         """Time-of-day must not rescue an inverted calendar timeline."""
