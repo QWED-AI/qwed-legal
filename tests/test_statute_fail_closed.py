@@ -254,6 +254,47 @@ class TestStatuteGuardTimelineOrder:
         assert result.verified is False
         assert result.days_remaining is None
         assert "UNVERIFIABLE" in result.message
+        assert "2024-01-01 09:00:00" in result.message
+        assert "2024-01-01 15:00:00" in result.message
+
+    def test_mixed_timezone_awareness_fails_closed(self):
+        """One timezone-aware and one naive datetime cannot be compared
+        (TypeError) — must return an unverified result, never crash."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-02T00:00:00+00:00",
+            filing_date="2024-01-01",
+        )
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert result.expiration_date is None
+        assert "UNVERIFIABLE" in result.message
+        assert "timezone" in result.message.lower()
+
+    def test_mixed_timezone_awareness_reversed_order_fails_closed(self):
+        """Awareness mismatch fails closed regardless of which input is
+        aware."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2020-01-01",
+            filing_date="2030-01-01T00:00:00+00:00",
+        )
+        assert result.verified is False
+        assert "UNVERIFIABLE" in result.message
+
+    def test_both_timezone_aware_comparable(self):
+        """Two aware datetimes compare correctly across offsets — the
+        filing instant after the incident instant is a valid timeline."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-01T00:00:00+00:00",
+            filing_date="2024-01-01T19:00:00-05:00",
+            claimed_within_period=True,
+        )
+        assert result.verified is True
 
     def test_inverted_timeline_with_time_component_fails_closed(self):
         """Time-of-day must not rescue an inverted calendar timeline."""

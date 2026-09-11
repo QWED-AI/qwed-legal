@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DeadlineGuard`: terms containing an unmatched numeric token ("30 or 60 days", "30 days and 48 hours", a clause reference like "4.2") fail closed as ambiguous instead of silently ignoring the extra quantity.
 - `DeadlineGuard`: business/working qualifiers on month and year units ("business months", "working years") fail closed instead of silently computing calendar periods.
 - `StatuteOfLimitationsGuard`: date-order integrity compares full timestamps when the caller supplies time-of-day — a filing earlier in the day than the incident is an impossible timeline. Date-only inputs both parse to midnight, so same-day filing passes.
+- `StatuteOfLimitationsGuard`: mixed timezone-aware and timezone-naive date inputs fail closed with `UNVERIFIABLE` instead of raising `TypeError`; the rejection message and trace record the full parsed timestamps.
 
 ### Build / Tooling
 - Pinned the ruff lint gate to the stable default ruleset (`select = ["E4", "E7", "E9", "F"]` under `[tool.ruff.lint]`). Ruff's default rule selection expanded in newer releases, which flipped CI red on unchanged code.
