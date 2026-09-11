@@ -157,6 +157,35 @@ class TestLiabilityGuardFiniteExtremes:
         assert result.verified is False
         assert result.total_computed is None
 
+    def test_signaling_nan_tier_percentage_fails_closed(self):
+        """Decimal('sNaN') raises InvalidOperation on the /100 division —
+        the division must happen AFTER finiteness validation
+        (PR #44 review, CodeRabbit)."""
+        result = self.guard.verify_tiered_liability(
+            [{"base": 1_000_000, "percentage": "sNaN"}], 1_000_000
+        )
+        assert result.verified is False
+        assert result.total_computed is None
+        assert result.claimed_total is None
+        assert "UNVERIFIABLE" in result.message
+
+    def test_signaling_nan_tier_base_fails_closed(self):
+        result = self.guard.verify_tiered_liability(
+            [{"base": "sNaN", "percentage": 100}], 1_000_000
+        )
+        assert result.verified is False
+        assert result.total_computed is None
+
+    def test_non_decimal_tier_value_fails_closed(self):
+        """Non-numeric strings crash Decimal() construction — must fail
+        closed, never raise."""
+        result = self.guard.verify_tiered_liability(
+            [{"base": 1_000_000, "percentage": "abc"}], 1_000_000
+        )
+        assert result.verified is False
+        assert result.total_computed is None
+        assert "UNVERIFIABLE" in result.message
+
     def test_non_finite_message_names_only_offending_inputs(self):
         """The failure message must name exactly the non-finite inputs,
         not implicate all of them (PR #44 review, Sentry)."""

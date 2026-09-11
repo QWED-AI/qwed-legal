@@ -252,31 +252,40 @@ class LiabilityGuard:
         total_computed = Decimal("0")
         computed_tiers = []
 
-        converted = [
-            (
-                Decimal(str(tier["base"])),
-                Decimal(str(tier["percentage"])) / Decimal("100"),
+        all_tier_inputs = {
+            **{f"tiers[{i}]": tier for i, tier in enumerate(tiers)},
+            "claimed_total": claimed_total,
+        }
+
+        # Convert RAW values only — no arithmetic yet. A signaling NaN
+        # raises InvalidOperation on the /100 division, so finiteness
+        # must be validated before any operation (PR #44 review).
+        try:
+            raw_tiers = [
+                (Decimal(str(tier["base"])), Decimal(str(tier["percentage"])))
+                for tier in tiers
+            ]
+            claimed = Decimal(str(claimed_total))
+        except DecimalException:
+            # Non-decimal input values (e.g., non-numeric strings) — fail
+            # closed instead of crashing at construction.
+            return _unverifiable_tiered_result(
+                "Input value(s) are not valid decimal numbers.",
+                all_tier_inputs,
             )
-            for tier in tiers
-        ]
-        claimed = Decimal(str(claimed_total))
 
         # Fail-closed: a non-finite tier value would crash quantize or
         # poison the running total (issue #42).
         offending = {
             f"tiers[{i}].base": tier["base"]
-            for i, (tier, (base, _)) in enumerate(zip(tiers, converted))
+            for i, (tier, (base, _)) in enumerate(zip(tiers, raw_tiers))
             if not base.is_finite()
         }
         offending.update({
             f"tiers[{i}].percentage": tier["percentage"]
-            for i, (tier, (_, pct)) in enumerate(zip(tiers, converted))
+            for i, (tier, (_, pct)) in enumerate(zip(tiers, raw_tiers))
             if not pct.is_finite()
         })
-        all_tier_inputs = {
-            **{f"tiers[{i}]": tier for i, tier in enumerate(tiers)},
-            "claimed_total": claimed_total,
-        }
         if not claimed.is_finite():
             offending["claimed_total"] = claimed_total
         if offending:
@@ -288,6 +297,9 @@ class LiabilityGuard:
             )
 
         try:
+            converted = [
+                (base, pct / Decimal("100")) for base, pct in raw_tiers
+            ]
             for tier, (base, pct) in zip(tiers, converted):
                 tier_liability = (base * pct).quantize(
                     Decimal("0.01"), rounding=ROUND_HALF_UP
