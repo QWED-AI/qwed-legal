@@ -297,7 +297,9 @@ result = guard.verify(
     filing_date="2026-06-01",
 )
 
-print(result.verified)
+print(result.status)   # COMPUTED_ONLY | CLAIM_VERIFIED | CLAIM_INCORRECT | UNVERIFIABLE
+print(result.verified) # reserved for claim comparison — False unless a
+                       # supplied claim matches the computation (#42)
 print(result.message)
 ```
 

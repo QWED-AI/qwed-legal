@@ -484,7 +484,12 @@ class TestStatuteOfLimitationsGuard:
             incident_date="2024-01-15",
             filing_date="2026-06-01",
         )
-        assert result.verified is True
+        # 'verified' is reserved for claim comparison (#42): with no
+        # claimed_within_period supplied, the result is COMPUTED_ONLY.
+        assert result.status == "COMPUTED_ONLY"
+        assert result.verified is False
+        assert result.days_remaining is not None
+        assert result.days_remaining >= 0
         assert "WITHIN" in result.message
 
     def test_expired_statute(self):
@@ -499,6 +504,7 @@ class TestStatuteOfLimitationsGuard:
             filing_date="2026-06-01",
         )
         assert result.verified is False
+        assert result.status == "COMPUTED_ONLY"
         assert "EXPIRED" in result.message
 
     def test_get_limitation_period(self):

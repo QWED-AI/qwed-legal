@@ -125,6 +125,7 @@ export interface StatuteResult {
     message: string;
     jurisdiction_matched: boolean;
     claim_type_matched: boolean;
+    status: string;
     verification_trace: VerificationStep[];
 }
 
@@ -435,6 +436,7 @@ print(json.dumps({
     "message": result.message,
     "jurisdiction_matched": result.jurisdiction_matched,
     "claim_type_matched": result.claim_type_matched,
+    "status": result.status,
     "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `LiabilityGuard`: non-finite inputs (Infinity/NaN) to `verify_cap`, `verify_indemnity_limit`, and `verify_tiered_liability` fail closed with `UNVERIFIABLE` instead of raising `decimal.InvalidOperation` or failing closed only by NaN-comparison accident; affected numeric result fields are now `null` in the failure result (#42).
+- `DeadlineGuard`: quantities beyond the supported range (cap: 100,000 — no legal term spans ~274 years) fail closed with `UNVERIFIABLE` instead of raising `OverflowError`; date-range overflow converts to fail-closed; the business-day loop is bounded so astronomical quantities can no longer stall the loop (#42).
 - `StatuteOfLimitationsGuard`: fails closed with `UNVERIFIABLE` when the filing date precedes the incident date. A factually impossible (time-travel) timeline no longer computes a positive `days_remaining` or verifies as within-period (#38).
 - `DeadlineGuard`: term parsing now pairs each number with its immediately adjacent unit. Compound terms containing more than one time expression (e.g., "30 days and 2 months") fail closed as `UNVERIFIABLE` instead of silently combining the first number with the last matching unit branch (#39).
 - `DeadlineGuard`: numbers not adjacent to a time unit (e.g., clause references like "section 4.2") no longer hijack the parsed quantity, and the business-days qualifier must be adjacent to the unit (a "business" elsewhere in the sentence no longer turns calendar days into business days).
@@ -17,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DeadlineGuard`: business/working qualifiers on month and year units ("business months", "working years") fail closed instead of silently computing calendar periods.
 - `StatuteOfLimitationsGuard`: date-order integrity compares full timestamps when the caller supplies time-of-day — a filing earlier in the day than the incident is an impossible timeline. Date-only inputs both parse to midnight, so same-day filing passes.
 - `StatuteOfLimitationsGuard`: mixed timezone-aware and timezone-naive date inputs fail closed with `UNVERIFIABLE` instead of raising `TypeError`; the rejection message and trace record the full parsed timestamps.
+
+### Changed (behavior)
+- `StatuteOfLimitationsGuard` results now carry a `status` field: `CLAIM_VERIFIED` / `CLAIM_INCORRECT` when a `claimed_within_period` answer was supplied, `COMPUTED_ONLY` in computation-only mode, and `UNVERIFIABLE` for input-class rejections. `verified` is now reserved for claim comparison — in computation-only mode it is `False` by contract (previously it doubled as the within-period legal fact, making an expired-but-correctly-evaluated claim indistinguishable from a verification failure) (#42). The TypeScript SDK's `StatuteResult` echoes the new field.
 
 ### Build / Tooling
 - Pinned the ruff lint gate to the stable default ruleset (`select = ["E4", "E7", "E9", "F"]` under `[tool.ruff.lint]`). Ruff's default rule selection expanded in newer releases, which flipped CI red on unchanged code.

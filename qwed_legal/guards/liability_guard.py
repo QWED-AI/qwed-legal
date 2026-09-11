@@ -12,8 +12,10 @@ from typing import List, Optional
 from qwed_legal.models import (
     VerificationStep,
     STEP_FACT_DERIVED,
+    STEP_RULE_IDENTIFIED,
     STEP_CONCLUSION,
     EVIDENCE_DETERMINISTIC,
+    EVIDENCE_UNSUPPORTED,
 )
 
 
@@ -21,11 +23,11 @@ from qwed_legal.models import (
 class LiabilityResult:
     """Result of liability verification."""
     verified: bool
-    contract_value: Decimal
-    cap_percentage: Decimal
-    claimed_cap: Decimal
-    computed_cap: Decimal
-    difference: Decimal
+    contract_value: Optional[Decimal]
+    cap_percentage: Optional[Decimal]
+    claimed_cap: Optional[Decimal]
+    computed_cap: Optional[Decimal]
+    difference: Optional[Decimal]
     message: str
     verification_trace: list = field(default_factory=list)
 
@@ -35,10 +37,41 @@ class TieredLiabilityResult:
     """Result of tiered liability verification."""
     verified: bool
     tiers: List[dict]
-    total_computed: Decimal
-    claimed_total: Decimal
+    total_computed: Optional[Decimal]
+    claimed_total: Optional[Decimal]
     message: str
     verification_trace: list = field(default_factory=list)
+
+
+def _non_finite_result(inputs: dict) -> LiabilityResult:
+    """Fail-closed result for non-finite (Infinity/NaN) inputs.
+
+    Non-finite values cannot be quantized or compared deterministically;
+    verifying with them either crashes (decimal.InvalidOperation) or
+    fails closed only by NaN-comparison accident (issue #42).
+    """
+    return LiabilityResult(
+        verified=False,
+        contract_value=None,
+        cap_percentage=None,
+        claimed_cap=None,
+        computed_cap=None,
+        difference=None,
+        message=(
+            "⚠️ UNVERIFIABLE: Non-finite input value(s) "
+            f"({', '.join(inputs)}) — Infinity and NaN cannot be "
+            "quantized or compared deterministically."
+        ),
+        verification_trace=[
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Validated input values are finite decimals.",
+                inputs={k: str(v) for k, v in inputs.items()},
+                output="UNSUPPORTED: non-finite input (Infinity or NaN).",
+                evidence_type=EVIDENCE_UNSUPPORTED,
+            )
+        ],
+    )
 
 
 class LiabilityGuard:
@@ -100,7 +133,14 @@ class LiabilityGuard:
         cv = Decimal(str(contract_value))
         pct = Decimal(str(cap_percentage)) / Decimal("100")
         claimed = Decimal(str(claimed_cap))
-        
+
+        if not (cv.is_finite() and pct.is_finite() and claimed.is_finite()):
+            return _non_finite_result({
+                "contract_value": contract_value,
+                "cap_percentage": cap_percentage,
+                "claimed_cap": claimed_cap,
+            })
+
         computed = (cv * pct).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         difference = abs(computed - claimed)
         
@@ -164,18 +204,62 @@ class LiabilityGuard:
         """
         total_computed = Decimal("0")
         computed_tiers = []
-        
-        for tier in tiers:
-            base = Decimal(str(tier["base"]))
-            pct = Decimal(str(tier["percentage"])) / Decimal("100")
+
+        converted = [
+            (
+                Decimal(str(tier["base"])),
+                Decimal(str(tier["percentage"])) / Decimal("100"),
+            )
+            for tier in tiers
+        ]
+        claimed = Decimal(str(claimed_total))
+
+        # Fail-closed: a non-finite tier value would crash quantize or
+        # poison the running total (issue #42).
+        if not claimed.is_finite() or any(
+            not base.is_finite() or not pct.is_finite() for base, pct in converted
+        ):
+            inputs = {
+                f"tiers[{i}].base": tier["base"]
+                for i, (tier, (base, _)) in enumerate(zip(tiers, converted))
+                if not base.is_finite()
+            }
+            inputs.update({
+                f"tiers[{i}].percentage": tier["percentage"]
+                for i, (tier, (_, pct)) in enumerate(zip(tiers, converted))
+                if not pct.is_finite()
+            })
+            if not claimed.is_finite():
+                inputs["claimed_total"] = claimed_total
+            return TieredLiabilityResult(
+                verified=False,
+                tiers=[],
+                total_computed=None,
+                claimed_total=None,
+                message=(
+                    "⚠️ UNVERIFIABLE: Non-finite input value(s) "
+                    f"({', '.join(inputs)}) — Infinity and NaN cannot be "
+                    "quantized or compared deterministically."
+                ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Validated tier values are finite decimals.",
+                        inputs={k: str(v) for k, v in inputs.items()},
+                        output="UNSUPPORTED: non-finite input (Infinity or NaN).",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
+        for tier, (base, pct) in zip(tiers, converted):
             tier_liability = (base * pct).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             total_computed += tier_liability
             computed_tiers.append({
                 **tier,
                 "computed_liability": float(tier_liability)
             })
-        
-        claimed = Decimal(str(claimed_total))
+
         difference = abs(total_computed - claimed)
         
         verified = difference == Decimal("0")
@@ -240,7 +324,14 @@ class LiabilityGuard:
         fee = Decimal(str(annual_fee))
         mult = Decimal(str(multiplier))
         claimed = Decimal(str(claimed_limit))
-        
+
+        if not (fee.is_finite() and mult.is_finite() and claimed.is_finite()):
+            return _non_finite_result({
+                "annual_fee": annual_fee,
+                "multiplier": multiplier,
+                "claimed_limit": claimed_limit,
+            })
+
         computed = (fee * mult).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         difference = abs(computed - claimed)
         

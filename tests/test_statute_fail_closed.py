@@ -118,7 +118,10 @@ class TestStatuteGuardFailClosed:
             incident_date="2024-01-15",
             filing_date="2026-06-01",
         )
-        assert result.verified is True
+        # Computation-only mode (#42): verified stays False, status says why.
+        assert result.status == "COMPUTED_ONLY"
+        assert result.verified is False
+        assert "computation-only" in result.message.lower()
         assert result.jurisdiction_matched is True
         assert result.claim_type_matched is True
         assert result.limitation_period_years == 4.0
@@ -133,6 +136,7 @@ class TestStatuteGuardFailClosed:
             filing_date="2026-06-01",
         )
         assert result.verified is False
+        assert result.status == "COMPUTED_ONLY"
         assert result.jurisdiction_matched is True
         assert result.claim_type_matched is True
         assert "EXPIRED" in result.message
@@ -320,3 +324,64 @@ class TestStatuteGuardTimelineOrder:
         step = result.verification_trace[0]
         assert step.evidence_type == "UNSUPPORTED"
         assert "precedes incident date" in step.output
+
+
+class TestStatuteResultStatusTaxonomy:
+    """Issue #42: 'verified' previously carried a double meaning — claim
+    comparison and legal fact — under one field name. The status field
+    now disambiguates."""
+
+    def setup_method(self):
+        self.guard = StatuteOfLimitationsGuard()
+
+    def test_computed_only_mode_has_distinct_status(self):
+        """No claim supplied: the computation is reported but 'verified'
+        is False by contract, not because the legal answer was no."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-01",
+            filing_date="2024-06-01",
+        )
+        assert result.status == "COMPUTED_ONLY"
+        assert result.verified is False
+        assert result.days_remaining is not None
+        assert result.days_remaining > 0
+        assert "computation-only" in result.message.lower()
+        assert "WITHIN" in result.message
+
+    def test_claim_match_status(self):
+        """Supplied claim matching the computation → CLAIM_VERIFIED."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-01",
+            filing_date="2024-06-01",
+            claimed_within_period=True,
+        )
+        assert result.status == "CLAIM_VERIFIED"
+        assert result.verified is True
+
+    def test_claim_mismatch_status(self):
+        """Supplied claim contradicting the computation → CLAIM_INCORRECT."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-01",
+            filing_date="2024-06-01",
+            claimed_within_period=False,
+        )
+        assert result.status == "CLAIM_INCORRECT"
+        assert result.verified is False
+
+    def test_rejections_are_unverifiable_status(self):
+        """Input-class rejections report UNVERIFIABLE, distinct from an
+        expired-but-correct computation."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Mars Colony",
+            incident_date="2024-01-01",
+            filing_date="2024-06-01",
+        )
+        assert result.status == "UNVERIFIABLE"
+        assert result.verified is False
