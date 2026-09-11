@@ -114,3 +114,73 @@ class TestDeadlineGuardFailClosed:
         result = self.guard.verify("not-a-date", "30 days", "2026-01-31")
         assert result.verified is False
         assert result.is_computable is False
+
+
+class TestDeadlineGuardCompoundTerms:
+    """Issue #39: compound terms must fail closed, not mispair number x unit."""
+
+    def setup_method(self):
+        self.guard = DeadlineGuard()
+
+    def test_days_and_months_is_unverifiable(self):
+        """'30 days and 2 months' — the exact #39 repro that produced a
+        30-month deadline from the first number x last unit."""
+        result = self.guard.verify(
+            "2026-01-15", "30 days and 2 months from execution hereof", "2028-07-15"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None
+        assert result.difference_days is None
+        assert "UNVERIFIABLE" in result.message
+
+    def test_business_days_and_weeks_is_unverifiable(self):
+        """'10 business days and 4 weeks' — number 10 previously applied
+        with business-day logic regardless of the weeks clause."""
+        result = self.guard.verify("2026-01-15", "10 business days and 4 weeks", "2026-02-20")
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None
+
+    def test_weeks_and_months_is_unverifiable(self):
+        """'3 weeks or 1 month' — two expressions, ambiguous combination."""
+        result = self.guard.verify("2026-01-15", "3 weeks or 1 month", "2026-02-05")
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_single_expression_still_computes(self):
+        """One number-unit pair must keep computing normally."""
+        result = self.guard.verify("2026-01-01", "30 days", "2026-01-31")
+        assert result.verified is True
+        assert result.is_computable is True
+        assert result.computed_deadline is not None
+
+    def test_stray_numbers_do_not_hijack_the_expression(self):
+        """A number not adjacent to a time unit (e.g., a clause number)
+        must not be misread as the term quantity. Before the fix, the
+        FIRST number in the term was taken: 'section 4.2' + '30 days'
+        computed 4 days."""
+        result = self.guard.verify(
+            "2026-01-01", "within 30 days of the notice under section 4.2", "2026-01-31"
+        )
+        assert result.verified is True
+        assert result.is_computable is True
+        assert result.computed_deadline.date().isoformat() == "2026-01-31"
+
+    def test_business_qualifier_must_be_adjacent(self):
+        """'business' elsewhere in the sentence must not turn calendar
+        days into business days (previously matched anywhere in term)."""
+        result = self.guard.verify(
+            "2026-01-01", "30 days after the business closes the account", "2026-01-31"
+        )
+        assert result.verified is True
+        assert result.is_computable is True
+        assert result.computed_deadline.date().isoformat() == "2026-01-31"
+
+    def test_compound_rejection_carries_trace_step(self):
+        """The rejection must be recorded as an UNSUPPORTED trace step."""
+        result = self.guard.verify("2026-01-15", "30 days and 2 months", "2028-07-15")
+        assert len(result.verification_trace) == 1
+        step = result.verification_trace[0]
+        assert step.evidence_type == "UNSUPPORTED"
+        assert "multiple conflicting time expressions" in step.output

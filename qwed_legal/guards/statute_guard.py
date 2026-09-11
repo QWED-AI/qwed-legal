@@ -368,6 +368,44 @@ class StatuteOfLimitationsGuard:
                 ],
             )
 
+        # Fail-closed: date-order integrity. A filing date before the
+        # incident date is a factually impossible timeline — computing
+        # days_remaining from it would verify a time-travel claim.
+        if filing < incident:
+            return StatuteResult(
+                verified=False,
+                claim_type=claim_type,
+                jurisdiction=jurisdiction,
+                incident_date=incident,
+                filing_date=filing,
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: Filing date ({filing.strftime('%Y-%m-%d')}) "
+                    f"precedes incident date ({incident.strftime('%Y-%m-%d')}) — "
+                    f"timeline cannot be verified. A claim cannot be filed "
+                    f"before the incident occurred."
+                ),
+                jurisdiction_matched=True,
+                claim_type_matched=True,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Validated date ordering between incident and filing dates.",
+                        inputs={
+                            "incident_date": incident.strftime("%Y-%m-%d"),
+                            "filing_date": filing.strftime("%Y-%m-%d"),
+                        },
+                        output=(
+                            "UNSUPPORTED: filing date precedes incident date — "
+                            "impossible timeline."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
         period_years = limits[claim_type_lower]
 
         # Calculate expiration date

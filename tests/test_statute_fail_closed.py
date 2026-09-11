@@ -177,3 +177,78 @@ class TestStatuteGuardFailClosed:
         assert result.verified is False
         assert result.jurisdiction_matched is False
         assert result.incident_date is None
+
+
+class TestStatuteGuardTimelineOrder:
+    """Issue #38: filing date before incident date must not verify."""
+
+    def setup_method(self):
+        self.guard = StatuteOfLimitationsGuard()
+
+    def test_inverted_timeline_with_claim_is_unverifiable(self):
+        """Incident 2030, filed 2020 — the exact #38 time-travel repro."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2030-01-01",
+            filing_date="2020-01-01",
+            claimed_within_period=True,
+        )
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert result.expiration_date is None
+        assert result.limitation_period_years is None
+        assert "UNVERIFIABLE" in result.message
+        assert result.jurisdiction_matched is True
+        assert result.claim_type_matched is True
+
+    def test_inverted_timeline_without_claim_is_unverifiable(self):
+        """Same inversion in computation-only mode must also fail closed."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2030-01-01",
+            filing_date="2020-01-01",
+        )
+        assert result.verified is False
+        assert result.days_remaining is None
+        assert "UNVERIFIABLE" in result.message
+
+    def test_timeline_inversion_does_not_admit_expired_claim(self):
+        """An expired-but-correct claim must still read EXPIRED, not
+        be caught by the ordering check (ordering check only fires
+        when filing < incident)."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2020-01-01",
+            filing_date="2030-01-01",
+            claimed_within_period=False,
+        )
+        assert result.verified is True
+        assert result.days_remaining is not None
+        assert result.days_remaining < 0
+
+    def test_same_day_filing_is_allowed(self):
+        """Filing on the incident date itself is a possible timeline."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2024-01-01",
+            filing_date="2024-01-01",
+            claimed_within_period=True,
+        )
+        assert result.verified is True
+
+    def test_inverted_timeline_carries_trace_step(self):
+        """The rejection must be recorded as an UNSUPPORTED trace step."""
+        result = self.guard.verify(
+            claim_type="negligence",
+            jurisdiction="Texas",
+            incident_date="2030-01-01",
+            filing_date="2020-01-01",
+        )
+        assert len(result.verification_trace) == 1
+        step = result.verification_trace[0]
+        assert step.evidence_type == "UNSUPPORTED"
+        assert "precedes incident date" in step.output

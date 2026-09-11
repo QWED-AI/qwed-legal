@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: breaking changes are released as minor bumps).
 
+## [Unreleased]
+
+### Fixed
+- `StatuteOfLimitationsGuard`: fails closed with `UNVERIFIABLE` when the filing date precedes the incident date. A factually impossible (time-travel) timeline no longer computes a positive `days_remaining` or verifies as within-period (#38).
+- `DeadlineGuard`: term parsing now pairs each number with its immediately adjacent unit. Compound terms containing more than one time expression (e.g., "30 days and 2 months") fail closed as `UNVERIFIABLE` instead of silently combining the first number with the last matching unit branch (#39).
+- `DeadlineGuard`: numbers not adjacent to a time unit (e.g., clause references like "section 4.2") no longer hijack the parsed quantity, and the business-days qualifier must be adjacent to the unit (a "business" elsewhere in the sentence no longer turns calendar days into business days).
+
 ## [0.4.0] - 2026-05-30
 
 ### Verification Improvements
