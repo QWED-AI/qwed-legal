@@ -308,7 +308,7 @@ class DeadlineGuard:
         if not expressions or len(expressions) > 1:
             return None
 
-        num_str, business_qualifier, unit = expressions[0]
+        num_str = expressions[0][0]
 
         # Every numeric token in the term must be the paired quantity.
         # An unmatched number leaves the term ambiguous — the guard

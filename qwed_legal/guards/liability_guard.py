@@ -52,6 +52,11 @@ def _non_finite_names(named_values: dict) -> List[str]:
     ]
 
 
+# Shared reason for finite-but-extreme magnitudes that exceed the decimal
+# context (quantize precision / context range).
+_RANGE_MESSAGE = "Input magnitude(s) exceed the supported decimal range."
+
+
 def _unverifiable_result(reason: str, inputs: dict) -> LiabilityResult:
     """Fail-closed result for inputs that cannot be verified.
 
@@ -182,7 +187,7 @@ class LiabilityGuard:
             # Finite but extreme magnitudes can exceed the decimal context
             # (quantize precision / context range) — fail closed (PR #44).
             return _unverifiable_result(
-                "Input magnitude(s) exceed the supported decimal range.",
+                _RANGE_MESSAGE,
                 named_inputs,
             )
         
@@ -298,7 +303,7 @@ class LiabilityGuard:
             # Finite but extreme magnitudes can exceed the decimal context
             # (quantize precision / context range) — fail closed (PR #44).
             return _unverifiable_tiered_result(
-                "Input magnitude(s) exceed the supported decimal range.",
+                _RANGE_MESSAGE,
                 all_tier_inputs,
             )
         
@@ -387,7 +392,7 @@ class LiabilityGuard:
             # Finite but extreme magnitudes can exceed the decimal context
             # (quantize precision / context range) — fail closed (PR #44).
             return _unverifiable_result(
-                "Input magnitude(s) exceed the supported decimal range.",
+                _RANGE_MESSAGE,
                 named_inputs,
             )
         
