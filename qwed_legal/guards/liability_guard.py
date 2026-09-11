@@ -6,7 +6,7 @@ Catches percentage miscalculations, cap verification errors, and multi-tier liab
 
 import warnings
 from dataclasses import dataclass, field
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, DecimalException, ROUND_HALF_UP
 from typing import List, Optional
 
 from qwed_legal.models import (
@@ -43,12 +43,22 @@ class TieredLiabilityResult:
     verification_trace: list = field(default_factory=list)
 
 
-def _non_finite_result(inputs: dict) -> LiabilityResult:
-    """Fail-closed result for non-finite (Infinity/NaN) inputs.
+def _non_finite_names(named_values: dict) -> List[str]:
+    """Names of inputs whose Decimal conversion is not finite."""
+    return [
+        name
+        for name, value in named_values.items()
+        if not Decimal(str(value)).is_finite()
+    ]
 
-    Non-finite values cannot be quantized or compared deterministically;
-    verifying with them either crashes (decimal.InvalidOperation) or
-    fails closed only by NaN-comparison accident (issue #42).
+
+def _unverifiable_result(reason: str, inputs: dict) -> LiabilityResult:
+    """Fail-closed result for inputs that cannot be verified.
+
+    Non-finite values (Infinity/NaN) and magnitudes beyond the decimal
+    context cannot be quantized or compared deterministically; verifying
+    with them either crashes or fails closed only by accident
+    (issue #42, PR #44 review).
     """
     return LiabilityResult(
         verified=False,
@@ -57,17 +67,33 @@ def _non_finite_result(inputs: dict) -> LiabilityResult:
         claimed_cap=None,
         computed_cap=None,
         difference=None,
-        message=(
-            "⚠️ UNVERIFIABLE: Non-finite input value(s) "
-            f"({', '.join(inputs)}) — Infinity and NaN cannot be "
-            "quantized or compared deterministically."
-        ),
+        message=f"⚠️ UNVERIFIABLE: {reason}",
         verification_trace=[
             VerificationStep(
                 step=STEP_RULE_IDENTIFIED,
-                description="Validated input values are finite decimals.",
+                description="Validated input values are verifiable decimals.",
                 inputs={k: str(v) for k, v in inputs.items()},
-                output="UNSUPPORTED: non-finite input (Infinity or NaN).",
+                output=f"UNSUPPORTED: {reason}",
+                evidence_type=EVIDENCE_UNSUPPORTED,
+            )
+        ],
+    )
+
+
+def _unverifiable_tiered_result(reason: str, inputs: dict) -> TieredLiabilityResult:
+    """Tiered variant of the fail-closed unverifiable result."""
+    return TieredLiabilityResult(
+        verified=False,
+        tiers=[],
+        total_computed=None,
+        claimed_total=None,
+        message=f"⚠️ UNVERIFIABLE: {reason}",
+        verification_trace=[
+            VerificationStep(
+                step=STEP_RULE_IDENTIFIED,
+                description="Validated tier values are verifiable decimals.",
+                inputs={k: str(v) for k, v in inputs.items()},
+                output=f"UNSUPPORTED: {reason}",
                 evidence_type=EVIDENCE_UNSUPPORTED,
             )
         ],
@@ -130,19 +156,35 @@ class LiabilityGuard:
                 stacklevel=2,
             )
 
+        named_inputs = {
+            "contract_value": contract_value,
+            "cap_percentage": cap_percentage,
+            "claimed_cap": claimed_cap,
+        }
+
+        non_finite = _non_finite_names(named_inputs)
+        if non_finite:
+            return _unverifiable_result(
+                f"Non-finite input value(s) ({', '.join(non_finite)}) — "
+                "Infinity and NaN cannot be quantized or compared "
+                "deterministically.",
+                named_inputs,
+            )
+
         cv = Decimal(str(contract_value))
         pct = Decimal(str(cap_percentage)) / Decimal("100")
         claimed = Decimal(str(claimed_cap))
 
-        if not (cv.is_finite() and pct.is_finite() and claimed.is_finite()):
-            return _non_finite_result({
-                "contract_value": contract_value,
-                "cap_percentage": cap_percentage,
-                "claimed_cap": claimed_cap,
-            })
-
-        computed = (cv * pct).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        difference = abs(computed - claimed)
+        try:
+            computed = (cv * pct).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            difference = abs(computed - claimed)
+        except DecimalException:
+            # Finite but extreme magnitudes can exceed the decimal context
+            # (quantize precision / context range) — fail closed (PR #44).
+            return _unverifiable_result(
+                "Input magnitude(s) exceed the supported decimal range.",
+                named_inputs,
+            )
         
         verified = difference == Decimal("0")
         
@@ -216,51 +258,49 @@ class LiabilityGuard:
 
         # Fail-closed: a non-finite tier value would crash quantize or
         # poison the running total (issue #42).
-        if not claimed.is_finite() or any(
-            not base.is_finite() or not pct.is_finite() for base, pct in converted
-        ):
-            inputs = {
-                f"tiers[{i}].base": tier["base"]
-                for i, (tier, (base, _)) in enumerate(zip(tiers, converted))
-                if not base.is_finite()
-            }
-            inputs.update({
-                f"tiers[{i}].percentage": tier["percentage"]
-                for i, (tier, (_, pct)) in enumerate(zip(tiers, converted))
-                if not pct.is_finite()
-            })
-            if not claimed.is_finite():
-                inputs["claimed_total"] = claimed_total
-            return TieredLiabilityResult(
-                verified=False,
-                tiers=[],
-                total_computed=None,
-                claimed_total=None,
-                message=(
-                    "⚠️ UNVERIFIABLE: Non-finite input value(s) "
-                    f"({', '.join(inputs)}) — Infinity and NaN cannot be "
-                    "quantized or compared deterministically."
-                ),
-                verification_trace=[
-                    VerificationStep(
-                        step=STEP_RULE_IDENTIFIED,
-                        description="Validated tier values are finite decimals.",
-                        inputs={k: str(v) for k, v in inputs.items()},
-                        output="UNSUPPORTED: non-finite input (Infinity or NaN).",
-                        evidence_type=EVIDENCE_UNSUPPORTED,
-                    )
-                ],
+        offending = {
+            f"tiers[{i}].base": tier["base"]
+            for i, (tier, (base, _)) in enumerate(zip(tiers, converted))
+            if not base.is_finite()
+        }
+        offending.update({
+            f"tiers[{i}].percentage": tier["percentage"]
+            for i, (tier, (_, pct)) in enumerate(zip(tiers, converted))
+            if not pct.is_finite()
+        })
+        all_tier_inputs = {
+            **{f"tiers[{i}]": tier for i, tier in enumerate(tiers)},
+            "claimed_total": claimed_total,
+        }
+        if not claimed.is_finite():
+            offending["claimed_total"] = claimed_total
+        if offending:
+            return _unverifiable_tiered_result(
+                f"Non-finite input value(s) ({', '.join(offending)}) — "
+                "Infinity and NaN cannot be quantized or compared "
+                "deterministically.",
+                all_tier_inputs,
             )
 
-        for tier, (base, pct) in zip(tiers, converted):
-            tier_liability = (base * pct).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            total_computed += tier_liability
-            computed_tiers.append({
-                **tier,
-                "computed_liability": float(tier_liability)
-            })
+        try:
+            for tier, (base, pct) in zip(tiers, converted):
+                tier_liability = (base * pct).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                total_computed += tier_liability
+                computed_tiers.append({
+                    **tier,
+                    "computed_liability": float(tier_liability)
+                })
 
-        difference = abs(total_computed - claimed)
+            difference = abs(total_computed - claimed)
+        except DecimalException:
+            # Finite but extreme magnitudes can exceed the decimal context
+            # (quantize precision / context range) — fail closed (PR #44).
+            return _unverifiable_tiered_result(
+                "Input magnitude(s) exceed the supported decimal range.",
+                all_tier_inputs,
+            )
         
         verified = difference == Decimal("0")
         
@@ -321,19 +361,35 @@ class LiabilityGuard:
         Returns:
             LiabilityResult with verification status
         """
+        named_inputs = {
+            "annual_fee": annual_fee,
+            "multiplier": multiplier,
+            "claimed_limit": claimed_limit,
+        }
+
+        non_finite = _non_finite_names(named_inputs)
+        if non_finite:
+            return _unverifiable_result(
+                f"Non-finite input value(s) ({', '.join(non_finite)}) — "
+                "Infinity and NaN cannot be quantized or compared "
+                "deterministically.",
+                named_inputs,
+            )
+
         fee = Decimal(str(annual_fee))
         mult = Decimal(str(multiplier))
         claimed = Decimal(str(claimed_limit))
 
-        if not (fee.is_finite() and mult.is_finite() and claimed.is_finite()):
-            return _non_finite_result({
-                "annual_fee": annual_fee,
-                "multiplier": multiplier,
-                "claimed_limit": claimed_limit,
-            })
-
-        computed = (fee * mult).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        difference = abs(computed - claimed)
+        try:
+            computed = (fee * mult).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            difference = abs(computed - claimed)
+        except DecimalException:
+            # Finite but extreme magnitudes can exceed the decimal context
+            # (quantize precision / context range) — fail closed (PR #44).
+            return _unverifiable_result(
+                "Input magnitude(s) exceed the supported decimal range.",
+                named_inputs,
+            )
         
         verified = difference == Decimal("0")
         

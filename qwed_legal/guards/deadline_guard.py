@@ -286,32 +286,43 @@ class DeadlineGuard:
         holiday calendar was relied upon.
         """
         term_lower = term.lower().strip()
+        expression = self._match_single_expression(term_lower)
+        if expression is None:
+            return None, False
 
-        # Pair each number with its adjacent unit. A term containing more
-        # than one time expression (e.g., "30 days and 2 months") is a
-        # compound legal term — which quantities combine is a legal
-        # interpretation, not a deterministic computation, so fail closed.
+        num_str, business_qualifier, unit = expression
+        return self._compute_from_expression(
+            start_date, int(num_str), bool(business_qualifier), unit
+        )
+
+    def _match_single_expression(self, term_lower: str) -> "Optional[tuple]":
+        """Find the single number-unit expression in a term, or None.
+
+        Fails closed when the term contains no number-unit pair, more
+        than one pair (compound legal term — which quantities combine is
+        a legal interpretation, not a deterministic computation), or a
+        numeric token that is not part of the pair ("30 or 60 days",
+        "30 days and 48 hours", a clause reference like "4.2").
+        """
         expressions = self._TIME_EXPRESSION_RE.findall(term_lower)
-        if not expressions:
-            # Fail-closed: no numeric quantity paired with a time unit
-            return None, False
-        if len(expressions) > 1:
-            # Fail-closed: multiple time expressions — ambiguous
-            return None, False
+        if not expressions or len(expressions) > 1:
+            return None
 
         num_str, business_qualifier, unit = expressions[0]
 
         # Every numeric token in the term must be the paired quantity.
-        # An unmatched number ("30 or 60 days", "30 days and 48 hours",
-        # a clause reference like "4.2") leaves the term ambiguous — the
-        # guard cannot prove which quantity applies, so fail closed.
+        # An unmatched number leaves the term ambiguous — the guard
+        # cannot prove which quantity applies, so fail closed.
         all_numbers = self._ANY_NUMBER_RE.findall(term_lower)
         if len(all_numbers) != 1 or all_numbers[0] != num_str:
-            return None, False
+            return None
 
-        num = int(num_str)
-        is_business_days = bool(business_qualifier)
+        return expressions[0]
 
+    def _compute_from_expression(
+        self, start_date: datetime, num: int, is_business_days: bool, unit: str
+    ) -> "tuple[Optional[datetime], bool]":
+        """Compute the deadline from a validated single expression."""
         # Fail-closed: quantity beyond the supported range
         if num > self._MAX_TERM_QUANTITY:
             return None, False
@@ -329,7 +340,12 @@ class DeadlineGuard:
                 return start_date + relativedelta(months=num), False
             elif unit.startswith("week"):
                 if is_business_days:
-                    return self._add_business_days(start_date, num * 5), True
+                    # Cap the NORMALIZED business-day count: business
+                    # weeks multiply the quantity by 5 (issue #44 review).
+                    business_days = num * 5
+                    if business_days > self._MAX_TERM_QUANTITY:
+                        return None, False
+                    return self._add_business_days(start_date, business_days), True
                 return start_date + timedelta(weeks=num), False
             else:
                 if is_business_days:

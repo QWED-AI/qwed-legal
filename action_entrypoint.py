@@ -79,11 +79,21 @@ def main():
         result = guard.verify_cap(
             float(contract_value), float(cap_percentage), float(claimed_cap)
         )
+        # computed_cap/difference are None on fail-closed (non-finite or
+        # out-of-range inputs) — serialize as null, never float(None)
         results["liability"] = {
             "verified": result.verified,
-            "computed": float(result.computed_cap),
+            "computed": (
+                float(result.computed_cap)
+                if result.computed_cap is not None
+                else None
+            ),
             "claimed": float(claimed_cap),
-            "difference": float(result.difference),
+            "difference": (
+                float(result.difference)
+                if result.difference is not None
+                else None
+            ),
             "message": result.message,
         }
         if not result.verified:

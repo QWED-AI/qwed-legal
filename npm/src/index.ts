@@ -65,9 +65,9 @@ export interface DeadlineResult {
 
 export interface LiabilityResult {
     verified: boolean;
-    contract_value: number;
-    liability_cap: number;
-    computed_cap: number;
+    contract_value: number | null;
+    liability_cap: number | null;
+    computed_cap: number | null;
     message: string;
     verification_trace: VerificationStep[];
 }
@@ -125,7 +125,13 @@ export interface StatuteResult {
     message: string;
     jurisdiction_matched: boolean;
     claim_type_matched: boolean;
-    status: string;
+    /**
+     * Claim-comparison status: COMPUTED_ONLY | CLAIM_VERIFIED |
+     * CLAIM_INCORRECT | UNVERIFIABLE. Null when the installed Python
+     * engine predates the status field (PR #44 review: the npm package
+     * and Python engine version independently).
+     */
+    status: string | null;
     verification_trace: VerificationStep[];
 }
 
@@ -244,6 +250,30 @@ export class LiabilityVerifier {
         capPercentage: number,
         claimedCap: number
     ): Promise<LiabilityResult> {
+        // Validate BEFORE script generation: JS Infinity/NaN interpolated
+        // into Python source would raise NameError/ValueError there, and
+        // the fail-closed contract must hold on the Node side too
+        // (PR #44 review).
+        const nonFinite = Object.entries({
+            contract_value: contractValue,
+            cap_percentage: capPercentage,
+            claimed_cap: claimedCap,
+        })
+            .filter(([, value]) => !Number.isFinite(value))
+            .map(([name]) => name);
+        if (nonFinite.length > 0) {
+            return {
+                verified: false,
+                contract_value: null,
+                liability_cap: null,
+                computed_cap: null,
+                message:
+                    `⚠️ UNVERIFIABLE: Non-finite input value(s) ` +
+                    `(${nonFinite.join(", ")}) — Infinity and NaN cannot ` +
+                    "be quantized or compared deterministically.",
+                verification_trace: [],
+            };
+        }
         const script = `
 from qwed_legal import LiabilityGuard, trace_to_dict
 import json
@@ -253,9 +283,9 @@ result = guard.verify_cap(${contractValue}, ${capPercentage}, ${claimedCap})
 
 print(json.dumps({
     "verified": result.verified,
-    "contract_value": float(result.contract_value),
-    "liability_cap": float(result.claimed_cap),
-    "computed_cap": float(result.computed_cap),
+    "contract_value": float(result.contract_value) if result.contract_value is not None else None,
+    "liability_cap": float(result.claimed_cap) if result.claimed_cap is not None else None,
+    "computed_cap": float(result.computed_cap) if result.computed_cap is not None else None,
     "message": result.message,
     "verification_trace": trace_to_dict(result.verification_trace)
 }))
@@ -415,14 +445,24 @@ export class StatuteVerifier {
         claimType: string,
         jurisdiction: string,
         incidentDate: string,
-        filingDate: string
+        filingDate: string,
+        claimedWithinPeriod?: boolean
     ): Promise<StatuteResult> {
+        // The Python engine accepts an optional LLM claim to verify;
+        // forward it when supplied so CLAIM_VERIFIED / CLAIM_INCORRECT
+        // statuses are reachable from the SDK (PR #44 review).
+        const claimLiteral =
+            claimedWithinPeriod === undefined
+                ? "None"
+                : claimedWithinPeriod
+                  ? "True"
+                  : "False";
         const script = `
 from qwed_legal import StatuteOfLimitationsGuard, trace_to_dict
 import json
 
 guard = StatuteOfLimitationsGuard()
-result = guard.verify("${escapePythonString(claimType)}", "${escapePythonString(jurisdiction)}", "${escapePythonString(incidentDate)}", "${escapePythonString(filingDate)}")
+result = guard.verify("${escapePythonString(claimType)}", "${escapePythonString(jurisdiction)}", "${escapePythonString(incidentDate)}", "${escapePythonString(filingDate)}", claimed_within_period=${claimLiteral})
 
 print(json.dumps({
     "verified": result.verified,
@@ -436,7 +476,7 @@ print(json.dumps({
     "message": result.message,
     "jurisdiction_matched": result.jurisdiction_matched,
     "claim_type_matched": result.claim_type_matched,
-    "status": result.status,
+    "status": getattr(result, "status", None),
     "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;

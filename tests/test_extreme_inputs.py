@@ -110,3 +110,62 @@ class TestDeadlineGuardExtremeQuantities:
         result = self.guard.verify("2026-01-15", "1000000000 years", "2029-01-15")
         assert result.verified is False
         assert result.is_computable is False
+
+    def test_business_weeks_at_normalized_cap_fail_closed(self):
+        """'100000 business weeks' normalizes to 500,000 business days —
+        the cap must apply AFTER the business-week conversion, not just
+        to the raw quantity (PR #44 review)."""
+        start = time.time()
+        result = self.guard.verify("2026-01-15", "100000 business weeks", "2299-01-01")
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None
+        assert time.time() - start < 0.5
+
+    def test_business_weeks_at_boundary_still_compute(self):
+        """'20000 business weeks' = exactly 100,000 business days — at
+        the cap boundary the computation remains available."""
+        result = self.guard.verify("2026-01-15", "20000 business weeks", "2299-01-01")
+        assert result.is_computable is True
+        assert result.computed_deadline is not None
+
+
+class TestLiabilityGuardFiniteExtremes:
+    """PR #44 review: finite values can still exceed the decimal context —
+    quantize raises InvalidOperation on huge magnitudes."""
+
+    def setup_method(self):
+        self.guard = LiabilityGuard()
+
+    def test_cap_extreme_finite_magnitude_fails_closed(self):
+        """1e308 is finite but 2e308 cannot be quantized to cents."""
+        result = self.guard.verify_cap(1e308, 200, 10_000_000)
+        assert result.verified is False
+        assert result.computed_cap is None
+        assert "UNVERIFIABLE" in result.message
+        assert "decimal range" in result.message
+
+    def test_indemnity_extreme_finite_magnitude_fails_closed(self):
+        result = self.guard.verify_indemnity_limit(1e308, 200, 300_000)
+        assert result.verified is False
+        assert result.computed_cap is None
+
+    def test_tiered_extreme_finite_magnitude_fails_closed(self):
+        result = self.guard.verify_tiered_liability(
+            [{"base": 1e308, "percentage": 100}], 1_000_000
+        )
+        assert result.verified is False
+        assert result.total_computed is None
+
+    def test_non_finite_message_names_only_offending_inputs(self):
+        """The failure message must name exactly the non-finite inputs,
+        not implicate all of them (PR #44 review, Sentry)."""
+        result = self.guard.verify_cap(5_000_000, 200, float("nan"))
+        assert "claimed_cap" in result.message
+        assert "contract_value" not in result.message
+        assert "cap_percentage" not in result.message
+
+    def test_normal_values_unaffected(self):
+        result = self.guard.verify_cap(5_000_000, 200, 10_000_000)
+        assert result.verified is True
+        assert result.computed_cap == 10_000_000
