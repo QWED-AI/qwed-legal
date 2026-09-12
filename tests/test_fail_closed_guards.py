@@ -504,7 +504,7 @@ class TestContradictionGuardValueProvenance:
         result, steps = self._fact_steps(
             [Clause(text="Contract term is exactly 1 month", category="DURATION", value=999)]
         )
-        assert steps[0].inputs["encoded_operand"] == 1
+        assert steps[0].inputs["encoded_constraints"] == [{"op": "eq", "operand": 1}]
         assert steps[0].inputs["caller_value"] == 999
         assert steps[0].inputs["caller_value_agrees"] is False
         assert "disagree" in result["message"]
@@ -513,7 +513,7 @@ class TestContradictionGuardValueProvenance:
         result, steps = self._fact_steps(
             [Clause(text="Liability capped at 5000.", category="LIABILITY", value=5000)]
         )
-        assert steps[0].inputs["encoded_operand"] == 5000
+        assert steps[0].inputs["encoded_constraints"] == [{"op": "le", "operand": 5000}]
         assert steps[0].inputs["caller_value_agrees"] is True
 
     def test_substring_keyword_no_longer_encodes(self):
@@ -559,7 +559,7 @@ class TestContradictionGuardValueProvenance:
                 )
             ]
         )
-        assert steps[0].inputs["encoded_operand"] == 12
+        assert steps[0].inputs["encoded_constraints"] == [{"op": "eq", "operand": 12}]
         assert steps[0].inputs["caller_value"] == 6
         assert steps[0].inputs["caller_value_agrees"] is False
         assert "disagree" in result["message"]
@@ -578,7 +578,7 @@ class TestContradictionGuardValueProvenance:
         conclusion = [s for s in result["verification_trace"] if s.step == "CONCLUSION"][0]
         assert conclusion.evidence_type == "DETERMINISTIC"
         fact_steps = [s for s in result["verification_trace"] if s.step == "FACT_DERIVED"]
-        assert [s.inputs["encoded_operand"] for s in fact_steps] == [1, 2]
+        assert [s.inputs["encoded_constraints"] for s in fact_steps] == [[{"op": "eq", "operand": 1}], [{"op": "eq", "operand": 2}]]
         assert all(s.inputs["caller_value_agrees"] is False for s in fact_steps)
         assert "disagree" in result["message"]
 
@@ -653,10 +653,11 @@ class TestContradictionGuardValueProvenance:
         assert result["status"] == "partial_coverage"
         assert result["verified"] is False
 
-    def test_malformed_operand_does_not_block_later_rules(self):
-        """A rule matching a malformed token must not abort the rule
-        loop — a later valid rule still encodes (PR #45 review,
-        Sentry)."""
+    def test_malformed_operand_fails_closed_whole_clause(self):
+        """A recognized phrase with a malformed operand fails closed the
+        WHOLE clause — encoding only the later valid subset would present
+        a partial model as complete and could hide a conflict
+        (PR #45 review, Greptile-executed)."""
         result, steps = self._fact_steps(
             [
                 Clause(
@@ -666,9 +667,56 @@ class TestContradictionGuardValueProvenance:
                 )
             ]
         )
+        assert steps == []
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_malformed_rule_does_not_hide_conflict(self):
+        """Greptile's executed scenario: the malformed clause is skipped,
+        so the modeled subset cannot report a false fully-verified
+        agreement when the omitted amount might conflict."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(
+                    text="Liability is fixed at 1.5 million and minimum is 100.",
+                    category="LIABILITY",
+                    value=100,
+                ),
+                Clause(text="Liability is capped at 200.", category="LIABILITY", value=200),
+            ]
+        )
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_multiple_valid_constraints_in_one_clause_all_encoded(self):
+        """A clause stating several recognized constraints encodes all of
+        them, not just the first."""
+        _, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Liability is capped at 5000 and maximum is 6000.",
+                    category="LIABILITY",
+                    value=5000,
+                )
+            ]
+        )
         assert len(steps) == 1
-        assert steps[0].inputs["encoded_operand"] == 5000
-        assert steps[0].inputs["caller_value_agrees"] is True
+        assert steps[0].inputs["encoded_constraints"] == [
+            {"op": "le", "operand": 5000},
+            {"op": "le", "operand": 6000},
+        ]
+
+    def test_phrase_suffixes_are_not_recognized(self):
+        """Terminal word boundaries: 'maximumly' and 'capability' must
+        not match their phrase prefixes (PR #45 review, CodeRabbit)."""
+        for text in ["Term is maximumly 2 months.", "Our capability 100 is legendary."]:
+            result, steps = self._fact_steps(
+                [
+                    Clause(text=text, category="DURATION" if "maximumly" in text else "LIABILITY", value=2)
+                ]
+            )
+            assert steps == [], f"{text!r} must not encode"
+            assert result["status"] == "partial_coverage"
 
     def test_legacy_value_provenance_field_retained(self):
         """The legacy value_provenance trace field is retained during the

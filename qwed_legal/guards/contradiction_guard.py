@@ -115,12 +115,12 @@ class ContradictionGuard:
         duration_clauses = [c for c in supported if c.category.upper() == "DURATION"]
         encoded_duration, unmodeled_duration = self._encode_clauses(
             s, duration_clauses, contract_duration_months,
-            self._add_duration_constraint,
+            self._add_clause_constraints,
         )
         liability_clauses = [c for c in supported if c.category.upper() == "LIABILITY"]
         encoded_liability, unmodeled_liability = self._encode_clauses(
             s, liability_clauses, max_liability_usd,
-            self._add_liability_constraint,
+            self._add_clause_constraints,
         )
         encoded_supported = encoded_duration + encoded_liability
         unmodeled_supported = unmodeled_duration + unmodeled_liability
@@ -181,64 +181,57 @@ class ContradictionGuard:
 
     # ── private helpers ────────────────────────────────────────────────────────
 
-    # Shared operand grammar: a complete unsigned integer token, with a
-    # terminal word boundary — signs ("-30", "exactly - 30"), decimals
-    # ("1.5"), formatted numbers ("1,500"), and numeric prefixes inside
-    # larger tokens ("1e3") are rejected outright — the clause stays
-    # unmodeled rather than encoding a silently altered value
-    # (PR #45 review, CodeRabbit/Greptile).
-    _OPERAND = r"(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"
-
-    # Phrase-to-operand separator: must not contain signs, digits, or
-    # decimal points, so a sign between the phrase and the number (even
-    # whitespace-separated) invalidates the match (PR #45 review,
-    # Greptile-executed "exactly - 30" bypass).
-    _SEP = r"[^+\-\d.]{0,20}"
-
-    # Constraint phrase rules, ordered per category. Each pattern binds a
-    # recognized phrase to the numeric operand ADJACENT to it — the operand
-    # is what gets encoded into Z3 (issue #42, PR #45 review).
+    # Constraint phrase rules, ordered per category, as complete literal
+    # patterns (no runtime concatenation — PR #45 review, ReDoS lint).
+    # Grammar per pattern: terminal-bounded phrase (so "maximumly" and
+    # "capability" never match, PR #45 review), a separator that must not
+    # contain signs/digits/decimal points (so "exactly - 30" cannot strip
+    # its sign, Greptile-executed), and a complete unsigned integer token
+    # with terminal word boundary (so "-30", "1.5", "1,500", and "1e3"
+    # fail closed instead of encoding an altered value).
     _CONSTRAINT_RULES = {
         "DURATION": [
-            (re.compile(r"\bexactly" + _SEP + _OPERAND), "eq"),
-            (re.compile(r"\bminimum" + _SEP + _OPERAND), "ge"),
-            (re.compile(r"\bat\s+least" + _SEP + _OPERAND), "ge"),
-            (re.compile(r"\bmaximum" + _SEP + _OPERAND), "le"),
-            (re.compile(r"\bup\s+to" + _SEP + _OPERAND), "le"),
+            (re.compile(r"\bexactly\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "eq"),
+            (re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
+            (re.compile(r"\bat\s+least\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
+            (re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
+            (re.compile(r"\bup\s+to\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
         ],
         "LIABILITY": [
-            (re.compile(r"\bcapped?" + _SEP + _OPERAND), "le"),
-            (re.compile(r"\bmaximum" + _SEP + _OPERAND), "le"),
-            (re.compile(r"\bmax" + _SEP + _OPERAND), "le"),
-            (re.compile(r"\bpenalt(?:y|ies)" + _SEP + _OPERAND), "ge"),
-            (re.compile(r"\bfixed" + _SEP + _OPERAND), "ge"),
-            (re.compile(r"\bminimum" + _SEP + _OPERAND), "ge"),
+            (re.compile(r"\bcapped?\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
+            (re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
+            (re.compile(r"\bmax\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
+            (re.compile(r"\bpenalt(?:y|ies)\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
+            (re.compile(r"\bfixed\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
+            (re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
         ],
     }
 
     @classmethod
-    def _match_constraint(cls, clause: Clause) -> "Optional[tuple]":
-        """Match the recognized constraint phrase and its numeric operand.
+    def _collect_constraints(cls, clause: Clause) -> "Optional[list]":
+        """Collect the (op, operand) constraints a clause's text evidences.
 
-        Returns (op, operand) or None when no supported phrase with an
-        adjacent number is present — such clauses stay unmodeled rather
-        than being encoded from an unevidenced quantity.
+        Returns a list of (op, operand) pairs — one per recognized phrase
+        with a valid unsigned-integer operand — or None when the clause
+        is unmodelable: no recognized phrase, no valid operand, or ANY
+        recognized phrase with a malformed operand. A malformed phrase
+        fails closed the whole clause: encoding only the interpretable
+        subset would present a partial model as complete and can hide a
+        conflict (PR #45 review, Greptile-executed).
         """
         rules = cls._CONSTRAINT_RULES.get(clause.category.upper())
         if not rules:
             return None
         text = clause.text.lower()
+        constraints = []
         for pattern, op in rules:
             match = pattern.search(text)
             if match:
                 token = match.group(1)
                 if not token.isdigit():
-                    # Decimal or formatted numbers are unsupported
-                    # operands — try the next rule rather than encoding
-                    # a silently altered value ("1.5" → 1, "1,500" → 1).
-                    continue
-                return op, int(token)
-        return None
+                    return None
+                constraints.append((op, int(token)))
+        return constraints or None
 
     @staticmethod
     def _encode_clauses(s: Solver, clauses: List[Clause], var: object, constraint_fn) -> "tuple[List[Clause], int]":
@@ -259,8 +252,8 @@ class ContradictionGuard:
     def _build_clause_fact_steps(encoded_supported: List[Clause]) -> "tuple[list, int]":
         """Build FACT_DERIVED trace steps for encoded clauses.
 
-        The solver encodes ONLY the text-derived operand of the matched
-        constraint phrase — never the caller's declared value. The
+        The solver encodes ONLY the text-derived operands of recognized
+        constraint phrases — never the caller's declared value. The
         declaration is recorded separately with an agreement flag: a
         differing declaration is disclosed, never silently encoded and
         never a solver input (issue #42, PR #45 review).
@@ -269,9 +262,8 @@ class ContradictionGuard:
         steps = []
         disagreements = 0
         for c in encoded_supported:
-            matched = ContradictionGuard._match_constraint(c)
-            operand = matched[1]
-            agrees = c.value == operand
+            constraints = ContradictionGuard._collect_constraints(c)
+            agrees = any(operand == c.value for _, operand in constraints)
             if not agrees:
                 disagreements += 1
             steps.append(
@@ -279,7 +271,7 @@ class ContradictionGuard:
                     step=STEP_FACT_DERIVED,
                     description=f"Encoded Z3 constraint for {c.category} clause.",
                     inputs={
-                        # Legacy contract field: the encoded operand is
+                        # Legacy contract field: the encoded operands are
                         # always text-derived under the operand-binding
                         # design, so the legacy value is constant — kept
                         # during a deprecation window for consumers that
@@ -287,13 +279,16 @@ class ContradictionGuard:
                         "value_provenance": "parsed_from_text",
                         "clause_text": c.text,
                         "clause_category": c.category,
-                        "encoded_operand": operand,
+                        "encoded_constraints": [
+                            {"op": op, "operand": operand} for op, operand in constraints
+                        ],
                         "caller_value": c.value,
                         "caller_value_agrees": agrees,
                     },
                     output=(
-                        f"Z3 constraint added for '{c.text}' "
-                        f"(operand={operand} from text; caller declared {c.value})"
+                        f"Z3 constraints added for '{c.text}' "
+                        f"({', '.join(f'{op} {operand}' for op, operand in constraints)} from text; "
+                        f"caller declared {c.value})"
                     ),
                     evidence_type=EVIDENCE_DETERMINISTIC,
                 )
@@ -310,37 +305,24 @@ class ContradictionGuard:
         return supported, unsupported
 
     @classmethod
-    def _add_duration_constraint(cls, s: Solver, clause: Clause, var: object) -> int:
+    def _add_clause_constraints(cls, s: Solver, clause: Clause, var: object) -> int:
         """
-        Add a Z3 constraint for a DURATION clause.
-        Returns 1 if the clause phrase is not modeled (unmodeled), 0 otherwise.
-        """
-        matched = cls._match_constraint(clause)
-        if matched is None:
-            return 1  # clause recognized as DURATION but phrase/operand not modeled
-        op, operand = matched
-        if op == "eq":
-            s.add(var == operand)
-        elif op == "ge":
-            s.add(var >= operand)
-        else:
-            s.add(var <= operand)
-        return 0
+        Add the Z3 constraints evidenced by a supported clause (all
+        recognized phrases with valid operands).
 
-    @classmethod
-    def _add_liability_constraint(cls, s: Solver, clause: Clause, var: object) -> int:
+        Returns 1 if the clause is unmodeled (no valid phrase/operand, or
+        any malformed recognized phrase), 0 otherwise.
         """
-        Add a Z3 constraint for a LIABILITY clause.
-        Returns 1 if the clause phrase is not modeled (unmodeled), 0 otherwise.
-        """
-        matched = cls._match_constraint(clause)
-        if matched is None:
-            return 1  # clause recognized as LIABILITY but phrase/operand not modeled
-        op, operand = matched
-        if op == "le":
-            s.add(var <= operand)
-        else:
-            s.add(var >= operand)
+        constraints = cls._collect_constraints(clause)
+        if not constraints:
+            return 1
+        for op, operand in constraints:
+            if op == "eq":
+                s.add(var == operand)
+            elif op == "ge":
+                s.add(var >= operand)
+            else:
+                s.add(var <= operand)
         return 0
 
     @staticmethod
