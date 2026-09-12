@@ -9,6 +9,7 @@ Fail-closed design:
   - Z3 unknown result → UNVERIFIABLE (not a false contradiction).
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import List
 
@@ -152,8 +153,15 @@ class ContradictionGuard:
                 evidence_type=EVIDENCE_PARSED,
             )
         )
-        # Step 2: Fact derived per supported clause
+        # Step 2: Fact derived per supported clause — with value
+        # provenance. A caller_asserted value means Z3 "proves"
+        # consistency of a number the caller invented, not one parsed
+        # from the text (issue #42).
+        caller_asserted_values = 0
         for c in encoded_supported:
+            provenance = self._value_provenance(c)
+            if provenance == "caller_asserted":
+                caller_asserted_values += 1
             trace.append(
                 VerificationStep(
                     step=STEP_FACT_DERIVED,
@@ -162,8 +170,12 @@ class ContradictionGuard:
                         "clause_text": c.text,
                         "clause_category": c.category,
                         "clause_value": c.value,
+                        "value_provenance": provenance,
                     },
-                    output=f"Z3 constraint added for '{c.text}' (value={c.value})",
+                    output=(
+                        f"Z3 constraint added for '{c.text}' (value={c.value}, "
+                        f"value_provenance={provenance})"
+                    ),
                     evidence_type=EVIDENCE_DETERMINISTIC,
                 )
             )
@@ -189,9 +201,23 @@ class ContradictionGuard:
             unmodeled_supported=unmodeled_supported,
             categories_text=categories_text,
             trace=trace,
+            caller_asserted_values=caller_asserted_values,
         )
 
     # ── private helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _value_provenance(clause: Clause) -> str:
+        """Classify where a clause's encoded value came from.
+
+        ``parsed_from_text`` when the value appears as a whole token in
+        the clause text; ``caller_asserted`` otherwise — the Z3 model
+        then encodes a number the caller supplied, not one evidenced by
+        the text (issue #42).
+        """
+        if re.search(rf"\b{re.escape(str(clause.value))}\b", clause.text.lower()):
+            return "parsed_from_text"
+        return "caller_asserted"
 
     @staticmethod
     def _partition_clauses(clauses: List[Clause]):
@@ -209,11 +235,14 @@ class ContradictionGuard:
         Returns 1 if the clause keyword is not modeled (unmodeled), 0 otherwise.
         """
         text = clause.text.lower()
-        if "exactly" in text:
+        # Word-boundary matching: substring matches fired on unrelated
+        # words ("capacity" matching "cap") and mis-encoded constraints
+        # (issue #42).
+        if re.search(r"\bexactly\b", text):
             s.add(var == clause.value)
-        elif "minimum" in text or "at least" in text:
+        elif re.search(r"\bminimum\b|\bat\s+least\b", text):
             s.add(var >= clause.value)
-        elif "maximum" in text or "up to" in text:
+        elif re.search(r"\bmaximum\b|\bup\s+to\b", text):
             s.add(var <= clause.value)
         else:
             return 1  # clause recognized as DURATION but keyword not modeled
@@ -226,9 +255,11 @@ class ContradictionGuard:
         Returns 1 if the clause keyword is not modeled (unmodeled), 0 otherwise.
         """
         text = clause.text.lower()
-        if "capped" in text or "max" in text or "cap" in text:
+        # Word-boundary matching: bare "cap" matched inside "capacity",
+        # "escape capability", etc. and mis-encoded constraints (#42).
+        if re.search(r"\bcapped?\b|\bmax(?:imum)?\b", text):
             s.add(var <= clause.value)
-        elif "penalty" in text or "fixed" in text or "minimum" in text:
+        elif re.search(r"\bpenalt(?:y|ies)\b|\bfixed\b|\bminimum\b", text):
             s.add(var >= clause.value)
         else:
             return 1  # clause recognized as LIABILITY but keyword not modeled
@@ -280,6 +311,7 @@ class ContradictionGuard:
         unmodeled_supported: int,
         categories_text: str,
         trace: list = None,
+        caller_asserted_values: int = 0,
     ) -> dict:
         """Evaluate Z3 solver and build the final result dict."""
         has_unmodeled_supported = unmodeled_supported > 0
@@ -295,6 +327,13 @@ class ContradictionGuard:
             coverage_note += (
                 f" NOTE: {unmodeled_supported} supported-category clause(s) had "
                 f"unrecognized keyword patterns and could not be encoded."
+            )
+        if caller_asserted_values:
+            coverage_note += (
+                f" NOTE: {caller_asserted_values} encoded clause value(s) were "
+                f"caller-asserted (not found in the clause text) — the consistency "
+                f"result covers caller-supplied numbers, not text-evidenced ones "
+                f"(see value_provenance in the trace)."
             )
 
         result = s.check()

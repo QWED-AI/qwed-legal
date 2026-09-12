@@ -481,3 +481,60 @@ class TestJurisdictionGuardFailClosed:
         assert result.warnings
         assert "CONFLICTS DETECTED" in result.message
         assert "warning" in result.message.lower()
+
+
+class TestContradictionGuardValueProvenance:
+    """Issue #42: clause values are caller-supplied — the guard must
+    record whether each encoded value is evidenced by the clause text,
+    and keyword matching must not fire on substrings."""
+
+    def setup_method(self):
+        self.guard = ContradictionGuard()
+
+    def _fact_steps(self, clauses):
+        result = self.guard.verify_consistency(clauses)
+        return result, [
+            s for s in result["verification_trace"] if s.step == "FACT_DERIVED"
+        ]
+
+    def test_caller_invented_value_is_labeled(self):
+        """The audit repro: value 999 with text 'exactly 1 month' — Z3
+        must not present the invented number as text-evidenced."""
+        result, steps = self._fact_steps(
+            [Clause(text="Contract term is exactly 1 month", category="DURATION", value=999)]
+        )
+        assert steps[0].inputs["value_provenance"] == "caller_asserted"
+        assert "caller-asserted" in result["message"]
+
+    def test_text_evidenced_value_is_labeled_parsed(self):
+        result, steps = self._fact_steps(
+            [Clause(text="Liability capped at 5000.", category="LIABILITY", value=5000)]
+        )
+        assert steps[0].inputs["value_provenance"] == "parsed_from_text"
+
+    def test_substring_keyword_no_longer_encodes(self):
+        """'cap' inside 'capability' must NOT encode a liability cap —
+        the clause is now unmodeled (partial coverage), not mis-encoded."""
+        result, steps = self._fact_steps(
+            [Clause(text="Our escape capability is legendary.", category="LIABILITY", value=100)]
+        )
+        assert steps == []  # nothing encoded
+        assert result["status"] == "partial_coverage"
+
+    def test_word_boundary_keywords_still_match(self):
+        """Real keywords must still encode after the boundary tightening."""
+        _, steps = self._fact_steps(
+            [
+                Clause(text="Term is exactly 6 months.", category="DURATION", value=6),
+                Clause(text="Liability capped at 5000.", category="LIABILITY", value=5000),
+                Clause(text="Penalty of at least 500.", category="LIABILITY", value=500),
+            ]
+        )
+        assert len(steps) == 3
+
+    def test_value_token_boundary(self):
+        """value=1 must not match inside '12 months' — token-level check."""
+        _, steps = self._fact_steps(
+            [Clause(text="Term is 12 months minimum.", category="DURATION", value=1)]
+        )
+        assert steps[0].inputs["value_provenance"] == "caller_asserted"

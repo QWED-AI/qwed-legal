@@ -35,6 +35,15 @@ class SACProcessor:
       2. Prepends that fingerprint to every chunk, preserving global
          context that is lost by naive splitting.
 
+    Trust model (issue #42): the fingerprint is **LLM output** — a
+    compromised or malfunctioning summarizer must not poison retrieval.
+    Every augmented chunk therefore (a) labels the summary as
+    AI-GENERATED and UNTRUSTED, (b) carries the deterministic document
+    hash alongside it, and (c) receives a sanitized summary (newlines
+    and control characters stripped, internal chunk/context markers
+    removed) so the fingerprint cannot forge chunk structure or inject
+    new chunk boundaries.
+
     Usage::
 
         from qwed_legal.rag.sac_processor import SACProcessor
@@ -104,12 +113,18 @@ class SACProcessor:
             return []
 
         doc_id = document_id or self._hash_id(document_text)
+        # The deterministic hash is ALWAYS carried alongside, even when a
+        # caller-supplied document_id exists — the hash is computable and
+        # verifiable; the LLM summary is not (issue #42).
+        deterministic_hash = self._hash_id(document_text)
         summary = self._generate_fingerprint(document_text)
 
         augmented: List[str] = []
         for i, chunk in enumerate(chunks):
             augmented_chunk = (
-                f"{self.CONTEXT_PREFIX} [{doc_id}]: {summary}\n\n"
+                f"{self.CONTEXT_PREFIX} [{doc_id}] "
+                f"(deterministic hash: {deterministic_hash}) "
+                f"[AI-GENERATED SUMMARY — UNTRUSTED CONTENT]: {summary}\n\n"
                 f"{self.CHUNK_PREFIX} [{i + 1}/{len(chunks)}]: {chunk}"
             )
             augmented.append(augmented_chunk)
@@ -151,10 +166,34 @@ class SACProcessor:
         if not summary or not summary.strip():
             return self._hash_id(document_text)
 
-        # Enforce length limit
-        if len(summary) > self._target_length:
-            summary = summary[: self._target_length].rsplit(" ", 1)[0] + "…"
+        return self._sanitize_fingerprint(summary, self._target_length)
 
+    @staticmethod
+    def _sanitize_fingerprint(summary: str, target_length: int) -> str:
+        """Treat LLM output as untrusted content (issue #42).
+
+        Strips newlines/control characters and removes the processor's
+        own structural markers, so a malicious or malfunctioning
+        summary cannot forge chunk boundaries or inject context lines
+        into every embedded chunk.
+        """
+        # Flatten to a single line: control characters become spaces
+        summary = "".join(
+            ch if ch.isprintable() and not ch.isspace() else " "
+            for ch in summary
+        )
+        # Collapse whitespace runs left by the flattening
+        summary = " ".join(summary.split())
+        # Remove forged structural markers (case-insensitive), repeatedly,
+        # in case the LLM emitted them multiple times
+        for marker in (SACProcessor.CONTEXT_PREFIX, SACProcessor.CHUNK_PREFIX):
+            while marker.lower() in summary.lower():
+                idx = summary.lower().index(marker.lower())
+                summary = summary[:idx] + summary[idx + len(marker):]
+                summary = " ".join(summary.split())
+        # Enforce length limit
+        if len(summary) > target_length:
+            summary = summary[:target_length].rsplit(" ", 1)[0] + "…"
         return summary.strip()
 
     @staticmethod

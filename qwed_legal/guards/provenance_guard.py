@@ -47,7 +47,17 @@ class ProvenanceGuard:
     3. **Timestamp Validity** — ISO-8601 format, not in the future
     4. **Disclosure Compliance** — content includes an AI-generation disclosure
     5. **Model Allowlist** — model_id is in the approved list
-    6. **Human Review** — content has been reviewed by a human
+    6. **Human Review (DECLARED)** — provenance declares human_reviewed=True
+
+    Trust model (issue #42): every provenance field — including
+    ``content_hash``, ``model_id``, ``human_reviewed`` and ``reviewer_id``
+    — is **caller-supplied and self-declared**. This guard validates the
+    internal consistency of that declaration (hash ↔ content, timestamp
+    format, disclosure text, allowlist membership); it can NOT verify
+    that a human review actually happened or that the model ID is
+    truthful. Every result carries ``assurance: "SELF_DECLARED"``.
+    External assurance requires out-of-band reviewer signatures, which
+    this guard does not accept.
 
     All checks are fully deterministic.
     """
@@ -101,7 +111,11 @@ class ProvenanceGuard:
 
         Returns:
             Dict with 'verified', 'checks_passed', 'checks_failed',
-            'risk', and 'message' keys.
+            'risk', 'message', and 'assurance' keys. ``assurance`` is
+            always ``"SELF_DECLARED"``: all provenance metadata is
+            caller-supplied, so a passing result attests internal
+            consistency of the declaration, not external assurance
+            (issue #42).
         """
         if not isinstance(content, str) or not content.strip():
             return self._result(
@@ -276,10 +290,12 @@ class ProvenanceGuard:
         provenance: Dict[str, Any],
         passed: List[str], failed: List[str],
     ) -> None:
+        # Named "declared" deliberately: human_reviewed is a caller-
+        # supplied flag this guard cannot verify externally (#42).
         if not provenance.get("human_reviewed", False):
-            failed.append("human_review")
+            failed.append("human_review_declared")
         else:
-            passed.append("human_review")
+            passed.append("human_review_declared")
 
     # ---- Helpers ----
 
@@ -297,7 +313,7 @@ class ProvenanceGuard:
             return "MISSING_DISCLOSURE"
         if "model_allowed" in failed_checks:
             return "UNAUTHORIZED_MODEL"
-        if "human_review" in failed_checks:
+        if "human_review_declared" in failed_checks:
             return "UNREVIEWED_CONTENT"
         if "timestamp_valid" in failed_checks:
             return "INVALID_TIMESTAMP"
@@ -317,4 +333,7 @@ class ProvenanceGuard:
             "message": message,
             "checks_passed": checks_passed or [],
             "checks_failed": checks_failed or [],
+            # All provenance metadata is caller-supplied (#42) — a passing
+            # result is self-declaration consistency, never external proof.
+            "assurance": "SELF_DECLARED",
         }
