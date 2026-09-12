@@ -621,16 +621,60 @@ class TestContradictionGuardValueProvenance:
                 assert s.is_proven() is True
 
     def test_unsupported_numeric_operands_fail_closed(self):
-        """Signed, decimal, and formatted operands are unsupported — the
-        clause stays unmodeled rather than encoding an altered value
-        (PR #45 review, CodeRabbit)."""
+        """Signed, decimal, formatted, and embedded operands are
+        unsupported — the clause stays unmodeled rather than encoding an
+        altered value (PR #45 review, CodeRabbit)."""
         for text, bad_operand in [
             ("Term is exactly -30 days.", "-30"),
             ("Term is exactly 1.5 months.", "1.5"),
             ("Cap is exactly 1,500 dollars.", "1,500"),
+            ("Term is exactly 1e3 months.", "1e3"),
+            ("Term is exactly - 30 days.", "- 30 (spaced sign)"),
         ]:
             result, steps = self._fact_steps(
                 [Clause(text=text, category="DURATION", value=30)]
             )
             assert steps == [], f"{bad_operand} must not encode"
             assert result["status"] == "partial_coverage"
+
+    def test_spaced_sign_is_not_encoded(self):
+        """'exactly - 30 days' must not encode 30 — the whitespace-
+        separated sign invalidates the operand (PR #45 review, Greptile
+        executed bypass)."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(text="Term is exactly - 30 days.", category="DURATION", value=30),
+                Clause(text="Term is maximum 29 days.", category="DURATION", value=29),
+            ]
+        )
+        # The signed clause is unmodeled; the modeled maximum-29 clause
+        # alone is satisfiable — no contradiction is manufactured from
+        # a silently sign-stripped operand.
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_malformed_operand_does_not_block_later_rules(self):
+        """A rule matching a malformed token must not abort the rule
+        loop — a later valid rule still encodes (PR #45 review,
+        Sentry)."""
+        result, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Liability is capped at 1.5 million; maximum is 5000.",
+                    category="LIABILITY",
+                    value=5000,
+                )
+            ]
+        )
+        assert len(steps) == 1
+        assert steps[0].inputs["encoded_operand"] == 5000
+        assert steps[0].inputs["caller_value_agrees"] is True
+
+    def test_legacy_value_provenance_field_retained(self):
+        """The legacy value_provenance trace field is retained during the
+        deprecation window; under operand binding every encoded operand
+        is text-derived (PR #45 review, Greptile P1)."""
+        _, steps = self._fact_steps(
+            [Clause(text="Term is exactly 6 months.", category="DURATION", value=6)]
+        )
+        assert steps[0].inputs["value_provenance"] == "parsed_from_text"

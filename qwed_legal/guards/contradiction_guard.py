@@ -181,30 +181,38 @@ class ContradictionGuard:
 
     # ── private helpers ────────────────────────────────────────────────────────
 
-    # Shared operand grammar: a complete unsigned integer token. Signs
-    # ("-30"), decimals ("1.5"), and formatted numbers ("1,500") are
-    # rejected outright — the clause stays unmodeled rather than encoding
-    # a silently altered value (PR #45 review, CodeRabbit).
-    _OPERAND = r"(?<![-+])(\d+(?:[.,]\d+)*)"
+    # Shared operand grammar: a complete unsigned integer token, with a
+    # terminal word boundary — signs ("-30", "exactly - 30"), decimals
+    # ("1.5"), formatted numbers ("1,500"), and numeric prefixes inside
+    # larger tokens ("1e3") are rejected outright — the clause stays
+    # unmodeled rather than encoding a silently altered value
+    # (PR #45 review, CodeRabbit/Greptile).
+    _OPERAND = r"(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"
+
+    # Phrase-to-operand separator: must not contain signs, digits, or
+    # decimal points, so a sign between the phrase and the number (even
+    # whitespace-separated) invalidates the match (PR #45 review,
+    # Greptile-executed "exactly - 30" bypass).
+    _SEP = r"[^+\-\d.]{0,20}"
 
     # Constraint phrase rules, ordered per category. Each pattern binds a
     # recognized phrase to the numeric operand ADJACENT to it — the operand
     # is what gets encoded into Z3 (issue #42, PR #45 review).
     _CONSTRAINT_RULES = {
         "DURATION": [
-            (re.compile(r"\bexactly\D{0,20}" + _OPERAND), "eq"),
-            (re.compile(r"\bminimum\D{0,20}" + _OPERAND), "ge"),
-            (re.compile(r"\bat\s+least\D{0,20}" + _OPERAND), "ge"),
-            (re.compile(r"\bmaximum\D{0,20}" + _OPERAND), "le"),
-            (re.compile(r"\bup\s+to\D{0,20}" + _OPERAND), "le"),
+            (re.compile(r"\bexactly" + _SEP + _OPERAND), "eq"),
+            (re.compile(r"\bminimum" + _SEP + _OPERAND), "ge"),
+            (re.compile(r"\bat\s+least" + _SEP + _OPERAND), "ge"),
+            (re.compile(r"\bmaximum" + _SEP + _OPERAND), "le"),
+            (re.compile(r"\bup\s+to" + _SEP + _OPERAND), "le"),
         ],
         "LIABILITY": [
-            (re.compile(r"\bcapped?\D{0,20}" + _OPERAND), "le"),
-            (re.compile(r"\bmaximum\D{0,20}" + _OPERAND), "le"),
-            (re.compile(r"\bmax\D{0,20}" + _OPERAND), "le"),
-            (re.compile(r"\bpenalt(?:y|ies)\D{0,20}" + _OPERAND), "ge"),
-            (re.compile(r"\bfixed\D{0,20}" + _OPERAND), "ge"),
-            (re.compile(r"\bminimum\D{0,20}" + _OPERAND), "ge"),
+            (re.compile(r"\bcapped?" + _SEP + _OPERAND), "le"),
+            (re.compile(r"\bmaximum" + _SEP + _OPERAND), "le"),
+            (re.compile(r"\bmax" + _SEP + _OPERAND), "le"),
+            (re.compile(r"\bpenalt(?:y|ies)" + _SEP + _OPERAND), "ge"),
+            (re.compile(r"\bfixed" + _SEP + _OPERAND), "ge"),
+            (re.compile(r"\bminimum" + _SEP + _OPERAND), "ge"),
         ],
     }
 
@@ -226,9 +234,9 @@ class ContradictionGuard:
                 token = match.group(1)
                 if not token.isdigit():
                     # Decimal or formatted numbers are unsupported
-                    # operands — fail closed rather than encoding a
-                    # silently altered value ("1.5" → 1, "1,500" → 1).
-                    return None
+                    # operands — try the next rule rather than encoding
+                    # a silently altered value ("1.5" → 1, "1,500" → 1).
+                    continue
                 return op, int(token)
         return None
 
@@ -271,6 +279,12 @@ class ContradictionGuard:
                     step=STEP_FACT_DERIVED,
                     description=f"Encoded Z3 constraint for {c.category} clause.",
                     inputs={
+                        # Legacy contract field: the encoded operand is
+                        # always text-derived under the operand-binding
+                        # design, so the legacy value is constant — kept
+                        # during a deprecation window for consumers that
+                        # branch on it (PR #45 review, Greptile).
+                        "value_provenance": "parsed_from_text",
                         "clause_text": c.text,
                         "clause_category": c.category,
                         "encoded_operand": operand,
