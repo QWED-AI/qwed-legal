@@ -10,6 +10,8 @@ Covers:
 
 import time
 
+import pytest
+
 from qwed_legal import DeadlineGuard, LiabilityGuard
 
 
@@ -184,6 +186,53 @@ class TestLiabilityGuardFiniteExtremes:
         )
         assert result.verified is False
         assert result.total_computed is None
+        assert "UNVERIFIABLE" in result.message
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"contract_value": "abc"},
+            {"cap_percentage": "abc"},
+            {"claimed_cap": "abc"},
+        ],
+        ids=["contract_value", "cap_percentage", "claimed_cap"],
+    )
+    def test_cap_non_decimal_scalar_fails_closed(self, kwargs):
+        """verify_cap must fail closed on non-numeric scalar inputs —
+        _invalid_names runs before any exception handler
+        (PR #44 review, Sentry/CodeRabbit)."""
+        values = {
+            "contract_value": 5_000_000,
+            "cap_percentage": 200,
+            "claimed_cap": 10_000_000,
+        }
+        values.update(kwargs)
+        result = self.guard.verify_cap(**values)
+        assert result.verified is False
+        assert result.computed_cap is None
+        assert "UNVERIFIABLE" in result.message
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"annual_fee": "abc"},
+            {"multiplier": "abc"},
+            {"claimed_limit": "abc"},
+        ],
+        ids=["annual_fee", "multiplier", "claimed_limit"],
+    )
+    def test_indemnity_non_decimal_scalar_fails_closed(self, kwargs):
+        """All six scalar inputs across the two scalar paths must fail
+        closed on non-numeric values."""
+        values = {
+            "annual_fee": 100_000,
+            "multiplier": 3,
+            "claimed_limit": 300_000,
+        }
+        values.update(kwargs)
+        result = self.guard.verify_indemnity_limit(**values)
+        assert result.verified is False
+        assert result.computed_cap is None
         assert "UNVERIFIABLE" in result.message
 
     def test_non_finite_message_names_only_offending_inputs(self):

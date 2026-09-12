@@ -43,13 +43,23 @@ class TieredLiabilityResult:
     verification_trace: list = field(default_factory=list)
 
 
-def _non_finite_names(named_values: dict) -> List[str]:
-    """Names of inputs whose Decimal conversion is not finite."""
-    return [
-        name
-        for name, value in named_values.items()
-        if not Decimal(str(value)).is_finite()
-    ]
+def _invalid_names(named_values: dict) -> List[str]:
+    """Names of inputs that cannot convert to a finite Decimal.
+
+    Malformed values (non-numeric strings raise at Decimal construction)
+    and non-finite values (Infinity/NaN) are both non-verifiable — the
+    conversion must never propagate an exception to the caller
+    (PR #44 review).
+    """
+    invalid = []
+    for name, value in named_values.items():
+        try:
+            finite = Decimal(str(value)).is_finite()
+        except DecimalException:
+            finite = False
+        if not finite:
+            invalid.append(name)
+    return invalid
 
 
 # Shared reason for finite-but-extreme magnitudes that exceed the decimal
@@ -167,12 +177,13 @@ class LiabilityGuard:
             "claimed_cap": claimed_cap,
         }
 
-        non_finite = _non_finite_names(named_inputs)
-        if non_finite:
+        invalid = _invalid_names(named_inputs)
+        if invalid:
             return _unverifiable_result(
-                f"Non-finite input value(s) ({', '.join(non_finite)}) — "
-                "Infinity and NaN cannot be quantized or compared "
-                "deterministically.",
+                f"Input value(s) ({', '.join(invalid)}) cannot be "
+                "verified — values must be finite decimal numbers "
+                "(non-finite or malformed inputs cannot be quantized "
+                "or compared deterministically).",
                 named_inputs,
             )
 
@@ -384,12 +395,13 @@ class LiabilityGuard:
             "claimed_limit": claimed_limit,
         }
 
-        non_finite = _non_finite_names(named_inputs)
-        if non_finite:
+        invalid = _invalid_names(named_inputs)
+        if invalid:
             return _unverifiable_result(
-                f"Non-finite input value(s) ({', '.join(non_finite)}) — "
-                "Infinity and NaN cannot be quantized or compared "
-                "deterministically.",
+                f"Input value(s) ({', '.join(invalid)}) cannot be "
+                "verified — values must be finite decimal numbers "
+                "(non-finite or malformed inputs cannot be quantized "
+                "or compared deterministically).",
                 named_inputs,
             )
 
