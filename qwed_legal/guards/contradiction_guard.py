@@ -9,9 +9,9 @@ Fail-closed design:
   - Z3 unknown result → UNVERIFIABLE (not a false contradiction).
 """
 
+import re
 from dataclasses import dataclass, field
-from typing import List
-
+from typing import List, Optional
 from z3 import Int, Solver, sat, unknown
 
 from qwed_legal.models import (
@@ -112,24 +112,18 @@ class ContradictionGuard:
         s.add(contract_duration_months >= 0)
         s.add(max_liability_usd >= 0)
 
-        unmodeled_supported = 0
-        encoded_supported = []
-
         duration_clauses = [c for c in supported if c.category.upper() == "DURATION"]
-        for clause in duration_clauses:
-            add_result = self._add_duration_constraint(s, clause, contract_duration_months)
-            if add_result == 0:
-                encoded_supported.append(clause)
-            else:
-                unmodeled_supported += 1
-
+        encoded_duration, unmodeled_duration = self._encode_clauses(
+            s, duration_clauses, contract_duration_months,
+            self._add_clause_constraints,
+        )
         liability_clauses = [c for c in supported if c.category.upper() == "LIABILITY"]
-        for clause in liability_clauses:
-            add_result = self._add_liability_constraint(s, clause, max_liability_usd)
-            if add_result == 0:
-                encoded_supported.append(clause)
-            else:
-                unmodeled_supported += 1
+        encoded_liability, unmodeled_liability = self._encode_clauses(
+            s, liability_clauses, max_liability_usd,
+            self._add_clause_constraints,
+        )
+        encoded_supported = encoded_duration + encoded_liability
+        unmodeled_supported = unmodeled_duration + unmodeled_liability
 
         # Build trace steps
         trace = []
@@ -152,21 +146,14 @@ class ContradictionGuard:
                 evidence_type=EVIDENCE_PARSED,
             )
         )
-        # Step 2: Fact derived per supported clause
-        for c in encoded_supported:
-            trace.append(
-                VerificationStep(
-                    step=STEP_FACT_DERIVED,
-                    description=f"Encoded Z3 constraint for {c.category} clause.",
-                    inputs={
-                        "clause_text": c.text,
-                        "clause_category": c.category,
-                        "clause_value": c.value,
-                    },
-                    output=f"Z3 constraint added for '{c.text}' (value={c.value})",
-                    evidence_type=EVIDENCE_DETERMINISTIC,
-                )
-            )
+        # Step 2: Fact derived per supported clause. The solver encodes
+        # ONLY text-derived operands; the caller's declared value is
+        # recorded with an agreement flag and never enters the model
+        # (issue #42, PR #45 review).
+        clause_steps, disagreed_values = self._build_clause_fact_steps(
+            encoded_supported
+        )
+        trace.extend(clause_steps)
         # Step 3: Ambiguity noted if partial coverage
         if unsupported_categories or unmodeled_supported > 0:
             trace.append(
@@ -189,9 +176,167 @@ class ContradictionGuard:
             unmodeled_supported=unmodeled_supported,
             categories_text=categories_text,
             trace=trace,
+            disagreed_values=disagreed_values,
         )
 
     # ── private helpers ────────────────────────────────────────────────────────
+
+    # Constraint phrase rules, ordered per category, as complete literal
+    # patterns (no runtime concatenation — PR #45 review, ReDoS lint).
+    # Each rule carries a VALID pattern (terminal-bounded phrase, a
+    # separator that must not contain signs/digits/decimal points — so
+    # "exactly - 30" cannot strip its sign, Greptile-executed — and a
+    # complete ASCII unsigned integer token with terminal word boundary)
+    # and a DETECTOR pattern (phrase + separator, no operand requirement)
+    # used to count recognized occurrences.
+    _CONSTRAINT_RULES = {
+        "DURATION": [
+            ("eq",
+             re.compile(r"\bexactly\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bexactly\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bat\s+least\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bat\s+least\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("le",
+             re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("le",
+             re.compile(r"\bup\s+to\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bup\s+to\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+        ],
+        "LIABILITY": [
+            ("le",
+             re.compile(r"\bcapped?\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bcapped?\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("le",
+             re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("le",
+             re.compile(r"\bmax\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bmax\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bpenalt(?:y|ies)\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bpenalt(?:y|ies)\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bfixed\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bfixed\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+        ],
+    }
+
+    @classmethod
+    def _collect_constraints(cls, clause: Clause) -> "Optional[list]":
+        """Collect the (op, operand) constraints a clause's text evidences.
+
+        Returns a list of (op, operand) pairs — one per OCCURRENCE of
+        every recognized phrase with a valid unsigned-integer operand —
+        or None when the clause is unmodelable. EVERY recognized phrase
+        occurrence must resolve to a valid ASCII integer operand: a
+        malformed token ("1.5"), a sign ("- 30"), a decimal
+        ("1,500"/"1.5"), or a NON-ASCII numeral ("٣٠") after a recognized
+        phrase leaves that constraint uninterpretable, and interpreting
+        only the resolvable subset would present a partial model as
+        complete and can hide a conflict (PR #45 review, Greptile-
+        executed R6/R8).
+        """
+        rules = cls._CONSTRAINT_RULES.get(clause.category.upper())
+        if not rules:
+            return None
+        text = clause.text.lower()
+        constraints = []
+        for op, valid_pattern, detector_pattern in rules:
+            # Detector counts recognized phrase occurrences; the valid
+            # pattern resolves those with a well-formed operand. Any gap
+            # means an uninterpretable constraint — fail closed the whole
+            # clause rather than silently omitting it.
+            occurrences = len(detector_pattern.findall(text))
+            operands = [
+                int(token)
+                for token in valid_pattern.findall(text)
+                if token.isdigit()
+            ]
+            if len(operands) != occurrences:
+                return None
+            constraints.extend((op, operand) for operand in operands)
+        return constraints or None
+
+    @staticmethod
+    def _encode_clauses(s: Solver, clauses: List[Clause], var: object, constraint_fn) -> "tuple[List[Clause], int]":
+        """Encode clauses with the category constraint function.
+
+        Returns (encoded_clauses, unmodeled_count).
+        """
+        encoded: List[Clause] = []
+        unmodeled = 0
+        for clause in clauses:
+            if constraint_fn(s, clause, var) == 0:
+                encoded.append(clause)
+            else:
+                unmodeled += 1
+        return encoded, unmodeled
+
+    @staticmethod
+    def _build_clause_fact_steps(encoded_supported: List[Clause]) -> "tuple[list, int]":
+        """Build FACT_DERIVED trace steps for encoded clauses.
+
+        The solver encodes ONLY the text-derived operands of recognized
+        constraint phrases — never the caller's declared value. The
+        declaration is recorded separately with an agreement flag: a
+        differing declaration is disclosed, never silently encoded and
+        never a solver input (issue #42, PR #45 review).
+        Returns (steps, disagreement_count).
+        """
+        steps = []
+        disagreements = 0
+        for c in encoded_supported:
+            constraints = ContradictionGuard._collect_constraints(c)
+            agrees = any(operand == c.value for _, operand in constraints)
+            if not agrees:
+                disagreements += 1
+            steps.append(
+                VerificationStep(
+                    step=STEP_FACT_DERIVED,
+                    description=f"Encoded Z3 constraint for {c.category} clause.",
+                    inputs={
+                        # Legacy contract field: the encoded operands are
+                        # always text-derived under the operand-binding
+                        # design, so the legacy value is constant — kept
+                        # during a deprecation window for consumers that
+                        # branch on it (PR #45 review, Greptile).
+                        "value_provenance": "parsed_from_text",
+                        "clause_text": c.text,
+                        "clause_category": c.category,
+                        "encoded_constraints": [
+                            {"op": op, "operand": operand} for op, operand in constraints
+                        ],
+                        "caller_value": c.value,
+                        "caller_value_agrees": agrees,
+                    },
+                    output=(
+                        f"Z3 constraints added for '{c.text}' "
+                        f"({', '.join(f'{op} {operand}' for op, operand in constraints)} from text; "
+                        f"caller declared {c.value})"
+                    ),
+                    evidence_type=EVIDENCE_DETERMINISTIC,
+                )
+            )
+        return steps, disagreements
 
     @staticmethod
     def _partition_clauses(clauses: List[Clause]):
@@ -202,36 +347,25 @@ class ContradictionGuard:
         ]
         return supported, unsupported
 
-    @staticmethod
-    def _add_duration_constraint(s: Solver, clause: Clause, var: object) -> int:
+    @classmethod
+    def _add_clause_constraints(cls, s: Solver, clause: Clause, var: object) -> int:
         """
-        Add a Z3 constraint for a DURATION clause.
-        Returns 1 if the clause keyword is not modeled (unmodeled), 0 otherwise.
-        """
-        text = clause.text.lower()
-        if "exactly" in text:
-            s.add(var == clause.value)
-        elif "minimum" in text or "at least" in text:
-            s.add(var >= clause.value)
-        elif "maximum" in text or "up to" in text:
-            s.add(var <= clause.value)
-        else:
-            return 1  # clause recognized as DURATION but keyword not modeled
-        return 0
+        Add the Z3 constraints evidenced by a supported clause (all
+        recognized phrases with valid operands).
 
-    @staticmethod
-    def _add_liability_constraint(s: Solver, clause: Clause, var: object) -> int:
+        Returns 1 if the clause is unmodeled (no valid phrase/operand, or
+        any malformed recognized phrase), 0 otherwise.
         """
-        Add a Z3 constraint for a LIABILITY clause.
-        Returns 1 if the clause keyword is not modeled (unmodeled), 0 otherwise.
-        """
-        text = clause.text.lower()
-        if "capped" in text or "max" in text or "cap" in text:
-            s.add(var <= clause.value)
-        elif "penalty" in text or "fixed" in text or "minimum" in text:
-            s.add(var >= clause.value)
-        else:
-            return 1  # clause recognized as LIABILITY but keyword not modeled
+        constraints = cls._collect_constraints(clause)
+        if not constraints:
+            return 1
+        for op, operand in constraints:
+            if op == "eq":
+                s.add(var == operand)
+            elif op == "ge":
+                s.add(var >= operand)
+            else:
+                s.add(var <= operand)
         return 0
 
     @staticmethod
@@ -280,9 +414,16 @@ class ContradictionGuard:
         unmodeled_supported: int,
         categories_text: str,
         trace: list = None,
+        disagreed_values: int = 0,
     ) -> dict:
         """Evaluate Z3 solver and build the final result dict."""
         has_unmodeled_supported = unmodeled_supported > 0
+        # The solver encodes ONLY text-derived operands (see
+        # _build_clause_fact_steps) — the caller's declared value never
+        # enters the model, so solver conclusions are purely
+        # text-attributable. Disagreements are disclosed, not downgrade
+        # triggers (PR #45 review: an unused caller declaration must not
+        # suppress a text contradiction).
         has_partial_modeling = has_unsupported or has_unmodeled_supported
 
         coverage_note = ""
@@ -295,6 +436,13 @@ class ContradictionGuard:
             coverage_note += (
                 f" NOTE: {unmodeled_supported} supported-category clause(s) had "
                 f"unrecognized keyword patterns and could not be encoded."
+            )
+        if disagreed_values:
+            coverage_note += (
+                f" NOTE: {disagreed_values} clause(s) have caller-declared "
+                f"value(s) that disagree with the text-derived operand — the "
+                f"declaration was NOT encoded; see the trace "
+                f"(caller_value_agrees) for details."
             )
 
         result = s.check()
@@ -336,7 +484,8 @@ class ContradictionGuard:
                 ],
             }
 
-        # result == unsat → contradiction
+        # result == unsat → contradiction. Every encoded constraint is
+        # text-derived, so the conflict IS attributable to the text.
         return {
             "verified": False,
             "status": "contradiction",

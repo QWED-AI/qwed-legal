@@ -481,3 +481,320 @@ class TestJurisdictionGuardFailClosed:
         assert result.warnings
         assert "CONFLICTS DETECTED" in result.message
         assert "warning" in result.message.lower()
+
+
+class TestContradictionGuardValueProvenance:
+    """Issue #42: clause values are caller-supplied — the guard must
+    record whether each encoded value is evidenced by the clause text,
+    and keyword matching must not fire on substrings."""
+
+    def setup_method(self):
+        self.guard = ContradictionGuard()
+
+    def _fact_steps(self, clauses):
+        result = self.guard.verify_consistency(clauses)
+        return result, [
+            s for s in result["verification_trace"] if s.step == "FACT_DERIVED"
+        ]
+
+    def test_caller_invented_value_is_labeled(self):
+        """The audit repro: value 999 with text 'exactly 1 month' — the
+        solver encodes the TEXT operand (1), never the invented number,
+        and the disagreement is disclosed in trace and message."""
+        result, steps = self._fact_steps(
+            [Clause(text="Contract term is exactly 1 month", category="DURATION", value=999)]
+        )
+        assert steps[0].inputs["encoded_constraints"] == [{"op": "eq", "operand": 1}]
+        assert steps[0].inputs["caller_value"] == 999
+        assert steps[0].inputs["caller_value_agrees"] is False
+        assert "disagree" in result["message"]
+
+    def test_text_evidenced_value_is_labeled_parsed(self):
+        result, steps = self._fact_steps(
+            [Clause(text="Liability capped at 5000.", category="LIABILITY", value=5000)]
+        )
+        assert steps[0].inputs["encoded_constraints"] == [{"op": "le", "operand": 5000}]
+        assert steps[0].inputs["caller_value_agrees"] is True
+
+    def test_substring_keyword_no_longer_encodes(self):
+        """'cap' inside 'capability' must NOT encode a liability cap —
+        the clause is now unmodeled (partial coverage), not mis-encoded."""
+        result, steps = self._fact_steps(
+            [Clause(text="Our escape capability is legendary.", category="LIABILITY", value=100)]
+        )
+        assert steps == []  # nothing encoded
+        assert result["status"] == "partial_coverage"
+
+    def test_word_boundary_keywords_still_match(self):
+        """Real keywords must still encode after the boundary tightening."""
+        _, steps = self._fact_steps(
+            [
+                Clause(text="Term is exactly 6 months.", category="DURATION", value=6),
+                Clause(text="Liability capped at 5000.", category="LIABILITY", value=5000),
+                Clause(text="Penalty of at least 500.", category="LIABILITY", value=500),
+            ]
+        )
+        assert len(steps) == 3
+
+    def test_keyword_without_operand_is_unmodeled(self):
+        """A recognized keyword with no adjacent number cannot be encoded
+        from the caller's value — the clause stays unmodeled."""
+        result, steps = self._fact_steps(
+            [Clause(text="Term is 12 months minimum.", category="DURATION", value=1)]
+        )
+        assert steps == []
+        assert result["status"] == "partial_coverage"
+
+    def test_provenance_binds_to_constraint_operand(self):
+        """The encoded operand is the one bound to the recognized phrase —
+        a number elsewhere in the text does not evidence a differing
+        caller value, which is disclosed as a disagreement (PR #45
+        review, CodeRabbit)."""
+        result, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Term is exactly 12 months; notice is 6 days.",
+                    category="DURATION",
+                    value=6,
+                )
+            ]
+        )
+        assert steps[0].inputs["encoded_constraints"] == [{"op": "eq", "operand": 12}]
+        assert steps[0].inputs["caller_value"] == 6
+        assert steps[0].inputs["caller_value_agrees"] is False
+        assert "disagree" in result["message"]
+
+    def test_unsat_is_text_attributable_with_disagreements_disclosed(self):
+        """The solver encodes only text-derived operands, so an UNSAT is
+        a genuine text contradiction even when caller declarations
+        disagree; the disagreements stay visible in the trace."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(text="Contract term is exactly 1 month", category="DURATION", value=999),
+                Clause(text="Contract term is exactly 2 months", category="DURATION", value=888),
+            ]
+        )
+        assert result["status"] == "contradiction"
+        conclusion = [s for s in result["verification_trace"] if s.step == "CONCLUSION"][0]
+        assert conclusion.evidence_type == "DETERMINISTIC"
+        fact_steps = [s for s in result["verification_trace"] if s.step == "FACT_DERIVED"]
+        assert [s.inputs["encoded_constraints"] for s in fact_steps] == [[{"op": "eq", "operand": 1}], [{"op": "eq", "operand": 2}]]
+        assert all(s.inputs["caller_value_agrees"] is False for s in fact_steps)
+        assert "disagree" in result["message"]
+
+    def test_unsat_over_evidenced_values_is_deterministic_contradiction(self):
+        """Fully text-evidenced conflicting values keep the deterministic
+        contradiction verdict."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(text="Contract term is exactly 12 months", category="DURATION", value=12),
+                Clause(text="Contract term is maximum 2 months", category="DURATION", value=2),
+            ]
+        )
+        assert result["status"] == "contradiction"
+        conclusion = [s for s in result["verification_trace"] if s.step == "CONCLUSION"][0]
+        assert conclusion.evidence_type == "DETERMINISTIC"
+
+    def test_disagreeing_declaration_does_not_change_solver_conclusion(self):
+        """A differing caller declaration is unused by the solver — it
+        must not downgrade a text-derived conclusion (PR #45 review,
+        CodeRabbit/Greptile)."""
+        result = self.guard.verify_consistency(
+            [Clause(text="Contract term is exactly 1 month", category="DURATION", value=999)]
+        )
+        assert result["status"] == "consistent"
+        assert result["verified"] is True
+        assert "disagree" in result["message"]
+
+    def test_encoding_steps_are_deterministic(self):
+        """Every encoded constraint is a deterministic encoding of a
+        text-derived operand."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(text="Contract term is exactly 1 month", category="DURATION", value=999),
+                Clause(text="Term is exactly 6 months.", category="DURATION", value=6),
+            ]
+        )
+        for s in result["verification_trace"]:
+            if s.step == "FACT_DERIVED":
+                assert s.evidence_type == "DETERMINISTIC"
+                assert s.is_proven() is True
+
+    def test_unsupported_numeric_operands_fail_closed(self):
+        """Signed, decimal, formatted, and embedded operands are
+        unsupported — the clause stays unmodeled rather than encoding an
+        altered value (PR #45 review, CodeRabbit)."""
+        for text, bad_operand in [
+            ("Term is exactly -30 days.", "-30"),
+            ("Term is exactly 1.5 months.", "1.5"),
+            ("Cap is exactly 1,500 dollars.", "1,500"),
+            ("Term is exactly 1e3 months.", "1e3"),
+            ("Term is exactly - 30 days.", "- 30 (spaced sign)"),
+            # Non-ASCII digits pass isdigit() but crash int() — the
+            # operand grammar is ASCII-only, so these fail closed
+            # (PR #45 review, Sentry HIGH).
+            ("Term is exactly ²³ days.", "²³ (superscript)"),
+            ("Term is exactly ٣٠ days.", "٣٠ (arabic-indic)"),
+        ]:
+            result, steps = self._fact_steps(
+                [Clause(text=text, category="DURATION", value=30)]
+            )
+            assert steps == [], f"{bad_operand} must not encode"
+            assert result["status"] == "partial_coverage"
+
+    def test_spaced_sign_is_not_encoded(self):
+        """'exactly - 30 days' must not encode 30 — the whitespace-
+        separated sign invalidates the operand (PR #45 review, Greptile
+        executed bypass)."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(text="Term is exactly - 30 days.", category="DURATION", value=30),
+                Clause(text="Term is maximum 29 days.", category="DURATION", value=29),
+            ]
+        )
+        # The signed clause is unmodeled; the modeled maximum-29 clause
+        # alone is satisfiable — no contradiction is manufactured from
+        # a silently sign-stripped operand.
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_malformed_operand_fails_closed_whole_clause(self):
+        """A recognized phrase with a malformed operand fails closed the
+        WHOLE clause — encoding only the later valid subset would present
+        a partial model as complete and could hide a conflict
+        (PR #45 review, Greptile-executed)."""
+        result, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Liability is capped at 1.5 million; maximum is 5000.",
+                    category="LIABILITY",
+                    value=5000,
+                )
+            ]
+        )
+        assert steps == []
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_malformed_rule_does_not_hide_conflict(self):
+        """Greptile's executed scenario: the malformed clause is skipped,
+        so the modeled subset cannot report a false fully-verified
+        agreement when the omitted amount might conflict."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(
+                    text="Liability is fixed at 1.5 million and minimum is 100.",
+                    category="LIABILITY",
+                    value=100,
+                ),
+                Clause(text="Liability is capped at 200.", category="LIABILITY", value=200),
+            ]
+        )
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_multiple_valid_constraints_in_one_clause_all_encoded(self):
+        """A clause stating several recognized constraints encodes all of
+        them, not just the first."""
+        _, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Liability is capped at 5000 and maximum is 6000.",
+                    category="LIABILITY",
+                    value=5000,
+                )
+            ]
+        )
+        assert len(steps) == 1
+        assert steps[0].inputs["encoded_constraints"] == [
+            {"op": "le", "operand": 5000},
+            {"op": "le", "operand": 6000},
+        ]
+
+    def test_phrase_suffixes_are_not_recognized(self):
+        """Terminal word boundaries: 'maximumly' and 'capability' must
+        not match their phrase prefixes (PR #45 review, CodeRabbit)."""
+        for text in ["Term is maximumly 2 months.", "Our capability 100 is legendary."]:
+            result, steps = self._fact_steps(
+                [
+                    Clause(text=text, category="DURATION" if "maximumly" in text else "LIABILITY", value=2)
+                ]
+            )
+            assert steps == [], f"{text!r} must not encode"
+            assert result["status"] == "partial_coverage"
+
+    def test_legacy_value_provenance_field_retained(self):
+        """The legacy value_provenance trace field is retained during the
+        deprecation window; under operand binding every encoded operand
+        is text-derived (PR #45 review, Greptile P1)."""
+        _, steps = self._fact_steps(
+            [Clause(text="Term is exactly 6 months.", category="DURATION", value=6)]
+        )
+        assert steps[0].inputs["value_provenance"] == "parsed_from_text"
+
+    def test_repeated_same_phrase_all_encoded(self):
+        """Every occurrence of a repeated phrase is a separate
+        constraint — 'capped at 7000 and capped at 5000' with penalty
+        6000 is contradictory (PR #45 review, Greptile R6 executed)."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(
+                    text="Liability is capped at 7000 and capped at 5000.",
+                    category="LIABILITY",
+                    value=7000,
+                ),
+                Clause(text="Penalty is 6000.", category="LIABILITY", value=6000),
+            ]
+        )
+        assert result["status"] == "contradiction"
+        fact_steps = [s for s in result["verification_trace"] if s.step == "FACT_DERIVED"]
+        assert fact_steps[0].inputs["encoded_constraints"] == [
+            {"op": "le", "operand": 7000},
+            {"op": "le", "operand": 5000},
+        ]
+
+    def test_repeated_malformed_phrase_fails_closed(self):
+        """A later malformed repeated phrase makes the whole clause
+        unmodeled, not just skipped (PR #45 review, Greptile R6)."""
+        result, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Liability is capped at 7000 and capped at 1.5 million.",
+                    category="LIABILITY",
+                    value=7000,
+                )
+            ]
+        )
+        assert steps == []
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_unicode_operand_fails_closed_whole_clause(self):
+        """A recognized phrase followed by a non-ASCII numeral is a
+        malformed constraint — the whole clause fails closed instead of
+        silently omitting it (PR #45 review, Greptile R8 executed)."""
+        result, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Term is exactly 12 and exactly \u0663\u0660 days.",
+                    category="DURATION",
+                    value=12,
+                )
+            ]
+        )
+        assert steps == []
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_prose_phrase_occurrences_are_not_constraints(self):
+        """A recognized word in prose (no operand follows) is not a
+        constraint occurrence and does not taint other rules — 'Max'
+        before 'capped at 5000' is an abbreviation, not a maximum
+        constraint (PR #45 review, R8 detector refinement)."""
+        result, steps = self._fact_steps(
+            [Clause(text="Max liability capped at 5000", category="LIABILITY", value=5000)]
+        )
+        assert len(steps) == 1
+        assert steps[0].inputs["encoded_constraints"] == [{"op": "le", "operand": 5000}]
+        assert result["status"] == "consistent"
+        assert result["verified"] is True

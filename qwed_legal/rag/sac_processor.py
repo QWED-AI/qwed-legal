@@ -15,6 +15,7 @@ Source: "Towards Reliable Retrieval in RAG Systems for Large Legal Datasets".
 """
 
 import hashlib
+import re
 from typing import List, Optional, Protocol
 
 
@@ -35,6 +36,15 @@ class SACProcessor:
       2. Prepends that fingerprint to every chunk, preserving global
          context that is lost by naive splitting.
 
+    Trust model (issue #42): the fingerprint is **LLM output** — a
+    compromised or malfunctioning summarizer must not poison retrieval.
+    Every augmented chunk therefore (a) labels the summary as
+    AI-GENERATED and UNTRUSTED, (b) carries the deterministic document
+    hash alongside it, and (c) receives a sanitized summary (newlines
+    and control characters stripped, internal chunk/context markers
+    removed) so the fingerprint cannot forge chunk structure or inject
+    new chunk boundaries.
+
     Usage::
 
         from qwed_legal.rag.sac_processor import SACProcessor
@@ -53,6 +63,11 @@ class SACProcessor:
     # Prefix used in the augmented chunks (aids retrieval debugging)
     CONTEXT_PREFIX = "DOCUMENT CONTEXT"
     CHUNK_PREFIX = "CHUNK CONTENT"
+
+    # Raw LLM responses are untrusted input: bound them before
+    # sanitization so marker-filled responses cannot drive quadratic
+    # scanning/allocation (PR #45 review, CWE-400).
+    RAW_RESPONSE_CAP = 4096
 
     def __init__(
         self,
@@ -104,12 +119,18 @@ class SACProcessor:
             return []
 
         doc_id = document_id or self._hash_id(document_text)
+        # The deterministic hash is ALWAYS carried alongside, even when a
+        # caller-supplied document_id exists — the hash is computable and
+        # verifiable; the LLM summary is not (issue #42).
+        deterministic_hash = self._hash_id(document_text)
         summary = self._generate_fingerprint(document_text)
 
         augmented: List[str] = []
         for i, chunk in enumerate(chunks):
             augmented_chunk = (
-                f"{self.CONTEXT_PREFIX} [{doc_id}]: {summary}\n\n"
+                f"{self.CONTEXT_PREFIX} [{doc_id}] "
+                f"(deterministic hash: {deterministic_hash}) "
+                f"[AI-GENERATED SUMMARY — UNTRUSTED CONTENT]: {summary}\n\n"
                 f"{self.CHUNK_PREFIX} [{i + 1}/{len(chunks)}]: {chunk}"
             )
             augmented.append(augmented_chunk)
@@ -147,14 +168,63 @@ class SACProcessor:
 
         summary = self._llm.generate(prompt)
 
+        # Cap BEFORE any scanning: blank checks and sanitization must
+        # never scan an unbounded response (PR #45 review, CWE-400).
+        summary = (summary or "")[: self.RAW_RESPONSE_CAP]
+
         # Defensive: handle None or empty LLM returns
         if not summary or not summary.strip():
             return self._hash_id(document_text)
 
-        # Enforce length limit
-        if len(summary) > self._target_length:
-            summary = summary[: self._target_length].rsplit(" ", 1)[0] + "…"
+        sanitized = self._sanitize_fingerprint(summary, self._target_length)
+        if not sanitized:
+            # Sanitization can strip everything — either an all-marker
+            # response, or nested marker fragments that reassemble past
+            # the bounded removal passes (PR #45 review, Sentry and
+            # Greptile-executed bypass). Fall back to the deterministic
+            # hash rather than embedding an untrusted fingerprint.
+            return self._hash_id(document_text)
+        return sanitized
 
+    @staticmethod
+    def _sanitize_fingerprint(summary: str, target_length: int) -> str:
+        """Treat LLM output as untrusted content (issue #42).
+
+        Strips newlines/control characters and removes the processor's
+        own structural markers, so a malicious or malfunctioning
+        summary cannot forge chunk boundaries or inject context lines
+        into every embedded chunk.
+        """
+        # Flatten to a single line: control characters become spaces
+        summary = "".join(
+            ch if ch.isprintable() and not ch.isspace() else " "
+            for ch in summary
+        )
+        # Collapse whitespace runs left by the flattening
+        summary = " ".join(summary.split())
+        # Remove forged structural markers (case-insensitive) in a
+        # bounded number of passes — repeated passes handle markers
+        # reassembled by removal, and the bound keeps the work linear
+        # (PR #45 review, CWE-400).
+        marker_pattern = re.compile(
+            rf"{re.escape(SACProcessor.CONTEXT_PREFIX)}|"
+            rf"{re.escape(SACProcessor.CHUNK_PREFIX)}",
+            re.IGNORECASE,
+        )
+        for _ in range(3):
+            if not marker_pattern.search(summary):
+                break
+            summary = marker_pattern.sub("", summary)
+            summary = " ".join(summary.split())
+        # A nested-marker response can reassemble a structural marker on
+        # every pass and survive the bounded limit (Greptile-executed
+        # bypass, PR #45 review). Refuse the fingerprint entirely — the
+        # caller falls back to the deterministic hash.
+        if marker_pattern.search(summary):
+            return ""
+        # Enforce length limit
+        if len(summary) > target_length:
+            summary = summary[:target_length].rsplit(" ", 1)[0] + "…"
         return summary.strip()
 
     @staticmethod

@@ -239,3 +239,74 @@ class TestGenerateProvenance:
         }
         result = guard.verify_provenance(content, prov)
         assert result["verified"] is True
+
+
+class TestSelfDeclarationHonesty:
+    """Issue #42: ProvenanceGuard is fully self-attested — every field
+    (including human_reviewed and reviewer_id) is caller-supplied. The
+    result must say so instead of implying external assurance."""
+
+    def setup_method(self):
+        self.guard = ProvenanceGuard()
+        self.content = "Sample AI-generated legal memo."
+        record = self.guard.generate_provenance(self.content, "gpt-x")
+        self.valid_provenance = {
+            "content_hash": record.content_hash,
+            "model_id": "gpt-x",
+            "generation_timestamp": record.generation_timestamp,
+        }
+
+    def test_result_carries_self_declared_assurance(self):
+        result = self.guard.verify_provenance(self.content, self.valid_provenance)
+        assert result["verified"] is True
+        assert result["assurance"] == "SELF_DECLARED"
+
+    def test_attacker_dict_passes_but_is_labeled_self_declared(self):
+        """The audit repro: fake reviewer passes all checks — the result
+        must still disclose that nothing was externally verified."""
+        attacker = dict(self.valid_provenance)
+        attacker["human_reviewed"] = True
+        attacker["reviewer_id"] = "fake-reviewer"
+        result = ProvenanceGuard(require_human_review=True).verify_provenance(
+            self.content, attacker
+        )
+        assert result["verified"] is True
+        assert result["assurance"] == "SELF_DECLARED"
+        assert "human_review_declared" in result["checks_passed"]
+
+    def test_human_review_check_name_is_declared(self):
+        """The check name must not imply the review was verified."""
+        result = ProvenanceGuard(require_human_review=True).verify_provenance(
+            self.content, self.valid_provenance
+        )
+        assert result["verified"] is False
+        assert "human_review_declared" in result["checks_failed"]
+        assert result["risk"] == "UNREVIEWED_CONTENT"
+
+    def test_legacy_human_review_token_still_emitted(self):
+        """Deprecation window: callers inspecting the legacy token keep
+        working (PR #45 review, Greptile P1)."""
+        result = ProvenanceGuard(require_human_review=True).verify_provenance(
+            self.content, self.valid_provenance
+        )
+        assert "human_review" in result["checks_failed"]
+        assert "human_review_declared" in result["checks_failed"]
+        passing = dict(self.valid_provenance)
+        passing["human_reviewed"] = True
+        passing["reviewer_id"] = "r1"
+        ok = ProvenanceGuard(require_human_review=True).verify_provenance(
+            self.content, passing
+        )
+        assert "human_review" in ok["checks_passed"]
+        assert "human_review_declared" in ok["checks_passed"]
+
+    def test_truthy_non_boolean_human_reviewed_rejected(self):
+        """human_reviewed="false" (truthy string) must NOT pass the
+        review requirement — strict boolean check (PR #45 review)."""
+        attacker = dict(self.valid_provenance)
+        attacker["human_reviewed"] = "false"
+        result = ProvenanceGuard(require_human_review=True).verify_provenance(
+            self.content, attacker
+        )
+        assert result["verified"] is False
+        assert result["risk"] == "UNREVIEWED_CONTENT"
