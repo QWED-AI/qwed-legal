@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SACProcessor`: the LLM-generated fingerprint is labeled `[AI-GENERATED SUMMARY — UNTRUSTED CONTENT]`, the deterministic document hash is always carried alongside (even when a caller-supplied `document_id` exists), and the summary is sanitized (single-line, control characters and forged `CHUNK CONTENT`/`DOCUMENT CONTEXT` markers stripped) so a compromised summarizer cannot poison corpus-wide retrieval structure (#42).
 - `StatuteOfLimitationsGuard` results now carry a `status` field: `CLAIM_VERIFIED` / `CLAIM_INCORRECT` when a `claimed_within_period` answer was supplied, `COMPUTED_ONLY` in computation-only mode, and `UNVERIFIABLE` for input-class rejections. `verified` is now reserved for claim comparison — in computation-only mode it is `False` by contract (previously it doubled as the within-period legal fact, making an expired-but-correctly-evaluated claim indistinguishable from a verification failure) (#42). The TypeScript SDK's `StatuteResult` echoes the new field.
 
+### Ecosystem Alignment
+- Synced the PyPI package description with the repository identity ("Deterministic rejection layer for computational legal claims...").
+- Added `.qwed.yml` (QWED Security scanner configuration, matching the qwed-finance convention) and the QWED Security Marketplace badge to the README badge row (#36).
+
 ### Build / Tooling
 - Pinned the ruff lint gate to the stable default ruleset (`select = ["E4", "E7", "E9", "F"]` under `[tool.ruff.lint]`). Ruff's default rule selection expanded in newer releases, which flipped CI red on unchanged code.
 - Pinned ruff to `0.16.1` in CI and via `required-version` in pyproject so the gate cannot drift with future ruff releases.
