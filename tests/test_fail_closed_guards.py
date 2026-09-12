@@ -768,3 +768,33 @@ class TestContradictionGuardValueProvenance:
         assert steps == []
         assert result["status"] == "partial_coverage"
         assert result["verified"] is False
+
+    def test_unicode_operand_fails_closed_whole_clause(self):
+        """A recognized phrase followed by a non-ASCII numeral is a
+        malformed constraint — the whole clause fails closed instead of
+        silently omitting it (PR #45 review, Greptile R8 executed)."""
+        result, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Term is exactly 12 and exactly \u0663\u0660 days.",
+                    category="DURATION",
+                    value=12,
+                )
+            ]
+        )
+        assert steps == []
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_prose_phrase_occurrences_are_not_constraints(self):
+        """A recognized word in prose (no operand follows) is not a
+        constraint occurrence and does not taint other rules — 'Max'
+        before 'capped at 5000' is an abbreviation, not a maximum
+        constraint (PR #45 review, R8 detector refinement)."""
+        result, steps = self._fact_steps(
+            [Clause(text="Max liability capped at 5000", category="LIABILITY", value=5000)]
+        )
+        assert len(steps) == 1
+        assert steps[0].inputs["encoded_constraints"] == [{"op": "le", "operand": 5000}]
+        assert result["status"] == "consistent"
+        assert result["verified"] is True

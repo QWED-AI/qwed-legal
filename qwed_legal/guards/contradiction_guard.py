@@ -183,27 +183,60 @@ class ContradictionGuard:
 
     # Constraint phrase rules, ordered per category, as complete literal
     # patterns (no runtime concatenation — PR #45 review, ReDoS lint).
-    # Grammar per pattern: terminal-bounded phrase (so "maximumly" and
-    # "capability" never match, PR #45 review), a separator that must not
-    # contain signs/digits/decimal points (so "exactly - 30" cannot strip
-    # its sign, Greptile-executed), and a complete unsigned integer token
-    # with terminal word boundary (so "-30", "1.5", "1,500", and "1e3"
-    # fail closed instead of encoding an altered value).
+    # Each rule carries a VALID pattern (terminal-bounded phrase, a
+    # separator that must not contain signs/digits/decimal points — so
+    # "exactly - 30" cannot strip its sign, Greptile-executed — and a
+    # complete ASCII unsigned integer token with terminal word boundary)
+    # and a DETECTOR pattern (phrase + separator, no operand requirement)
+    # used to count recognized occurrences.
     _CONSTRAINT_RULES = {
         "DURATION": [
-            (re.compile(r"\bexactly\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "eq"),
-            (re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
-            (re.compile(r"\bat\s+least\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
-            (re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
-            (re.compile(r"\bup\s+to\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
+            ("eq",
+             re.compile(r"\bexactly\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bexactly\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bat\s+least\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bat\s+least\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("le",
+             re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("le",
+             re.compile(r"\bup\s+to\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bup\s+to\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
         ],
         "LIABILITY": [
-            (re.compile(r"\bcapped?\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
-            (re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
-            (re.compile(r"\bmax\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
-            (re.compile(r"\bpenalt(?:y|ies)\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
-            (re.compile(r"\bfixed\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
-            (re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
+            ("le",
+             re.compile(r"\bcapped?\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bcapped?\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("le",
+             re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("le",
+             re.compile(r"\bmax\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bmax\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bpenalt(?:y|ies)\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bpenalt(?:y|ies)\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bfixed\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bfixed\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
+            ("ge",
+             re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])(?a:(\d+(?:[.,]\d+)*))(?!\w)"),
+             re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?=[+\-\d.])"),
+             ),
         ],
     }
 
@@ -213,27 +246,34 @@ class ContradictionGuard:
 
         Returns a list of (op, operand) pairs — one per OCCURRENCE of
         every recognized phrase with a valid unsigned-integer operand —
-        or None when the clause is unmodelable: no recognized phrase, no
-        valid operand, or ANY recognized occurrence with a malformed
-        operand. A malformed occurrence fails closed the whole clause:
-        encoding only the interpretable subset would present a partial
-        model as complete and can hide a conflict (PR #45 review,
-        Greptile-executed).
+        or None when the clause is unmodelable. EVERY recognized phrase
+        occurrence must resolve to a valid ASCII integer operand: a
+        malformed token ("1.5"), a sign ("- 30"), a decimal
+        ("1,500"/"1.5"), or a NON-ASCII numeral ("٣٠") after a recognized
+        phrase leaves that constraint uninterpretable, and interpreting
+        only the resolvable subset would present a partial model as
+        complete and can hide a conflict (PR #45 review, Greptile-
+        executed R6/R8).
         """
         rules = cls._CONSTRAINT_RULES.get(clause.category.upper())
         if not rules:
             return None
         text = clause.text.lower()
         constraints = []
-        for pattern, op in rules:
-            # Every occurrence: a clause may state the same phrase more
-            # than once ("capped at 7000 and capped at 5000"), and each
-            # occurrence is a separate constraint (PR #45 review, R6).
-            for match in pattern.finditer(text):
-                token = match.group(1)
-                if not token.isdigit():
-                    return None
-                constraints.append((op, int(token)))
+        for op, valid_pattern, detector_pattern in rules:
+            # Detector counts recognized phrase occurrences; the valid
+            # pattern resolves those with a well-formed operand. Any gap
+            # means an uninterpretable constraint — fail closed the whole
+            # clause rather than silently omitting it.
+            occurrences = len(detector_pattern.findall(text))
+            operands = [
+                int(token)
+                for token in valid_pattern.findall(text)
+                if token.isdigit()
+            ]
+            if len(operands) != occurrences:
+                return None
+            constraints.extend((op, operand) for operand in operands)
         return constraints or None
 
     @staticmethod
