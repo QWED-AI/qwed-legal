@@ -538,3 +538,28 @@ class TestContradictionGuardValueProvenance:
             [Clause(text="Term is 12 months minimum.", category="DURATION", value=1)]
         )
         assert steps[0].inputs["value_provenance"] == "caller_asserted"
+
+    def test_caller_asserted_value_is_not_verified(self):
+        """A SAT result over caller-invented numbers is partial coverage,
+        never verified=True (PR #45 review, CodeAnt)."""
+        result = self.guard.verify_consistency(
+            [Clause(text="Contract term is exactly 1 month", category="DURATION", value=999)]
+        )
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False
+
+    def test_caller_asserted_step_is_not_proven(self):
+        """Caller-asserted constraint steps are EVIDENCE_INFERRED and
+        is_proven() is False; text-evidenced steps stay DETERMINISTIC
+        (PR #45 review, CodeRabbit)."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(text="Contract term is exactly 1 month", category="DURATION", value=999),
+                Clause(text="Term is exactly 6 months.", category="DURATION", value=6),
+            ]
+        )
+        steps = {s.inputs["value_provenance"]: s for s in result["verification_trace"] if s.step == "FACT_DERIVED"}
+        assert steps["caller_asserted"].is_proven() is False
+        assert steps["caller_asserted"].evidence_type == "INFERRED"
+        assert steps["parsed_from_text"].is_proven() is True
+        assert steps["parsed_from_text"].evidence_type == "DETERMINISTIC"

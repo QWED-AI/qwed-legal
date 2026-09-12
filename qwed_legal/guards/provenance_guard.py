@@ -292,10 +292,18 @@ class ProvenanceGuard:
     ) -> None:
         # Named "declared" deliberately: human_reviewed is a caller-
         # supplied flag this guard cannot verify externally (#42).
-        if not provenance.get("human_reviewed", False):
+        # Strict boolean: truthy non-Boolean values ("false") must not
+        # pass (PR #45 review).
+        # The legacy "human_review" token is emitted alongside during a
+        # deprecation window so callers inspecting checks_passed /
+        # checks_failed keep working (PR #45 review, Greptile).
+        reviewed = provenance.get("human_reviewed")
+        if reviewed is not True:
             failed.append("human_review_declared")
+            failed.append("human_review")  # DEPRECATED legacy token
         else:
             passed.append("human_review_declared")
+            passed.append("human_review")  # DEPRECATED legacy token
 
     # ---- Helpers ----
 

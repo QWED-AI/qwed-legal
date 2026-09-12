@@ -282,3 +282,31 @@ class TestSelfDeclarationHonesty:
         assert result["verified"] is False
         assert "human_review_declared" in result["checks_failed"]
         assert result["risk"] == "UNREVIEWED_CONTENT"
+
+    def test_legacy_human_review_token_still_emitted(self):
+        """Deprecation window: callers inspecting the legacy token keep
+        working (PR #45 review, Greptile P1)."""
+        result = ProvenanceGuard(require_human_review=True).verify_provenance(
+            self.content, self.valid_provenance
+        )
+        assert "human_review" in result["checks_failed"]
+        assert "human_review_declared" in result["checks_failed"]
+        passing = dict(self.valid_provenance)
+        passing["human_reviewed"] = True
+        passing["reviewer_id"] = "r1"
+        ok = ProvenanceGuard(require_human_review=True).verify_provenance(
+            self.content, passing
+        )
+        assert "human_review" in ok["checks_passed"]
+        assert "human_review_declared" in ok["checks_passed"]
+
+    def test_truthy_non_boolean_human_reviewed_rejected(self):
+        """human_reviewed="false" (truthy string) must NOT pass the
+        review requirement — strict boolean check (PR #45 review)."""
+        attacker = dict(self.valid_provenance)
+        attacker["human_reviewed"] = "false"
+        result = ProvenanceGuard(require_human_review=True).verify_provenance(
+            self.content, attacker
+        )
+        assert result["verified"] is False
+        assert result["risk"] == "UNREVIEWED_CONTENT"

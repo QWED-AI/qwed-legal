@@ -210,4 +210,56 @@ class TestSACFingerprintUntrusted:
         out = processor.generate_sac_chunks("doc text", ["chunk"])
         header = out[0].split("\n\n")[0]
         assert header.count("\n") == 0
-        assert "Line one." in header and "Line three." in header
+        assert "Line one." in header
+        assert "Line three." in header
+
+
+class TestSACSanitizationHardening:
+    """PR #45 review: sanitization must never yield an empty fingerprint,
+    and raw LLM responses must be bounded before marker removal."""
+
+    def test_all_marker_response_falls_back_to_hash(self):
+        """A response consisting only of forged markers sanitizes to
+        empty — must fall back to the deterministic hash (Sentry)."""
+
+        class MarkerOnlyLLM:
+            def generate(self, prompt):
+                return "CHUNK CONTENT DOCUMENT CONTEXT"
+
+        processor = SACProcessor(llm_client=MarkerOnlyLLM())
+        out = processor.generate_sac_chunks("doc text", ["chunk"])
+        header = out[0].split("\n\n")[0]
+        # doc_id (hash) + deterministic-hash label + fallback fingerprint
+        assert header.count("doc-") == 3
+        fingerprint = header.split("UNTRUSTED CONTENT]: ")[1]
+        assert fingerprint.startswith("doc-")
+        assert len(fingerprint) == 16  # "doc-" + 12 hex chars
+
+    def test_repeated_markers_all_removed(self):
+        """Many repeated markers must all be removed in bounded passes
+        (CodeRabbit CWE-400)."""
+
+        class RepeatedMarkerLLM:
+            def generate(self, prompt):
+                return ("CHUNK CONTENT " * 20) + "real summary"
+
+        processor = SACProcessor(llm_client=RepeatedMarkerLLM())
+        out = processor.generate_sac_chunks("doc text", ["chunk"])
+        header = out[0].split("\n\n")[0]
+        # The context header contains only the processor's own marker;
+        # all 20 forged markers are gone and the real summary survives.
+        assert header.count("DOCUMENT CONTEXT") == 1
+        assert "real summary" in header
+        assert out[0].count("CHUNK CONTENT") == 1  # only the processor's own
+
+    def test_huge_response_bounded_before_sanitization(self):
+        """A multi-megabyte response is capped at RAW_RESPONSE_CAP before
+        any sanitization work (CodeRabbit CWE-400)."""
+
+        class HugeLLM:
+            def generate(self, prompt):
+                return "x" * (SACProcessor.RAW_RESPONSE_CAP * 10)
+
+        processor = SACProcessor(llm_client=HugeLLM())
+        out = processor.generate_sac_chunks("doc text", ["chunk"])
+        assert "…" in out[0]  # truncated to the target length

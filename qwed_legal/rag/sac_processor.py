@@ -15,6 +15,7 @@ Source: "Towards Reliable Retrieval in RAG Systems for Large Legal Datasets".
 """
 
 import hashlib
+import re
 from typing import List, Optional, Protocol
 
 
@@ -62,6 +63,11 @@ class SACProcessor:
     # Prefix used in the augmented chunks (aids retrieval debugging)
     CONTEXT_PREFIX = "DOCUMENT CONTEXT"
     CHUNK_PREFIX = "CHUNK CONTENT"
+
+    # Raw LLM responses are untrusted input: bound them before
+    # sanitization so marker-filled responses cannot drive quadratic
+    # scanning/allocation (PR #45 review, CWE-400).
+    RAW_RESPONSE_CAP = 4096
 
     def __init__(
         self,
@@ -166,7 +172,16 @@ class SACProcessor:
         if not summary or not summary.strip():
             return self._hash_id(document_text)
 
-        return self._sanitize_fingerprint(summary, self._target_length)
+        sanitized = self._sanitize_fingerprint(
+            summary[: self.RAW_RESPONSE_CAP], self._target_length
+        )
+        if not sanitized:
+            # Sanitization can strip everything (e.g., a response
+            # consisting only of forged markers) — fall back to the
+            # deterministic hash rather than embedding an empty
+            # fingerprint (PR #45 review, Sentry).
+            return self._hash_id(document_text)
+        return sanitized
 
     @staticmethod
     def _sanitize_fingerprint(summary: str, target_length: int) -> str:
@@ -184,13 +199,20 @@ class SACProcessor:
         )
         # Collapse whitespace runs left by the flattening
         summary = " ".join(summary.split())
-        # Remove forged structural markers (case-insensitive), repeatedly,
-        # in case the LLM emitted them multiple times
-        for marker in (SACProcessor.CONTEXT_PREFIX, SACProcessor.CHUNK_PREFIX):
-            while marker.lower() in summary.lower():
-                idx = summary.lower().index(marker.lower())
-                summary = summary[:idx] + summary[idx + len(marker):]
-                summary = " ".join(summary.split())
+        # Remove forged structural markers (case-insensitive) in a
+        # bounded number of passes — repeated passes handle markers
+        # reassembled by removal, and the bound keeps the work linear
+        # (PR #45 review, CWE-400).
+        marker_pattern = re.compile(
+            rf"{re.escape(SACProcessor.CONTEXT_PREFIX)}|"
+            rf"{re.escape(SACProcessor.CHUNK_PREFIX)}",
+            re.IGNORECASE,
+        )
+        for _ in range(3):
+            if not marker_pattern.search(summary):
+                break
+            summary = marker_pattern.sub("", summary)
+            summary = " ".join(summary.split())
         # Enforce length limit
         if len(summary) > target_length:
             summary = summary[:target_length].rsplit(" ", 1)[0] + "…"

@@ -12,7 +12,6 @@ Fail-closed design:
 import re
 from dataclasses import dataclass, field
 from typing import List
-
 from z3 import Int, Solver, sat, unknown
 
 from qwed_legal.models import (
@@ -22,6 +21,7 @@ from qwed_legal.models import (
     STEP_AMBIGUITY_NOTED,
     STEP_CONCLUSION,
     EVIDENCE_DETERMINISTIC,
+    EVIDENCE_INFERRED,
     EVIDENCE_PARSED,
     EVIDENCE_UNSUPPORTED,
 )
@@ -113,24 +113,18 @@ class ContradictionGuard:
         s.add(contract_duration_months >= 0)
         s.add(max_liability_usd >= 0)
 
-        unmodeled_supported = 0
-        encoded_supported = []
-
         duration_clauses = [c for c in supported if c.category.upper() == "DURATION"]
-        for clause in duration_clauses:
-            add_result = self._add_duration_constraint(s, clause, contract_duration_months)
-            if add_result == 0:
-                encoded_supported.append(clause)
-            else:
-                unmodeled_supported += 1
-
+        encoded_duration, unmodeled_duration = self._encode_clauses(
+            s, duration_clauses, contract_duration_months,
+            self._add_duration_constraint,
+        )
         liability_clauses = [c for c in supported if c.category.upper() == "LIABILITY"]
-        for clause in liability_clauses:
-            add_result = self._add_liability_constraint(s, clause, max_liability_usd)
-            if add_result == 0:
-                encoded_supported.append(clause)
-            else:
-                unmodeled_supported += 1
+        encoded_liability, unmodeled_liability = self._encode_clauses(
+            s, liability_clauses, max_liability_usd,
+            self._add_liability_constraint,
+        )
+        encoded_supported = encoded_duration + encoded_liability
+        unmodeled_supported = unmodeled_duration + unmodeled_liability
 
         # Build trace steps
         trace = []
@@ -157,28 +151,10 @@ class ContradictionGuard:
         # provenance. A caller_asserted value means Z3 "proves"
         # consistency of a number the caller invented, not one parsed
         # from the text (issue #42).
-        caller_asserted_values = 0
-        for c in encoded_supported:
-            provenance = self._value_provenance(c)
-            if provenance == "caller_asserted":
-                caller_asserted_values += 1
-            trace.append(
-                VerificationStep(
-                    step=STEP_FACT_DERIVED,
-                    description=f"Encoded Z3 constraint for {c.category} clause.",
-                    inputs={
-                        "clause_text": c.text,
-                        "clause_category": c.category,
-                        "clause_value": c.value,
-                        "value_provenance": provenance,
-                    },
-                    output=(
-                        f"Z3 constraint added for '{c.text}' (value={c.value}, "
-                        f"value_provenance={provenance})"
-                    ),
-                    evidence_type=EVIDENCE_DETERMINISTIC,
-                )
-            )
+        clause_steps, caller_asserted_values = self._build_clause_fact_steps(
+            encoded_supported
+        )
+        trace.extend(clause_steps)
         # Step 3: Ambiguity noted if partial coverage
         if unsupported_categories or unmodeled_supported > 0:
             trace.append(
@@ -218,6 +194,59 @@ class ContradictionGuard:
         if re.search(rf"\b{re.escape(str(clause.value))}\b", clause.text.lower()):
             return "parsed_from_text"
         return "caller_asserted"
+
+    @staticmethod
+    def _encode_clauses(s: Solver, clauses: List[Clause], var: object, constraint_fn) -> "tuple[List[Clause], int]":
+        """Encode clauses with the category constraint function.
+
+        Returns (encoded_clauses, unmodeled_count).
+        """
+        encoded: List[Clause] = []
+        unmodeled = 0
+        for clause in clauses:
+            if constraint_fn(s, clause, var) == 0:
+                encoded.append(clause)
+            else:
+                unmodeled += 1
+        return encoded, unmodeled
+
+    @staticmethod
+    def _build_clause_fact_steps(encoded_supported: List[Clause]) -> "tuple[list, int]":
+        """Build FACT_DERIVED trace steps for encoded clauses.
+
+        Returns (steps, caller_asserted_count). A caller_asserted value
+        means the constraint encodes a number the caller supplied, not
+        one parsed from the text — such steps are EVIDENCE_INFERRED
+        (non-proof), never DETERMINISTIC (issue #42, PR #45 review).
+        """
+        steps = []
+        caller_asserted = 0
+        for c in encoded_supported:
+            provenance = ContradictionGuard._value_provenance(c)
+            if provenance == "caller_asserted":
+                caller_asserted += 1
+            steps.append(
+                VerificationStep(
+                    step=STEP_FACT_DERIVED,
+                    description=f"Encoded Z3 constraint for {c.category} clause.",
+                    inputs={
+                        "clause_text": c.text,
+                        "clause_category": c.category,
+                        "clause_value": c.value,
+                        "value_provenance": provenance,
+                    },
+                    output=(
+                        f"Z3 constraint added for '{c.text}' (value={c.value}, "
+                        f"value_provenance={provenance})"
+                    ),
+                    evidence_type=(
+                        EVIDENCE_DETERMINISTIC
+                        if provenance == "parsed_from_text"
+                        else EVIDENCE_INFERRED
+                    ),
+                )
+            )
+        return steps, caller_asserted
 
     @staticmethod
     def _partition_clauses(clauses: List[Clause]):
@@ -315,7 +344,13 @@ class ContradictionGuard:
     ) -> dict:
         """Evaluate Z3 solver and build the final result dict."""
         has_unmodeled_supported = unmodeled_supported > 0
-        has_partial_modeling = has_unsupported or has_unmodeled_supported
+        # Caller-asserted values make the constraint set contain numbers
+        # not evidenced by the text — a SAT result over them is NOT a
+        # verified consistency proof (issue #42, PR #45 review).
+        has_caller_asserted = caller_asserted_values > 0
+        has_partial_modeling = (
+            has_unsupported or has_unmodeled_supported or has_caller_asserted
+        )
 
         coverage_note = ""
         if has_unsupported:
@@ -328,7 +363,7 @@ class ContradictionGuard:
                 f" NOTE: {unmodeled_supported} supported-category clause(s) had "
                 f"unrecognized keyword patterns and could not be encoded."
             )
-        if caller_asserted_values:
+        if has_caller_asserted:
             coverage_note += (
                 f" NOTE: {caller_asserted_values} encoded clause value(s) were "
                 f"caller-asserted (not found in the clause text) — the consistency "
