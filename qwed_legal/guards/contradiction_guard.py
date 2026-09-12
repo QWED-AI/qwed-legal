@@ -21,7 +21,6 @@ from qwed_legal.models import (
     STEP_AMBIGUITY_NOTED,
     STEP_CONCLUSION,
     EVIDENCE_DETERMINISTIC,
-    EVIDENCE_INFERRED,
     EVIDENCE_PARSED,
     EVIDENCE_UNSUPPORTED,
 )
@@ -147,11 +146,11 @@ class ContradictionGuard:
                 evidence_type=EVIDENCE_PARSED,
             )
         )
-        # Step 2: Fact derived per supported clause — with value
-        # provenance. A caller_asserted value means Z3 "proves"
-        # consistency of a number the caller invented, not one parsed
-        # from the text (issue #42).
-        clause_steps, caller_asserted_values = self._build_clause_fact_steps(
+        # Step 2: Fact derived per supported clause. The solver encodes
+        # ONLY text-derived operands; the caller's declared value is
+        # recorded with an agreement flag and never enters the model
+        # (issue #42, PR #45 review).
+        clause_steps, disagreed_values = self._build_clause_fact_steps(
             encoded_supported
         )
         trace.extend(clause_steps)
@@ -177,31 +176,35 @@ class ContradictionGuard:
             unmodeled_supported=unmodeled_supported,
             categories_text=categories_text,
             trace=trace,
-            caller_asserted_values=caller_asserted_values,
+            disagreed_values=disagreed_values,
         )
 
     # ── private helpers ────────────────────────────────────────────────────────
 
+    # Shared operand grammar: a complete unsigned integer token. Signs
+    # ("-30"), decimals ("1.5"), and formatted numbers ("1,500") are
+    # rejected outright — the clause stays unmodeled rather than encoding
+    # a silently altered value (PR #45 review, CodeRabbit).
+    _OPERAND = r"(?<![-+])(\d+(?:[.,]\d+)*)"
+
     # Constraint phrase rules, ordered per category. Each pattern binds a
     # recognized phrase to the numeric operand ADJACENT to it — the operand
-    # is what gets encoded into Z3 AND what value_provenance compares
-    # against. A number elsewhere in the text is not the term value
-    # (issue #42, PR #45 review).
+    # is what gets encoded into Z3 (issue #42, PR #45 review).
     _CONSTRAINT_RULES = {
         "DURATION": [
-            (re.compile(r"\bexactly\D{0,20}(\d+)"), "eq"),
-            (re.compile(r"\bminimum\D{0,20}(\d+)"), "ge"),
-            (re.compile(r"\bat\s+least\D{0,20}(\d+)"), "ge"),
-            (re.compile(r"\bmaximum\D{0,20}(\d+)"), "le"),
-            (re.compile(r"\bup\s+to\D{0,20}(\d+)"), "le"),
+            (re.compile(r"\bexactly\D{0,20}" + _OPERAND), "eq"),
+            (re.compile(r"\bminimum\D{0,20}" + _OPERAND), "ge"),
+            (re.compile(r"\bat\s+least\D{0,20}" + _OPERAND), "ge"),
+            (re.compile(r"\bmaximum\D{0,20}" + _OPERAND), "le"),
+            (re.compile(r"\bup\s+to\D{0,20}" + _OPERAND), "le"),
         ],
         "LIABILITY": [
-            (re.compile(r"\bcapped?\D{0,20}(\d+)"), "le"),
-            (re.compile(r"\bmaximum\D{0,20}(\d+)"), "le"),
-            (re.compile(r"\bmax\D{0,20}(\d+)"), "le"),
-            (re.compile(r"\bpenalt(?:y|ies)\D{0,20}(\d+)"), "ge"),
-            (re.compile(r"\bfixed\D{0,20}(\d+)"), "ge"),
-            (re.compile(r"\bminimum\D{0,20}(\d+)"), "ge"),
+            (re.compile(r"\bcapped?\D{0,20}" + _OPERAND), "le"),
+            (re.compile(r"\bmaximum\D{0,20}" + _OPERAND), "le"),
+            (re.compile(r"\bmax\D{0,20}" + _OPERAND), "le"),
+            (re.compile(r"\bpenalt(?:y|ies)\D{0,20}" + _OPERAND), "ge"),
+            (re.compile(r"\bfixed\D{0,20}" + _OPERAND), "ge"),
+            (re.compile(r"\bminimum\D{0,20}" + _OPERAND), "ge"),
         ],
     }
 
@@ -220,23 +223,14 @@ class ContradictionGuard:
         for pattern, op in rules:
             match = pattern.search(text)
             if match:
-                return op, int(match.group(1))
+                token = match.group(1)
+                if not token.isdigit():
+                    # Decimal or formatted numbers are unsupported
+                    # operands — fail closed rather than encoding a
+                    # silently altered value ("1.5" → 1, "1,500" → 1).
+                    return None
+                return op, int(token)
         return None
-
-    @classmethod
-    def _value_provenance(cls, clause: Clause) -> str:
-        """Classify where a clause's encoded value came from.
-
-        ``parsed_from_text`` only when the clause value IS the numeric
-        operand bound to the recognized constraint phrase;
-        ``caller_asserted`` otherwise — the Z3 model then encodes a
-        number the caller supplied, not one evidenced by the text
-        (issue #42, PR #45 review).
-        """
-        matched = cls._match_constraint(clause)
-        if matched is not None and matched[1] == clause.value:
-            return "parsed_from_text"
-        return "caller_asserted"
 
     @staticmethod
     def _encode_clauses(s: Solver, clauses: List[Clause], var: object, constraint_fn) -> "tuple[List[Clause], int]":
@@ -257,17 +251,21 @@ class ContradictionGuard:
     def _build_clause_fact_steps(encoded_supported: List[Clause]) -> "tuple[list, int]":
         """Build FACT_DERIVED trace steps for encoded clauses.
 
-        Returns (steps, caller_asserted_count). A caller_asserted value
-        means the constraint encodes a number the caller supplied, not
-        one parsed from the text — such steps are EVIDENCE_INFERRED
-        (non-proof), never DETERMINISTIC (issue #42, PR #45 review).
+        The solver encodes ONLY the text-derived operand of the matched
+        constraint phrase — never the caller's declared value. The
+        declaration is recorded separately with an agreement flag: a
+        differing declaration is disclosed, never silently encoded and
+        never a solver input (issue #42, PR #45 review).
+        Returns (steps, disagreement_count).
         """
         steps = []
-        caller_asserted = 0
+        disagreements = 0
         for c in encoded_supported:
-            provenance = ContradictionGuard._value_provenance(c)
-            if provenance == "caller_asserted":
-                caller_asserted += 1
+            matched = ContradictionGuard._match_constraint(c)
+            operand = matched[1]
+            agrees = c.value == operand
+            if not agrees:
+                disagreements += 1
             steps.append(
                 VerificationStep(
                     step=STEP_FACT_DERIVED,
@@ -275,21 +273,18 @@ class ContradictionGuard:
                     inputs={
                         "clause_text": c.text,
                         "clause_category": c.category,
-                        "clause_value": c.value,
-                        "value_provenance": provenance,
+                        "encoded_operand": operand,
+                        "caller_value": c.value,
+                        "caller_value_agrees": agrees,
                     },
                     output=(
-                        f"Z3 constraint added for '{c.text}' (value={c.value}, "
-                        f"value_provenance={provenance})"
+                        f"Z3 constraint added for '{c.text}' "
+                        f"(operand={operand} from text; caller declared {c.value})"
                     ),
-                    evidence_type=(
-                        EVIDENCE_DETERMINISTIC
-                        if provenance == "parsed_from_text"
-                        else EVIDENCE_INFERRED
-                    ),
+                    evidence_type=EVIDENCE_DETERMINISTIC,
                 )
             )
-        return steps, caller_asserted
+        return steps, disagreements
 
     @staticmethod
     def _partition_clauses(clauses: List[Clause]):
@@ -380,17 +375,17 @@ class ContradictionGuard:
         unmodeled_supported: int,
         categories_text: str,
         trace: list = None,
-        caller_asserted_values: int = 0,
+        disagreed_values: int = 0,
     ) -> dict:
         """Evaluate Z3 solver and build the final result dict."""
         has_unmodeled_supported = unmodeled_supported > 0
-        # Caller-asserted values make the constraint set contain numbers
-        # not evidenced by the text — a SAT result over them is NOT a
-        # verified consistency proof (issue #42, PR #45 review).
-        has_caller_asserted = caller_asserted_values > 0
-        has_partial_modeling = (
-            has_unsupported or has_unmodeled_supported or has_caller_asserted
-        )
+        # The solver encodes ONLY text-derived operands (see
+        # _build_clause_fact_steps) — the caller's declared value never
+        # enters the model, so solver conclusions are purely
+        # text-attributable. Disagreements are disclosed, not downgrade
+        # triggers (PR #45 review: an unused caller declaration must not
+        # suppress a text contradiction).
+        has_partial_modeling = has_unsupported or has_unmodeled_supported
 
         coverage_note = ""
         if has_unsupported:
@@ -403,12 +398,12 @@ class ContradictionGuard:
                 f" NOTE: {unmodeled_supported} supported-category clause(s) had "
                 f"unrecognized keyword patterns and could not be encoded."
             )
-        if has_caller_asserted:
+        if disagreed_values:
             coverage_note += (
-                f" NOTE: {caller_asserted_values} encoded clause value(s) were "
-                f"caller-asserted (not found in the clause text) — the consistency "
-                f"result covers caller-supplied numbers, not text-evidenced ones "
-                f"(see value_provenance in the trace)."
+                f" NOTE: {disagreed_values} clause(s) have caller-declared "
+                f"value(s) that disagree with the text-derived operand — the "
+                f"declaration was NOT encoded; see the trace "
+                f"(caller_value_agrees) for details."
             )
 
         result = s.check()
@@ -450,40 +445,8 @@ class ContradictionGuard:
                 ],
             }
 
-        # result == unsat → contradiction. A contradiction involving
-        # caller-asserted values proves the INVENTED numbers conflict —
-        # it says nothing about the text, so it is UNVERIFIABLE, never a
-        # deterministic contradiction (PR #45 review, CodeRabbit).
-        if has_caller_asserted:
-            return {
-                "verified": False,
-                "status": "unverifiable",
-                "message": (
-                    f"UNVERIFIABLE: The encoded constraints are mutually "
-                    f"exclusive, but {caller_asserted_values} clause value(s) "
-                    f"were caller-asserted (not found in the clause text) — "
-                    f"the conflict cannot be attributed to the contract text. "
-                    f"Supply values that appear in the text.{coverage_note}"
-                ),
-                "unsupported": unsupported_categories,
-                "verification_trace": (trace or [])
-                + [
-                    VerificationStep(
-                        step=STEP_CONCLUSION,
-                        description="Z3 evaluated: constraints conflict, but caller-asserted values participated.",
-                        inputs={
-                            "z3_result": "unsat",
-                            "caller_asserted_values": caller_asserted_values,
-                        },
-                        output=(
-                            "UNVERIFIABLE: UNSAT over caller-asserted values — "
-                            "not attributable to the clause text."
-                        ),
-                        evidence_type=EVIDENCE_UNSUPPORTED,
-                    )
-                ],
-            }
-
+        # result == unsat → contradiction. Every encoded constraint is
+        # text-derived, so the conflict IS attributable to the text.
         return {
             "verified": False,
             "status": "contradiction",

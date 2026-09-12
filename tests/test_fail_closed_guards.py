@@ -498,19 +498,23 @@ class TestContradictionGuardValueProvenance:
         ]
 
     def test_caller_invented_value_is_labeled(self):
-        """The audit repro: value 999 with text 'exactly 1 month' — Z3
-        must not present the invented number as text-evidenced."""
+        """The audit repro: value 999 with text 'exactly 1 month' — the
+        solver encodes the TEXT operand (1), never the invented number,
+        and the disagreement is disclosed in trace and message."""
         result, steps = self._fact_steps(
             [Clause(text="Contract term is exactly 1 month", category="DURATION", value=999)]
         )
-        assert steps[0].inputs["value_provenance"] == "caller_asserted"
-        assert "caller-asserted" in result["message"]
+        assert steps[0].inputs["encoded_operand"] == 1
+        assert steps[0].inputs["caller_value"] == 999
+        assert steps[0].inputs["caller_value_agrees"] is False
+        assert "disagree" in result["message"]
 
     def test_text_evidenced_value_is_labeled_parsed(self):
         result, steps = self._fact_steps(
             [Clause(text="Liability capped at 5000.", category="LIABILITY", value=5000)]
         )
-        assert steps[0].inputs["value_provenance"] == "parsed_from_text"
+        assert steps[0].inputs["encoded_operand"] == 5000
+        assert steps[0].inputs["caller_value_agrees"] is True
 
     def test_substring_keyword_no_longer_encodes(self):
         """'cap' inside 'capability' must NOT encode a liability cap —
@@ -542,9 +546,10 @@ class TestContradictionGuardValueProvenance:
         assert result["status"] == "partial_coverage"
 
     def test_provenance_binds_to_constraint_operand(self):
-        """parsed_from_text requires the value to be the operand of the
-        recognized phrase — a number elsewhere in the text does not
-        evidence it (PR #45 review, CodeRabbit)."""
+        """The encoded operand is the one bound to the recognized phrase —
+        a number elsewhere in the text does not evidence a differing
+        caller value, which is disclosed as a disagreement (PR #45
+        review, CodeRabbit)."""
         result, steps = self._fact_steps(
             [
                 Clause(
@@ -554,26 +559,28 @@ class TestContradictionGuardValueProvenance:
                 )
             ]
         )
-        assert steps[0].inputs["value_provenance"] == "caller_asserted"
-        assert result["verified"] is False
+        assert steps[0].inputs["encoded_operand"] == 12
+        assert steps[0].inputs["caller_value"] == 6
+        assert steps[0].inputs["caller_value_agrees"] is False
+        assert "disagree" in result["message"]
 
-    def test_unsat_over_caller_asserted_values_is_unverifiable(self):
-        """UNSAT involving caller-asserted values proves only that the
-        invented numbers conflict — not a contradiction of the text
-        (PR #45 review, CodeRabbit)."""
+    def test_unsat_is_text_attributable_with_disagreements_disclosed(self):
+        """The solver encodes only text-derived operands, so an UNSAT is
+        a genuine text contradiction even when caller declarations
+        disagree; the disagreements stay visible in the trace."""
         result = self.guard.verify_consistency(
             [
                 Clause(text="Contract term is exactly 1 month", category="DURATION", value=999),
                 Clause(text="Contract term is exactly 2 months", category="DURATION", value=888),
             ]
         )
-        # var==999 vs var==888 is UNSAT; both values are caller-asserted
-        # (999/888 appear nowhere in the texts), so the conflict is not
-        # attributable to the text.
-        assert result["status"] == "unverifiable"
-        assert result["verified"] is False
+        assert result["status"] == "contradiction"
         conclusion = [s for s in result["verification_trace"] if s.step == "CONCLUSION"][0]
-        assert conclusion.evidence_type == "UNSUPPORTED"
+        assert conclusion.evidence_type == "DETERMINISTIC"
+        fact_steps = [s for s in result["verification_trace"] if s.step == "FACT_DERIVED"]
+        assert [s.inputs["encoded_operand"] for s in fact_steps] == [1, 2]
+        assert all(s.inputs["caller_value_agrees"] is False for s in fact_steps)
+        assert "disagree" in result["message"]
 
     def test_unsat_over_evidenced_values_is_deterministic_contradiction(self):
         """Fully text-evidenced conflicting values keep the deterministic
@@ -588,27 +595,42 @@ class TestContradictionGuardValueProvenance:
         conclusion = [s for s in result["verification_trace"] if s.step == "CONCLUSION"][0]
         assert conclusion.evidence_type == "DETERMINISTIC"
 
-    def test_caller_asserted_value_is_not_verified(self):
-        """A SAT result over caller-invented numbers is partial coverage,
-        never verified=True (PR #45 review, CodeAnt)."""
+    def test_disagreeing_declaration_does_not_change_solver_conclusion(self):
+        """A differing caller declaration is unused by the solver — it
+        must not downgrade a text-derived conclusion (PR #45 review,
+        CodeRabbit/Greptile)."""
         result = self.guard.verify_consistency(
             [Clause(text="Contract term is exactly 1 month", category="DURATION", value=999)]
         )
-        assert result["status"] == "partial_coverage"
-        assert result["verified"] is False
+        assert result["status"] == "consistent"
+        assert result["verified"] is True
+        assert "disagree" in result["message"]
 
-    def test_caller_asserted_step_is_not_proven(self):
-        """Caller-asserted constraint steps are EVIDENCE_INFERRED and
-        is_proven() is False; text-evidenced steps stay DETERMINISTIC
-        (PR #45 review, CodeRabbit)."""
+    def test_encoding_steps_are_deterministic(self):
+        """Every encoded constraint is a deterministic encoding of a
+        text-derived operand."""
         result = self.guard.verify_consistency(
             [
                 Clause(text="Contract term is exactly 1 month", category="DURATION", value=999),
                 Clause(text="Term is exactly 6 months.", category="DURATION", value=6),
             ]
         )
-        steps = {s.inputs["value_provenance"]: s for s in result["verification_trace"] if s.step == "FACT_DERIVED"}
-        assert steps["caller_asserted"].is_proven() is False
-        assert steps["caller_asserted"].evidence_type == "INFERRED"
-        assert steps["parsed_from_text"].is_proven() is True
-        assert steps["parsed_from_text"].evidence_type == "DETERMINISTIC"
+        for s in result["verification_trace"]:
+            if s.step == "FACT_DERIVED":
+                assert s.evidence_type == "DETERMINISTIC"
+                assert s.is_proven() is True
+
+    def test_unsupported_numeric_operands_fail_closed(self):
+        """Signed, decimal, and formatted operands are unsupported — the
+        clause stays unmodeled rather than encoding an altered value
+        (PR #45 review, CodeRabbit)."""
+        for text, bad_operand in [
+            ("Term is exactly -30 days.", "-30"),
+            ("Term is exactly 1.5 months.", "1.5"),
+            ("Cap is exactly 1,500 dollars.", "1,500"),
+        ]:
+            result, steps = self._fact_steps(
+                [Clause(text=text, category="DURATION", value=30)]
+            )
+            assert steps == [], f"{bad_operand} must not encode"
+            assert result["status"] == "partial_coverage"
