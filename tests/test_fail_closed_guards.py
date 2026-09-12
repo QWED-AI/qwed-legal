@@ -726,3 +726,40 @@ class TestContradictionGuardValueProvenance:
             [Clause(text="Term is exactly 6 months.", category="DURATION", value=6)]
         )
         assert steps[0].inputs["value_provenance"] == "parsed_from_text"
+
+    def test_repeated_same_phrase_all_encoded(self):
+        """Every occurrence of a repeated phrase is a separate
+        constraint — 'capped at 7000 and capped at 5000' with penalty
+        6000 is contradictory (PR #45 review, Greptile R6 executed)."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(
+                    text="Liability is capped at 7000 and capped at 5000.",
+                    category="LIABILITY",
+                    value=7000,
+                ),
+                Clause(text="Penalty is 6000.", category="LIABILITY", value=6000),
+            ]
+        )
+        assert result["status"] == "contradiction"
+        fact_steps = [s for s in result["verification_trace"] if s.step == "FACT_DERIVED"]
+        assert fact_steps[0].inputs["encoded_constraints"] == [
+            {"op": "le", "operand": 7000},
+            {"op": "le", "operand": 5000},
+        ]
+
+    def test_repeated_malformed_phrase_fails_closed(self):
+        """A later malformed repeated phrase makes the whole clause
+        unmodeled, not just skipped (PR #45 review, Greptile R6)."""
+        result, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Liability is capped at 7000 and capped at 1.5 million.",
+                    category="LIABILITY",
+                    value=7000,
+                )
+            ]
+        )
+        assert steps == []
+        assert result["status"] == "partial_coverage"
+        assert result["verified"] is False

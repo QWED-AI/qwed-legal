@@ -211,13 +211,14 @@ class ContradictionGuard:
     def _collect_constraints(cls, clause: Clause) -> "Optional[list]":
         """Collect the (op, operand) constraints a clause's text evidences.
 
-        Returns a list of (op, operand) pairs — one per recognized phrase
-        with a valid unsigned-integer operand — or None when the clause
-        is unmodelable: no recognized phrase, no valid operand, or ANY
-        recognized phrase with a malformed operand. A malformed phrase
-        fails closed the whole clause: encoding only the interpretable
-        subset would present a partial model as complete and can hide a
-        conflict (PR #45 review, Greptile-executed).
+        Returns a list of (op, operand) pairs — one per OCCURRENCE of
+        every recognized phrase with a valid unsigned-integer operand —
+        or None when the clause is unmodelable: no recognized phrase, no
+        valid operand, or ANY recognized occurrence with a malformed
+        operand. A malformed occurrence fails closed the whole clause:
+        encoding only the interpretable subset would present a partial
+        model as complete and can hide a conflict (PR #45 review,
+        Greptile-executed).
         """
         rules = cls._CONSTRAINT_RULES.get(clause.category.upper())
         if not rules:
@@ -225,8 +226,10 @@ class ContradictionGuard:
         text = clause.text.lower()
         constraints = []
         for pattern, op in rules:
-            match = pattern.search(text)
-            if match:
+            # Every occurrence: a clause may state the same phrase more
+            # than once ("capped at 7000 and capped at 5000"), and each
+            # occurrence is a separate constraint (PR #45 review, R6).
+            for match in pattern.finditer(text):
                 token = match.group(1)
                 if not token.isdigit():
                     return None
