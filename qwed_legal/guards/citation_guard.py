@@ -175,8 +175,10 @@ class CitationGuard:
         # Section symbol optional (real drafting omits it, issue #41), but
         # the section identifier must START with a digit — "12 U.S.C.
         # provides that..." is prose, not a citation (PR #47 review,
-        # Sentry). Literal '+' separators are not citation syntax either.
-        "US_CODE": r"(?P<title>\d{1,3})\s+U\.?S\.?C\.?\s*[§\s]*(?P<section>\d[\w]*)",
+        # Sentry) — and U.S.C. requires its separating whitespace, so a
+        # bare "12 U.S.C.§..." form is rejected. Literal '+' separators
+        # are not citation syntax either.
+        "US_CODE": r"(?P<title>\d{1,3})\s+U\.?S\.?C\.?\s+(?:§+\s*)?(?P<section>\d[\w]*)",
     }
 
     def __init__(self) -> None:

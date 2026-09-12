@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ClauseGuard`: day extraction gains linked and proximity association tiers — day counts separated from their context word by a linker word ("notice within 10 days") or sitting nearby are now extracted; the closest expression wins and an ambiguous gap-tie stays unresolved. Directional patterns unchanged (singular "day" preserved).
 - `statute_guard.py`: corrected the UK fraud comment — the lookup value is 6 years (Limitation Act 1980); the old "No limit" comment contradicted the table.
 - Dockerfile: base image digest-pinned without a redundant tag (`python@sha256:7bec7dd…`), the package README is copied into the build context (required by the declared pyproject readme), and `HEALTHCHECK NONE` is declared (one-shot action container — no long-running service to monitor). Non-root USER intentionally omitted: GitHub Docker container actions must run as the default user to access GITHUB_OUTPUT/GITHUB_WORKSPACE.
-- `CitationGuard`: the section identifier must start with a digit — "12 U.S.C. provides that..." is prose, not a citation (PR #47 review).
+- `CitationGuard`: the section identifier must start with a digit — "12 U.S.C. provides that..." is prose, not a citation — and U.S.C. requires its separating whitespace (a bare "12 U.S.C.§..." form is rejected), while multi-section Bluebook runs ("§§ 1983") stay valid (PR #47 review).
 - `ClauseGuard`: multiple linked durations with different values ("breach notice within 10 days; termination notice within 120 days") are ambiguous and stay unresolved instead of picking the first in document order (PR #47 review).
 
 ### Ecosystem Alignment

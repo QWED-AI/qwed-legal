@@ -492,3 +492,15 @@ class TestStatuteSectionSymbolOptional:
         must start with a digit (PR #47 review, Sentry)."""
         result = self.guard.check_statute_citation("12 U.S.C. provides that")
         assert result.format_valid is False
+
+    def test_usc_requires_separator_whitespace(self):
+        """'12 U.S.C.§ 1983' without whitespace after U.S.C. is rejected —
+        the tightened grammar requires the separating space (PR #47
+        review, Sentry R3)."""
+        result = self.guard.check_statute_citation("12 U.S.C.§ 1983")
+        assert result.format_valid is False
+
+    def test_multi_section_symbol_run_still_valid(self):
+        """'§§ 1983' (multiple-section Bluebook form) stays valid."""
+        result = self.guard.check_statute_citation("42 U.S.C. §§ 1983")
+        assert result.format_valid is True
