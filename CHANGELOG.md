@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SACProcessor`: the LLM-generated fingerprint is labeled `[AI-GENERATED SUMMARY — UNTRUSTED CONTENT]`, the deterministic document hash is always carried alongside (even when a caller-supplied `document_id` exists), and the summary is sanitized (single-line, control characters and forged `CHUNK CONTENT`/`DOCUMENT CONTEXT` markers stripped) so a compromised summarizer cannot poison corpus-wide retrieval structure (#42).
 - `StatuteOfLimitationsGuard` results now carry a `status` field: `CLAIM_VERIFIED` / `CLAIM_INCORRECT` when a `claimed_within_period` answer was supplied, `COMPUTED_ONLY` in computation-only mode, and `UNVERIFIABLE` for input-class rejections. `verified` is now reserved for claim comparison — in computation-only mode it is `False` by contract (previously it doubled as the within-period legal fact, making an expired-but-correctly-evaluated claim indistinguishable from a verification failure) (#42). The TypeScript SDK's `StatuteResult` echoes the new field.
 
+### Hygiene (issue #41)
+- `CitationGuard`: the US_CODE statute pattern accepts an omitted section symbol ("12 U.S.C. 2605") — real-world drafting often drops the §; formatted cites without it were false-negatived.
+- `ClauseGuard`: day extraction gains a proximity fallback — day counts separated from their context word by intervening words ("give notice within 10 days of discovery") are now extracted; directional patterns unchanged.
+- `statute_guard.py`: corrected the UK fraud comment — the 6-year value follows Limitation Act 1980 s.5 with s.32 discovery deferral; the old "No limit" comment contradicted the table.
+- Dockerfile: base image digest-pinned (`python:3.14.6-slim@sha256:7bec7dd…`) and runs as a non-root user.
+
 ### Ecosystem Alignment
 - Synced the PyPI package description with the repository identity ("Deterministic rejection layer for computational legal claims...").
 - Added `.qwed.yml` (QWED Security scanner configuration, matching the qwed-finance convention) and the QWED Security Marketplace badge to the README badge row (#36).

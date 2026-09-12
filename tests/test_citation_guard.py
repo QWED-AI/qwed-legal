@@ -456,3 +456,27 @@ class TestMixedCitationStatuteFallback:
         assert result.format_valid is False
         assert result.status == STATUS_FORMAT_INVALID
         assert any("case name" in issue.lower() for issue in result.issues)
+
+
+class TestStatuteSectionSymbolOptional:
+    """Issue #41: real-world drafting often omits the section symbol —
+    '12 U.S.C. 2605' is a legitimate US_CODE citation form."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    def test_statute_without_section_symbol_is_format_valid(self):
+        result = self.guard.check_statute_citation("12 U.S.C. 2605")
+        assert result.format_valid is True
+        assert result.status == STATUS_UNVERIFIABLE_AUTHORITY
+        assert result.parsed_components.get("title") == 12
+        assert result.verified is False
+
+    def test_statute_with_section_symbol_still_valid(self):
+        result = self.guard.check_statute_citation("42 U.S.C. § 1983")
+        assert result.format_valid is True
+
+    def test_statute_still_requires_usc_marker(self):
+        """The relaxation must not accept arbitrary number sequences."""
+        result = self.guard.check_statute_citation("12 random 2605")
+        assert result.format_valid is False

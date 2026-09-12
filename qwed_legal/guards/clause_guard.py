@@ -56,6 +56,10 @@ class ClauseGuard:
         >>> print(result.consistent)  # False - clauses conflict
     """
 
+    # Max chars between a context word and its day-expression for the
+    # proximity fallback in _extract_days (issue #41).
+    _CONTEXT_WINDOW = 40
+
     def __init__(self):
         """Initialize ClauseGuard."""
 
@@ -321,19 +325,37 @@ class ClauseGuard:
         return any(re.search(pattern, text) for pattern in operative_patterns)
 
     def _extract_days(self, text: str, context: str) -> Optional[int]:
-        """Extract number of days from text near a context word."""
+        """Extract number of days from text near a context word.
+
+        Directional patterns first (day count directly attached to the
+        context word), then a proximity fallback: any day-expression
+        within _CONTEXT_WINDOW characters of the context word. ClauseGuard
+        is a heuristic guard — broader extraction is coverage, not proof
+        (issue #41).
+        """
         if context not in text:
             return None
 
-        pattern = rf"(\d+)\s*(?:calendar\s+)?(?:business\s+)?days?\s*{context}"
-        match = re.search(pattern, text)
-        if match:
-            return int(match.group(1))
+        day_expr = r"(\d+)\s*(?:calendar\s+)?(?:business\s+)?days?"
+        directional = [
+            rf"{day_expr[:-1]}\s*{context}",
+            rf"{context}\s*{day_expr[:-1]}",
+        ]
+        for pattern in directional:
+            match = re.search(pattern, text)
+            if match:
+                return int(match.group(1))
 
-        pattern = rf"{context}\s*(\d+)\s*(?:calendar\s+)?(?:business\s+)?days?"
-        match = re.search(pattern, text)
-        if match:
-            return int(match.group(1))
+        # Proximity fallback: legitimate phrasings place the day count on
+        # the other side of intervening words ("give notice within 10
+        # days of discovery") — anchor to the nearest day-expression.
+        context_re = re.compile(rf"\b{re.escape(context)}\b")
+        for match in re.finditer(day_expr, text):
+            start, end = match.span()
+            before = text[max(0, start - self._CONTEXT_WINDOW):start]
+            after = text[end:end + self._CONTEXT_WINDOW]
+            if context_re.search(before) or context_re.search(after):
+                return int(match.group(1))
 
         return None
 

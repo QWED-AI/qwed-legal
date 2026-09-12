@@ -798,3 +798,42 @@ class TestContradictionGuardValueProvenance:
         assert steps[0].inputs["encoded_constraints"] == [{"op": "le", "operand": 5000}]
         assert result["status"] == "consistent"
         assert result["verified"] is True
+
+
+class TestClauseGuardDayExtraction:
+    """Issue #41: day extraction must cover phrasings where the day count
+    is not directly attached to the context word."""
+
+    def setup_method(self):
+        self.guard = ClauseGuard()
+
+    def test_issue_repro_proximity_extraction(self):
+        """'give notice within 10 days of discovery' returned None before
+        the fix — the number is separated from 'notice' by 'within'."""
+        days = self.guard._extract_days(
+            "buyer shall give notice within 10 days of discovery", "notice"
+        )
+        assert days == 10
+
+    def test_directional_patterns_still_work(self):
+        assert self.guard._extract_days(
+            "seller may terminate with 30 days notice", "notice"
+        ) == 30
+        assert self.guard._extract_days(
+            "neither party may terminate before 90 days from execution", "before"
+        ) == 90
+
+    def test_no_day_expression_near_context_returns_none(self):
+        assert self.guard._extract_days(
+            "the notice requirement is governed by the appendix", "notice"
+        ) is None
+
+    def test_proximity_requires_context_word_nearby(self):
+        """A day-expression far from the context word must not be
+        misattributed."""
+        far_text = (
+            "notice requirements are set out in the earlier provisions of this "
+            "agreement, and the Parties shall comply with a 10 days cure period "
+            "described elsewhere"
+        )
+        assert self.guard._extract_days(far_text, "notice") is None

@@ -172,7 +172,7 @@ class CitationGuard:
 
     # Known statute citation patterns
     STATUTE_PATTERNS: Dict[str, str] = {
-        "US_CODE": r"(?P<title>\d{1,3})\s+U\.?S\.?C\.?\s+§+\s*(?P<section>[\d\w]+)",
+        "US_CODE": r"(?P<title>\d{1,3})\s+U\.?S\.?C\.?\s*[§+\s]*(?P<section>[\d\w]+)",
     }
 
     def __init__(self) -> None:
