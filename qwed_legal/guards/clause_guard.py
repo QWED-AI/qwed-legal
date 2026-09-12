@@ -327,37 +327,63 @@ class ClauseGuard:
     def _extract_days(self, text: str, context: str) -> Optional[int]:
         """Extract number of days from text near a context word.
 
-        Directional patterns first (day count directly attached to the
-        context word), then a proximity fallback: any day-expression
-        within _CONTEXT_WINDOW characters of the context word. ClauseGuard
-        is a heuristic guard — broader extraction is coverage, not proof
-        (issue #41).
+        Association strength, strongest first: directional patterns (day
+        count directly attached to the context word, singular or plural),
+        a linked pattern (context + linker word + duration, e.g. "notice
+        within 30 days"), then a proximity fallback: the day-expression
+        CLOSEST to the context word within _CONTEXT_WINDOW characters,
+        with an exact gap-tie between different values left unresolved.
+        ClauseGuard is a heuristic guard — broader extraction is
+        coverage, not proof (issue #41).
         """
         if context not in text:
             return None
 
-        day_expr = r"(\d+)\s*(?:calendar\s+)?(?:business\s+)?days?"
+        day_expr = r"(\d+)\s*(?:calendar\s+|business\s+)?days?"
         directional = [
-            rf"{day_expr[:-1]}\s*{context}",
-            rf"{context}\s*{day_expr[:-1]}",
+            rf"{day_expr}\s*{context}",
+            rf"{context}\s*{day_expr}",
         ]
         for pattern in directional:
             match = re.search(pattern, text)
             if match:
                 return int(match.group(1))
 
-        # Proximity fallback: legitimate phrasings place the day count on
-        # the other side of intervening words ("give notice within 10
-        # days of discovery") — anchor to the nearest day-expression.
-        context_re = re.compile(rf"\b{re.escape(context)}\b")
-        for match in re.finditer(day_expr, text):
-            start, end = match.span()
-            before = text[max(0, start - self._CONTEXT_WINDOW):start]
-            after = text[end:end + self._CONTEXT_WINDOW]
-            if context_re.search(before) or context_re.search(after):
-                return int(match.group(1))
+        # Linked: a linker word binds the duration to the context even
+        # when other durations sit nearby ("10 days cure; notice within
+        # 30 days" must resolve to 30 — PR #47 review, Greptile).
+        linked = re.search(
+            rf"{context}\s*(?:within|of|from|after|no\s+later\s+than|following)\s*{day_expr}",
+            text,
+        )
+        if linked:
+            return int(linked.group(1))
 
-        return None
+        # Proximity fallback: rank candidates by the gap between the
+        # context word and the day-expression (inclusive of
+        # _CONTEXT_WINDOW); a tie at the minimum gap between different
+        # values is ambiguous and stays unresolved.
+        context_re = re.compile(rf"\b{re.escape(context)}\b")
+        candidates = []
+        for ctx_match in context_re.finditer(text):
+            for day_match in re.finditer(day_expr, text):
+                if ctx_match.end() <= day_match.start():
+                    gap = day_match.start() - ctx_match.end()
+                elif day_match.end() <= ctx_match.start():
+                    gap = ctx_match.start() - day_match.end()
+                else:
+                    # Overlapping spans: direct attachment already handled
+                    # by the directional patterns above.
+                    continue
+                if gap <= self._CONTEXT_WINDOW:
+                    candidates.append((gap, int(day_match.group(1))))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: c[0])
+        best_values = {value for gap, value in candidates if gap == candidates[0][0]}
+        if len(best_values) == 1:
+            return best_values.pop()
+        return None  # ambiguous association
 
     def _extract_parties(self, text: str) -> set:
         """Extract party names from clause."""

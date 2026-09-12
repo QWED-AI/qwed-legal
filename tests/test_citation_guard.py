@@ -480,3 +480,9 @@ class TestStatuteSectionSymbolOptional:
         """The relaxation must not accept arbitrary number sequences."""
         result = self.guard.check_statute_citation("12 random 2605")
         assert result.format_valid is False
+
+    def test_plus_separators_rejected(self):
+        """'+' is not citation syntax — '12 U.S.C. +++2605' must not be
+        format-valid (PR #47 review, Greptile P2)."""
+        result = self.guard.check_statute_citation("12 U.S.C. +++2605")
+        assert result.format_valid is False
