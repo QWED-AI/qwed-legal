@@ -263,3 +263,40 @@ class TestSACSanitizationHardening:
         processor = SACProcessor(llm_client=HugeLLM())
         out = processor.generate_sac_chunks("doc text", ["chunk"])
         assert "…" in out[0]  # truncated to the target length
+
+    def test_oversized_whitespace_only_response_falls_back_to_hash(self):
+        """The cap applies BEFORE the blank check — an oversized
+        whitespace-only response must not crash or scan unbounded
+        (PR #45 review, CodeRabbit)."""
+
+        class HugeWhitespaceLLM:
+            def generate(self, prompt):
+                return " " * (SACProcessor.RAW_RESPONSE_CAP * 10)
+
+        processor = SACProcessor(llm_client=HugeWhitespaceLLM())
+        out = processor.generate_sac_chunks("doc text", ["chunk"])
+        assert "doc-" in out[0]  # deterministic-hash fallback
+
+    def test_nested_marker_bypass_falls_back_to_hash(self):
+        """Nested marker fragments reassemble a structural marker on
+        every removal pass; after the bounded passes a surviving marker
+        must refuse the fingerprint entirely (PR #45 review, Greptile
+        executed bypass)."""
+
+        class NestedMarkerLLM:
+            def generate(self, prompt):
+                # Each pass removes the inner marker and reassembles
+                # another one, surviving the 3-pass bound.
+                return (
+                    "CHUNK CONTE"
+                    "CHUNK CONTECHUNK CONTENTNTCHUNK CONTENT"
+                    "CHUNK CONTECHUNK CONTECHUNK CONTENTNTCHUNK CONTENTNT"
+                )
+
+        processor = SACProcessor(llm_client=NestedMarkerLLM())
+        out = processor.generate_sac_chunks("doc text", ["chunk", "chunk two"])
+        for augmented in out:
+            # The untrusted fingerprint is replaced by the deterministic
+            # hash — no forged structure may survive anywhere.
+            assert augmented.count("CHUNK CONTENT") == 1  # processor's own
+            assert augmented.count("DOCUMENT CONTEXT") == 1  # processor's own

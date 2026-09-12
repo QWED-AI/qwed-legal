@@ -11,7 +11,7 @@ Fail-closed design:
 
 import re
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 from z3 import Int, Solver, sat, unknown
 
 from qwed_legal.models import (
@@ -182,16 +182,59 @@ class ContradictionGuard:
 
     # ── private helpers ────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _value_provenance(clause: Clause) -> str:
+    # Constraint phrase rules, ordered per category. Each pattern binds a
+    # recognized phrase to the numeric operand ADJACENT to it — the operand
+    # is what gets encoded into Z3 AND what value_provenance compares
+    # against. A number elsewhere in the text is not the term value
+    # (issue #42, PR #45 review).
+    _CONSTRAINT_RULES = {
+        "DURATION": [
+            (re.compile(r"\bexactly\D{0,20}(\d+)"), "eq"),
+            (re.compile(r"\bminimum\D{0,20}(\d+)"), "ge"),
+            (re.compile(r"\bat\s+least\D{0,20}(\d+)"), "ge"),
+            (re.compile(r"\bmaximum\D{0,20}(\d+)"), "le"),
+            (re.compile(r"\bup\s+to\D{0,20}(\d+)"), "le"),
+        ],
+        "LIABILITY": [
+            (re.compile(r"\bcapped?\D{0,20}(\d+)"), "le"),
+            (re.compile(r"\bmaximum\D{0,20}(\d+)"), "le"),
+            (re.compile(r"\bmax\D{0,20}(\d+)"), "le"),
+            (re.compile(r"\bpenalt(?:y|ies)\D{0,20}(\d+)"), "ge"),
+            (re.compile(r"\bfixed\D{0,20}(\d+)"), "ge"),
+            (re.compile(r"\bminimum\D{0,20}(\d+)"), "ge"),
+        ],
+    }
+
+    @classmethod
+    def _match_constraint(cls, clause: Clause) -> "Optional[tuple]":
+        """Match the recognized constraint phrase and its numeric operand.
+
+        Returns (op, operand) or None when no supported phrase with an
+        adjacent number is present — such clauses stay unmodeled rather
+        than being encoded from an unevidenced quantity.
+        """
+        rules = cls._CONSTRAINT_RULES.get(clause.category.upper())
+        if not rules:
+            return None
+        text = clause.text.lower()
+        for pattern, op in rules:
+            match = pattern.search(text)
+            if match:
+                return op, int(match.group(1))
+        return None
+
+    @classmethod
+    def _value_provenance(cls, clause: Clause) -> str:
         """Classify where a clause's encoded value came from.
 
-        ``parsed_from_text`` when the value appears as a whole token in
-        the clause text; ``caller_asserted`` otherwise — the Z3 model
-        then encodes a number the caller supplied, not one evidenced by
-        the text (issue #42).
+        ``parsed_from_text`` only when the clause value IS the numeric
+        operand bound to the recognized constraint phrase;
+        ``caller_asserted`` otherwise — the Z3 model then encodes a
+        number the caller supplied, not one evidenced by the text
+        (issue #42, PR #45 review).
         """
-        if re.search(rf"\b{re.escape(str(clause.value))}\b", clause.text.lower()):
+        matched = cls._match_constraint(clause)
+        if matched is not None and matched[1] == clause.value:
             return "parsed_from_text"
         return "caller_asserted"
 
@@ -257,41 +300,38 @@ class ContradictionGuard:
         ]
         return supported, unsupported
 
-    @staticmethod
-    def _add_duration_constraint(s: Solver, clause: Clause, var: object) -> int:
+    @classmethod
+    def _add_duration_constraint(cls, s: Solver, clause: Clause, var: object) -> int:
         """
         Add a Z3 constraint for a DURATION clause.
-        Returns 1 if the clause keyword is not modeled (unmodeled), 0 otherwise.
+        Returns 1 if the clause phrase is not modeled (unmodeled), 0 otherwise.
         """
-        text = clause.text.lower()
-        # Word-boundary matching: substring matches fired on unrelated
-        # words ("capacity" matching "cap") and mis-encoded constraints
-        # (issue #42).
-        if re.search(r"\bexactly\b", text):
-            s.add(var == clause.value)
-        elif re.search(r"\bminimum\b|\bat\s+least\b", text):
-            s.add(var >= clause.value)
-        elif re.search(r"\bmaximum\b|\bup\s+to\b", text):
-            s.add(var <= clause.value)
+        matched = cls._match_constraint(clause)
+        if matched is None:
+            return 1  # clause recognized as DURATION but phrase/operand not modeled
+        op, operand = matched
+        if op == "eq":
+            s.add(var == operand)
+        elif op == "ge":
+            s.add(var >= operand)
         else:
-            return 1  # clause recognized as DURATION but keyword not modeled
+            s.add(var <= operand)
         return 0
 
-    @staticmethod
-    def _add_liability_constraint(s: Solver, clause: Clause, var: object) -> int:
+    @classmethod
+    def _add_liability_constraint(cls, s: Solver, clause: Clause, var: object) -> int:
         """
         Add a Z3 constraint for a LIABILITY clause.
-        Returns 1 if the clause keyword is not modeled (unmodeled), 0 otherwise.
+        Returns 1 if the clause phrase is not modeled (unmodeled), 0 otherwise.
         """
-        text = clause.text.lower()
-        # Word-boundary matching: bare "cap" matched inside "capacity",
-        # "escape capability", etc. and mis-encoded constraints (#42).
-        if re.search(r"\bcapped?\b|\bmax(?:imum)?\b", text):
-            s.add(var <= clause.value)
-        elif re.search(r"\bpenalt(?:y|ies)\b|\bfixed\b|\bminimum\b", text):
-            s.add(var >= clause.value)
+        matched = cls._match_constraint(clause)
+        if matched is None:
+            return 1  # clause recognized as LIABILITY but phrase/operand not modeled
+        op, operand = matched
+        if op == "le":
+            s.add(var <= operand)
         else:
-            return 1  # clause recognized as LIABILITY but keyword not modeled
+            s.add(var >= operand)
         return 0
 
     @staticmethod
@@ -410,7 +450,40 @@ class ContradictionGuard:
                 ],
             }
 
-        # result == unsat → contradiction
+        # result == unsat → contradiction. A contradiction involving
+        # caller-asserted values proves the INVENTED numbers conflict —
+        # it says nothing about the text, so it is UNVERIFIABLE, never a
+        # deterministic contradiction (PR #45 review, CodeRabbit).
+        if has_caller_asserted:
+            return {
+                "verified": False,
+                "status": "unverifiable",
+                "message": (
+                    f"UNVERIFIABLE: The encoded constraints are mutually "
+                    f"exclusive, but {caller_asserted_values} clause value(s) "
+                    f"were caller-asserted (not found in the clause text) — "
+                    f"the conflict cannot be attributed to the contract text. "
+                    f"Supply values that appear in the text.{coverage_note}"
+                ),
+                "unsupported": unsupported_categories,
+                "verification_trace": (trace or [])
+                + [
+                    VerificationStep(
+                        step=STEP_CONCLUSION,
+                        description="Z3 evaluated: constraints conflict, but caller-asserted values participated.",
+                        inputs={
+                            "z3_result": "unsat",
+                            "caller_asserted_values": caller_asserted_values,
+                        },
+                        output=(
+                            "UNVERIFIABLE: UNSAT over caller-asserted values — "
+                            "not attributable to the clause text."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            }
+
         return {
             "verified": False,
             "status": "contradiction",

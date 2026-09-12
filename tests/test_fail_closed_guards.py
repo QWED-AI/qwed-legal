@@ -532,12 +532,61 @@ class TestContradictionGuardValueProvenance:
         )
         assert len(steps) == 3
 
-    def test_value_token_boundary(self):
-        """value=1 must not match inside '12 months' — token-level check."""
-        _, steps = self._fact_steps(
+    def test_keyword_without_operand_is_unmodeled(self):
+        """A recognized keyword with no adjacent number cannot be encoded
+        from the caller's value — the clause stays unmodeled."""
+        result, steps = self._fact_steps(
             [Clause(text="Term is 12 months minimum.", category="DURATION", value=1)]
         )
+        assert steps == []
+        assert result["status"] == "partial_coverage"
+
+    def test_provenance_binds_to_constraint_operand(self):
+        """parsed_from_text requires the value to be the operand of the
+        recognized phrase — a number elsewhere in the text does not
+        evidence it (PR #45 review, CodeRabbit)."""
+        result, steps = self._fact_steps(
+            [
+                Clause(
+                    text="Term is exactly 12 months; notice is 6 days.",
+                    category="DURATION",
+                    value=6,
+                )
+            ]
+        )
         assert steps[0].inputs["value_provenance"] == "caller_asserted"
+        assert result["verified"] is False
+
+    def test_unsat_over_caller_asserted_values_is_unverifiable(self):
+        """UNSAT involving caller-asserted values proves only that the
+        invented numbers conflict — not a contradiction of the text
+        (PR #45 review, CodeRabbit)."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(text="Contract term is exactly 1 month", category="DURATION", value=999),
+                Clause(text="Contract term is exactly 2 months", category="DURATION", value=888),
+            ]
+        )
+        # var==999 vs var==888 is UNSAT; both values are caller-asserted
+        # (999/888 appear nowhere in the texts), so the conflict is not
+        # attributable to the text.
+        assert result["status"] == "unverifiable"
+        assert result["verified"] is False
+        conclusion = [s for s in result["verification_trace"] if s.step == "CONCLUSION"][0]
+        assert conclusion.evidence_type == "UNSUPPORTED"
+
+    def test_unsat_over_evidenced_values_is_deterministic_contradiction(self):
+        """Fully text-evidenced conflicting values keep the deterministic
+        contradiction verdict."""
+        result = self.guard.verify_consistency(
+            [
+                Clause(text="Contract term is exactly 12 months", category="DURATION", value=12),
+                Clause(text="Contract term is maximum 2 months", category="DURATION", value=2),
+            ]
+        )
+        assert result["status"] == "contradiction"
+        conclusion = [s for s in result["verification_trace"] if s.step == "CONCLUSION"][0]
+        assert conclusion.evidence_type == "DETERMINISTIC"
 
     def test_caller_asserted_value_is_not_verified(self):
         """A SAT result over caller-invented numbers is partial coverage,

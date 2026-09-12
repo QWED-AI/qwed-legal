@@ -168,18 +168,21 @@ class SACProcessor:
 
         summary = self._llm.generate(prompt)
 
+        # Cap BEFORE any scanning: blank checks and sanitization must
+        # never scan an unbounded response (PR #45 review, CWE-400).
+        summary = (summary or "")[: self.RAW_RESPONSE_CAP]
+
         # Defensive: handle None or empty LLM returns
         if not summary or not summary.strip():
             return self._hash_id(document_text)
 
-        sanitized = self._sanitize_fingerprint(
-            summary[: self.RAW_RESPONSE_CAP], self._target_length
-        )
+        sanitized = self._sanitize_fingerprint(summary, self._target_length)
         if not sanitized:
-            # Sanitization can strip everything (e.g., a response
-            # consisting only of forged markers) — fall back to the
-            # deterministic hash rather than embedding an empty
-            # fingerprint (PR #45 review, Sentry).
+            # Sanitization can strip everything — either an all-marker
+            # response, or nested marker fragments that reassemble past
+            # the bounded removal passes (PR #45 review, Sentry and
+            # Greptile-executed bypass). Fall back to the deterministic
+            # hash rather than embedding an untrusted fingerprint.
             return self._hash_id(document_text)
         return sanitized
 
@@ -213,6 +216,12 @@ class SACProcessor:
                 break
             summary = marker_pattern.sub("", summary)
             summary = " ".join(summary.split())
+        # A nested-marker response can reassemble a structural marker on
+        # every pass and survive the bounded limit (Greptile-executed
+        # bypass, PR #45 review). Refuse the fingerprint entirely — the
+        # caller falls back to the deterministic hash.
+        if marker_pattern.search(summary):
+            return ""
         # Enforce length limit
         if len(summary) > target_length:
             summary = summary[:target_length].rsplit(" ", 1)[0] + "…"
