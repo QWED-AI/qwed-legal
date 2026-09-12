@@ -874,3 +874,20 @@ class TestClauseGuardDayExtraction:
         # expressions sit 6 characters from "notice".
         text = "10 days abcd notice dcba 30 days"
         assert self.guard._extract_days(text, "notice") is None
+
+    def test_multiple_linked_durations_are_ambiguous(self):
+        """Greptile R2 executed: two linked notice durations with
+        different values ('breach notice within 10 days; termination
+        notice within 120 days') are ambiguous — unresolved rather than
+        picking the first in document order."""
+        days = self.guard._extract_days(
+            "breach notice within 10 days; termination notice within 120 days",
+            "notice",
+        )
+        assert days is None
+
+    def test_same_value_repeated_linked_durations_resolve(self):
+        linked = self.guard._extract_days(
+            "notice within 30 days; further notice within 30 days", "notice"
+        )
+        assert linked == 30

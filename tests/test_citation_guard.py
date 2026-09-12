@@ -486,3 +486,9 @@ class TestStatuteSectionSymbolOptional:
         format-valid (PR #47 review, Greptile P2)."""
         result = self.guard.check_statute_citation("12 U.S.C. +++2605")
         assert result.format_valid is False
+
+    def test_prose_after_usc_is_not_a_section(self):
+        """'12 U.S.C. provides that...' is prose — the section identifier
+        must start with a digit (PR #47 review, Sentry)."""
+        result = self.guard.check_statute_citation("12 U.S.C. provides that")
+        assert result.format_valid is False

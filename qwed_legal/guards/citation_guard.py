@@ -172,9 +172,11 @@ class CitationGuard:
 
     # Known statute citation patterns
     STATUTE_PATTERNS: Dict[str, str] = {
-        # Section symbol optional (real drafting omits it, issue #41);
-        # literal '+' separators are not citation syntax (PR #47 review).
-        "US_CODE": r"(?P<title>\d{1,3})\s+U\.?S\.?C\.?\s*[§\s]*(?P<section>[\d\w]+)",
+        # Section symbol optional (real drafting omits it, issue #41), but
+        # the section identifier must START with a digit — "12 U.S.C.
+        # provides that..." is prose, not a citation (PR #47 review,
+        # Sentry). Literal '+' separators are not citation syntax either.
+        "US_CODE": r"(?P<title>\d{1,3})\s+U\.?S\.?C\.?\s*[§\s]*(?P<section>\d[\w]*)",
     }
 
     def __init__(self) -> None:

@@ -13,6 +13,10 @@ COPY action_entrypoint.py .
 
 RUN pip install --no-cache-dir .
 
+# One-shot action container: no long-running service to monitor, so the
+# health check is explicitly disabled (QWED docker-no-healthcheck rule).
+HEALTHCHECK NONE
+
 # GitHub Docker container actions must run as the default user (root):
 # the runner-provided GITHUB_OUTPUT / GITHUB_WORKSPACE files are not
 # writable by a non-root USER. See Dockerfile support in the GitHub

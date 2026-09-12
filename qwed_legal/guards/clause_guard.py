@@ -331,8 +331,7 @@ class ClauseGuard:
         count directly attached to the context word, singular or plural),
         a linked pattern (context + linker word + duration, e.g. "notice
         within 30 days"), then a proximity fallback: the day-expression
-        CLOSEST to the context word within _CONTEXT_WINDOW characters,
-        with an exact gap-tie between different values left unresolved.
+        CLOSEST to the context word within _CONTEXT_WINDOW characters.
         ClauseGuard is a heuristic guard — broader extraction is
         coverage, not proof (issue #41).
         """
@@ -340,29 +339,34 @@ class ClauseGuard:
             return None
 
         day_expr = r"(\d+)\s*(?:calendar\s+|business\s+)?days?"
-        directional = [
+        for pattern in (
             rf"{day_expr}\s*{context}",
             rf"{context}\s*{day_expr}",
-        ]
-        for pattern in directional:
+        ):
             match = re.search(pattern, text)
             if match:
                 return int(match.group(1))
 
         # Linked: a linker word binds the duration to the context even
         # when other durations sit nearby ("10 days cure; notice within
-        # 30 days" must resolve to 30 — PR #47 review, Greptile).
-        linked = re.search(
-            rf"{context}\s*(?:within|of|from|after|no\s+later\s+than|following)\s*{day_expr}",
-            text,
+        # 30 days" must resolve to 30 — PR #47 review, Greptile). Multiple
+        # linked durations with different values are ambiguous and stay
+        # unresolved rather than picking the first in document order
+        # (PR #47 review, Greptile R2-executed).
+        linked_re = re.compile(
+            rf"{context}\s*(?:within|of|from|after|no\s+later\s+than|following)\s*{day_expr}"
         )
-        if linked:
-            return int(linked.group(1))
+        linked_values = {int(m.group(1)) for m in linked_re.finditer(text)}
+        if linked_values:
+            return linked_values.pop() if len(linked_values) == 1 else None
 
-        # Proximity fallback: rank candidates by the gap between the
-        # context word and the day-expression (inclusive of
-        # _CONTEXT_WINDOW); a tie at the minimum gap between different
-        # values is ambiguous and stays unresolved.
+        return self._nearest_days(text, context, day_expr)
+
+    def _nearest_days(self, text: str, context: str, day_expr: str) -> Optional[int]:
+        """Proximity fallback: rank day-expression candidates by the gap
+        between the context word and the expression (inclusive of
+        _CONTEXT_WINDOW); a tie at the minimum gap between different
+        values is ambiguous and stays unresolved."""
         context_re = re.compile(rf"\b{re.escape(context)}\b")
         candidates = []
         for ctx_match in context_re.finditer(text):
