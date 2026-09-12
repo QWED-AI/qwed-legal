@@ -9,14 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `LiabilityGuard`: non-finite inputs (Infinity/NaN) to `verify_cap`, `verify_indemnity_limit`, and `verify_tiered_liability` fail closed with `UNVERIFIABLE` instead of raising `decimal.InvalidOperation` or failing closed only by NaN-comparison accident; affected numeric result fields are now `null` in the failure result (#42).
+- `DeadlineGuard`: quantities beyond the supported range (cap: 100,000 — no legal term spans ~274 years) fail closed with `UNVERIFIABLE` instead of raising `OverflowError`; date-range overflow converts to fail-closed; the business-day loop is bounded so astronomical quantities can no longer stall the loop (#42).
 - `StatuteOfLimitationsGuard`: fails closed with `UNVERIFIABLE` when the filing date precedes the incident date. A factually impossible (time-travel) timeline no longer computes a positive `days_remaining` or verifies as within-period (#38).
 - `DeadlineGuard`: term parsing now pairs each number with its immediately adjacent unit. Compound terms containing more than one time expression (e.g., "30 days and 2 months") fail closed as `UNVERIFIABLE` instead of silently combining the first number with the last matching unit branch (#39).
 - `DeadlineGuard`: numbers not adjacent to a time unit (e.g., clause references like "section 4.2") no longer hijack the parsed quantity, and the business-days qualifier must be adjacent to the unit (a "business" elsewhere in the sentence no longer turns calendar days into business days).
 - `DeadlineGuard`: numeric tokens must be complete — decimals ("2.5 years" no longer parses as 5 years), signed values ("-30 days"), and numbers embedded in words ("section30days") fail closed instead of matching a partial quantity.
 - `DeadlineGuard`: terms containing an unmatched numeric token ("30 or 60 days", "30 days and 48 hours", a clause reference like "4.2") fail closed as ambiguous instead of silently ignoring the extra quantity.
 - `DeadlineGuard`: business/working qualifiers on month and year units ("business months", "working years") fail closed instead of silently computing calendar periods.
+- `LiabilityGuard`: finite-but-extreme magnitudes (beyond the decimal context) fail closed with `UNVERIFIABLE` instead of raising during quantize; the non-finite failure message names exactly the offending inputs.
+- `DeadlineGuard`: the quantity cap now applies to the normalized business-day count, so business-week terms cannot multiply past the cap ("100000 business weeks" = 500,000 business days fails closed instead of looping).
+- npm SDK: non-finite liability inputs are rejected client-side (Infinity/NaN interpolated into Python previously raised `NameError`); nullable liability fields serialize as `null` instead of crashing on `float(None)`; the statute `status` is read tolerantly for older Python engines (`null` when absent) and `verifyStatute` accepts an optional `claimedWithinPeriod` argument; the GitHub Action entrypoint serializes null-able liability fields as `null`.
 - `StatuteOfLimitationsGuard`: date-order integrity compares full timestamps when the caller supplies time-of-day — a filing earlier in the day than the incident is an impossible timeline. Date-only inputs both parse to midnight, so same-day filing passes.
 - `StatuteOfLimitationsGuard`: mixed timezone-aware and timezone-naive date inputs fail closed with `UNVERIFIABLE` instead of raising `TypeError`; the rejection message and trace record the full parsed timestamps.
+
+### Changed (behavior)
+- `StatuteOfLimitationsGuard` results now carry a `status` field: `CLAIM_VERIFIED` / `CLAIM_INCORRECT` when a `claimed_within_period` answer was supplied, `COMPUTED_ONLY` in computation-only mode, and `UNVERIFIABLE` for input-class rejections. `verified` is now reserved for claim comparison — in computation-only mode it is `False` by contract (previously it doubled as the within-period legal fact, making an expired-but-correctly-evaluated claim indistinguishable from a verification failure) (#42). The TypeScript SDK's `StatuteResult` echoes the new field.
 
 ### Build / Tooling
 - Pinned the ruff lint gate to the stable default ruleset (`select = ["E4", "E7", "E9", "F"]` under `[tool.ruff.lint]`). Ruff's default rule selection expanded in newer releases, which flipped CI red on unchanged code.

@@ -38,6 +38,14 @@ class ClaimType(Enum):
     DEFAMATION = "defamation"
 
 
+# Result status taxonomy (issue #42: 'verified' previously carried a double
+# meaning — claim-comparison and legal fact — under one field name).
+STATUS_CLAIM_VERIFIED = "CLAIM_VERIFIED"  # supplied claim matches computation
+STATUS_CLAIM_INCORRECT = "CLAIM_INCORRECT"  # supplied claim contradicts computation
+STATUS_COMPUTED_ONLY = "COMPUTED_ONLY"  # computation performed, no claim supplied
+STATUS_UNVERIFIABLE = "UNVERIFIABLE"  # inputs cannot be verified (parse/lookup/timeline)
+
+
 @dataclass
 class StatuteResult:
     """Result of statute of limitations verification."""
@@ -53,6 +61,7 @@ class StatuteResult:
     message: str
     jurisdiction_matched: bool = True  # False if jurisdiction is unknown
     claim_type_matched: bool = True  # False if claim type is unknown
+    status: str = STATUS_UNVERIFIABLE
     verification_trace: list = field(default_factory=list)
 
 
@@ -73,7 +82,9 @@ class StatuteOfLimitationsGuard:
         ...     incident_date="2022-01-15",
         ...     filing_date="2028-06-01"
         ... )
-        >>> print(result.verified)  # False - 4 year limit exceeded
+        >>> print(result.status)    # COMPUTED_ONLY - no claim was supplied
+        >>> print(result.verified)  # False - reserved for claim comparison
+        >>> print(result.days_remaining < 0)  # True - the period has expired
     """
 
     # Statute of limitations by jurisdiction and claim type (in years)
@@ -460,11 +471,16 @@ class StatuteOfLimitationsGuard:
         days_remaining = (expiration - filing).days
         within_period = days_remaining >= 0
 
-        # Verify against LLM claim if provided
+        # Verify against LLM claim if provided. 'verified' is reserved
+        # for claim comparison: in computation-only mode there is no
+        # claim to verify, so it is False by contract and 'status'
+        # carries the distinction (issue #42).
         if claimed_within_period is not None:
             verified = claimed_within_period == within_period
+            status = STATUS_CLAIM_VERIFIED if verified else STATUS_CLAIM_INCORRECT
         else:
-            verified = within_period
+            verified = False
+            status = STATUS_COMPUTED_ONLY
 
         if within_period:
             message = (
@@ -475,6 +491,13 @@ class StatuteOfLimitationsGuard:
             message = (
                 f"❌ EXPIRED: Statute of limitations expired on {expiration.strftime('%Y-%m-%d')}. "
                 f"Filing date is {abs(days_remaining)} days past expiration."
+            )
+
+        if status == STATUS_COMPUTED_ONLY:
+            message += (
+                " Computation-only mode: no claimed_within_period was "
+                "supplied, so 'verified' is False by contract; use "
+                "'status' and 'days_remaining' for the computation."
             )
 
         trace = self._build_verification_trace(
@@ -498,6 +521,7 @@ class StatuteOfLimitationsGuard:
             expiration_date=expiration,
             days_remaining=days_remaining,
             message=message,
+            status=status,
             verification_trace=trace,
         )
 

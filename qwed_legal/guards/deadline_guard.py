@@ -140,11 +140,12 @@ class DeadlineGuard:
                 difference_days=None,
                 message=(
                     f"⚠️ UNVERIFIABLE: Term '{term}' does not contain exactly "
-                    f"one provable time quantity and unit. Cannot compute a "
-                    f"deterministic deadline. Compound terms (e.g., '30 days "
-                    f"and 2 months') and ambiguous legal language "
-                    f"(e.g., 'reasonable period', 'promptly') require "
-                    f"human legal interpretation."
+                    f"one provable time quantity and unit within the "
+                    f"supported range. Cannot compute a deterministic "
+                    f"deadline. Compound terms (e.g., '30 days and 2 "
+                    f"months'), quantities beyond the supported range, and "
+                    f"ambiguous legal language (e.g., 'reasonable period', "
+                    f"'promptly') require human legal interpretation."
                 ),
                 is_computable=False,
                 verification_trace=[
@@ -269,6 +270,11 @@ class DeadlineGuard:
     # Any numeric token in the term, integer or decimal ("4.2", "1,000").
     _ANY_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
 
+    # No legal deadline spans this magnitude (~274 years). Bounding the
+    # parsed quantity bounds both date arithmetic and the business-day
+    # iteration loop (issue #42: unhandled OverflowError / unbounded loop).
+    _MAX_TERM_QUANTITY = 100_000
+
     def _calculate_deadline(
         self, start_date: datetime, term: str
     ) -> "tuple[Optional[datetime], bool]":
@@ -280,31 +286,46 @@ class DeadlineGuard:
         holiday calendar was relied upon.
         """
         term_lower = term.lower().strip()
+        expression = self._match_single_expression(term_lower)
+        if expression is None:
+            return None, False
 
-        # Pair each number with its adjacent unit. A term containing more
-        # than one time expression (e.g., "30 days and 2 months") is a
-        # compound legal term — which quantities combine is a legal
-        # interpretation, not a deterministic computation, so fail closed.
+        num_str, business_qualifier, unit = expression
+        return self._compute_from_expression(
+            start_date, int(num_str), bool(business_qualifier), unit
+        )
+
+    def _match_single_expression(self, term_lower: str) -> "Optional[tuple]":
+        """Find the single number-unit expression in a term, or None.
+
+        Fails closed when the term contains no number-unit pair, more
+        than one pair (compound legal term — which quantities combine is
+        a legal interpretation, not a deterministic computation), or a
+        numeric token that is not part of the pair ("30 or 60 days",
+        "30 days and 48 hours", a clause reference like "4.2").
+        """
         expressions = self._TIME_EXPRESSION_RE.findall(term_lower)
-        if not expressions:
-            # Fail-closed: no numeric quantity paired with a time unit
-            return None, False
-        if len(expressions) > 1:
-            # Fail-closed: multiple time expressions — ambiguous
-            return None, False
+        if not expressions or len(expressions) > 1:
+            return None
 
-        num_str, business_qualifier, unit = expressions[0]
+        num_str = expressions[0][0]
 
         # Every numeric token in the term must be the paired quantity.
-        # An unmatched number ("30 or 60 days", "30 days and 48 hours",
-        # a clause reference like "4.2") leaves the term ambiguous — the
-        # guard cannot prove which quantity applies, so fail closed.
+        # An unmatched number leaves the term ambiguous — the guard
+        # cannot prove which quantity applies, so fail closed.
         all_numbers = self._ANY_NUMBER_RE.findall(term_lower)
         if len(all_numbers) != 1 or all_numbers[0] != num_str:
-            return None, False
+            return None
 
-        num = int(num_str)
-        is_business_days = bool(business_qualifier)
+        return expressions[0]
+
+    def _compute_from_expression(
+        self, start_date: datetime, num: int, is_business_days: bool, unit: str
+    ) -> "tuple[Optional[datetime], bool]":
+        """Compute the deadline from a validated single expression."""
+        # Fail-closed: quantity beyond the supported range
+        if num > self._MAX_TERM_QUANTITY:
+            return None, False
 
         # "business months" / "working years" have no deterministic
         # calendar meaning — fail closed rather than silently computing
@@ -312,25 +333,48 @@ class DeadlineGuard:
         if is_business_days and not unit.startswith(("day", "week")):
             return None, False
 
-        if unit.startswith("year"):
-            return start_date + relativedelta(years=num), False
-        elif unit.startswith("month"):
-            return start_date + relativedelta(months=num), False
-        elif unit.startswith("week"):
-            if is_business_days:
-                return self._add_business_days(start_date, num * 5), True
-            return start_date + timedelta(weeks=num), False
-        else:
-            if is_business_days:
-                return self._add_business_days(start_date, num), True
-            return start_date + timedelta(days=num), False
-    
-    def _add_business_days(self, start_date: datetime, days: int) -> datetime:
-        """Add business days to a date, excluding weekends and holidays."""
+        try:
+            if unit.startswith("year"):
+                return start_date + relativedelta(years=num), False
+            elif unit.startswith("month"):
+                return start_date + relativedelta(months=num), False
+            elif unit.startswith("week"):
+                if is_business_days:
+                    # Cap the NORMALIZED business-day count: business
+                    # weeks multiply the quantity by 5 (issue #44 review).
+                    business_days = num * 5
+                    if business_days > self._MAX_TERM_QUANTITY:
+                        return None, False
+                    return self._add_business_days(start_date, business_days), True
+                return start_date + timedelta(weeks=num), False
+            else:
+                if is_business_days:
+                    return self._add_business_days(start_date, num), True
+                return start_date + timedelta(days=num), False
+        except (OverflowError, ValueError):
+            # Date arithmetic out of the representable range — fail closed
+            # instead of raising (issue #42).
+            return None, False
+
+    def _add_business_days(self, start_date: datetime, days: int) -> Optional[datetime]:
+        """Add business days to a date, excluding weekends and holidays.
+
+        Returns None when the iteration bound is exceeded — the caller
+        fails closed rather than presenting an unbounded-loop result
+        (issue #42).
+        """
         current = start_date
         added = 0
-        
+        # Weekends (~2/7 of days) plus a leap-day/holiday buffer leave
+        # ample headroom; hitting the bound means the range is
+        # unrepresentable or the calendar pathological.
+        max_iterations = days * 2 + 800
+        iterations = 0
+
         while added < days:
+            iterations += 1
+            if iterations > max_iterations:
+                return None
             current += timedelta(days=1)
             # Skip weekends (Saturday=5, Sunday=6)
             if current.weekday() >= 5:
@@ -339,7 +383,7 @@ class DeadlineGuard:
             if current in self.holiday_calendar:
                 continue
             added += 1
-        
+
         return current
     
     def calculate_business_days_between(
