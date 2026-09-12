@@ -630,6 +630,11 @@ class TestContradictionGuardValueProvenance:
             ("Cap is exactly 1,500 dollars.", "1,500"),
             ("Term is exactly 1e3 months.", "1e3"),
             ("Term is exactly - 30 days.", "- 30 (spaced sign)"),
+            # Non-ASCII digits pass isdigit() but crash int() — the
+            # operand grammar is ASCII-only, so these fail closed
+            # (PR #45 review, Sentry HIGH).
+            ("Term is exactly ²³ days.", "²³ (superscript)"),
+            ("Term is exactly ٣٠ days.", "٣٠ (arabic-indic)"),
         ]:
             result, steps = self._fact_steps(
                 [Clause(text=text, category="DURATION", value=30)]

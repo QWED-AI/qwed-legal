@@ -191,19 +191,19 @@ class ContradictionGuard:
     # fail closed instead of encoding an altered value).
     _CONSTRAINT_RULES = {
         "DURATION": [
-            (re.compile(r"\bexactly\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "eq"),
-            (re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
-            (re.compile(r"\bat\s+least\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
-            (re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
-            (re.compile(r"\bup\s+to\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
+            (re.compile(r"\bexactly\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "eq"),
+            (re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
+            (re.compile(r"\bat\s+least\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
+            (re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
+            (re.compile(r"\bup\s+to\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
         ],
         "LIABILITY": [
-            (re.compile(r"\bcapped?\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
-            (re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
-            (re.compile(r"\bmax\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "le"),
-            (re.compile(r"\bpenalt(?:y|ies)\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
-            (re.compile(r"\bfixed\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
-            (re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])(\d+(?:[.,]\d+)*)(?!\w)"), "ge"),
+            (re.compile(r"\bcapped?\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
+            (re.compile(r"\bmaximum\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
+            (re.compile(r"\bmax\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "le"),
+            (re.compile(r"\bpenalt(?:y|ies)\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
+            (re.compile(r"\bfixed\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
+            (re.compile(r"\bminimum\b[^+\-\d.]{0,20}(?<![-+])([0-9]+(?:[.,][0-9]+)*)(?!\w)"), "ge"),
         ],
     }
 
