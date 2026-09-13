@@ -45,22 +45,24 @@ class JurisdictionResult(LegalDiagnosticsMixin):
         self._freeze_evidence_fields("conflicts", "warnings", "verification_trace")
 
     def _diagnostic_status(self):
-        # Derived from the trace evidence types (PR #48 review, Greptile):
-        # only DETERMINISTIC evidence can back VERIFIED; deterministic
-        # rejections are BLOCKED; unsupported/inferred outcomes are
-        # UNVERIFIABLE.
+        # Jurisdiction evidence is PARSED/INFERRED only (lookup tables and
+        # rule analysis — verified by trace inspection): it can never back
+        # a VERIFIED verdict (PR #48 review, CodeAnt Critical validated by
+        # trace). Unsupported/unanalyzable inputs are UNVERIFIABLE;
+        # deterministic conflicts are BLOCKED (PR #48 review, Greptile).
         from qwed_legal.models import (
             EVIDENCE_DETERMINISTIC,
+            EVIDENCE_UNSUPPORTED,
             trace_to_dict,
         )
 
+        if self.verified:
+            return LegalDiagnosticStatus.UNVERIFIABLE
         trace = trace_to_dict(self.verification_trace)
-        if self.verified and any(
+        if any(
             step["evidence_type"] == EVIDENCE_DETERMINISTIC for step in trace
-        ):
-            return LegalDiagnosticStatus.VERIFIED
-        if not self.verified and any(
-            step["evidence_type"] == EVIDENCE_DETERMINISTIC for step in trace
+        ) and not any(
+            step["evidence_type"] == EVIDENCE_UNSUPPORTED for step in trace
         ):
             return LegalDiagnosticStatus.BLOCKED
         return LegalDiagnosticStatus.UNVERIFIABLE

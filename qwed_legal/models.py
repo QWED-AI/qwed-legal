@@ -66,6 +66,17 @@ Example: unknown jurisdiction, unrecognized claim type.
 """
 
 
+def _freeze_evidence(value: Any) -> Any:
+    """Recursively freeze evidence containers: mappings become
+    mutation-disabled dicts, lists/tuples/sets become tuples (issue #40,
+    PR #48 review)."""
+    if isinstance(value, Mapping):
+        return _FrozenDict({k: _freeze_evidence(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple, set)):
+        return tuple(_freeze_evidence(v) for v in value)
+    return value
+
+
 class _FrozenDict(dict):
     """A dict whose mutation methods are disabled (issue #40).
 
@@ -120,10 +131,11 @@ class VerificationStep:
     evidence_type: str
 
     def __post_init__(self) -> None:
-        # Shallow-freeze closure: the dataclass lock does not cover the
-        # nested inputs mapping — swap in a mutation-disabled dict so
-        # callers cannot alter evidence in place (PR #48 review).
-        object.__setattr__(self, "inputs", _FrozenDict(self.inputs))
+        # Deep-freeze closure: the dataclass lock does not cover the
+        # nested inputs mapping — swap in a mutation-disabled dict and
+        # deep-freeze nested containers, so callers cannot alter evidence
+        # in place at any depth (PR #48 review, Greptile-executed).
+        object.__setattr__(self, "inputs", _freeze_evidence(self.inputs))
 
     def is_proven(self) -> bool:
         """
@@ -154,8 +166,6 @@ class VerificationStep:
 def _json_safe(value: Any) -> Any:
     """Coerce a value into a JSON-serializable structure without losing data."""
     if isinstance(value, Mapping):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_json_safe(v) for v in value]

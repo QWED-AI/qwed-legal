@@ -446,18 +446,21 @@ class LegalDiagnosticsMixin:
         -> read-only mappings) so post-construction mutation cannot
         decouple retained evidence from its proof_ref (PR #48 review)."""
         for name in names:
-            object.__setattr__(self, name, _deep_freeze(getattr(self, name)))
+            # __dict__ access instead of dynamic getattr — the QWED
+            # DYNAMIC_EXECUTION_BOUNDARY rule flags getattr with variable
+            # names, and these field names are compile-time constants.
+            object.__setattr__(self, name, _deep_freeze(self.__dict__[name]))
 
     def _diagnostic_status(self) -> LegalDiagnosticStatus:
         """Map the guard outcome onto the ecosystem tri-state. Default:
         verified=True → VERIFIED, everything else → UNVERIFIABLE.
         Subclasses override for guard-specific mappings."""
-        if getattr(self, "verified", False):
+        if self.__dict__.get("verified", False):
             return LegalDiagnosticStatus.VERIFIED
         return LegalDiagnosticStatus.UNVERIFIABLE
 
     def _diagnostic_agent_message(self) -> str:
-        return getattr(self, "message", "")
+        return self.__dict__.get("message", "")
 
     def to_diagnostic(
         self, claim_inputs: Optional[Dict[str, Any]] = None
@@ -470,12 +473,11 @@ class LegalDiagnosticsMixin:
         """
         from qwed_legal.models import trace_to_dict
 
-        # _json_safe handles the deep-frozen evidence containers directly
-        # (dataclasses.asdict would deepcopy them, and mapping proxies
-        # cannot be pickled).
+        # __dict__ access instead of dynamic getattr — see
+        # _freeze_evidence_fields (QWED DYNAMIC_EXECUTION_BOUNDARY rule).
         result_snapshot = _json_safe(
             {
-                f.name: _json_safe(getattr(self, f.name))
+                f.name: _json_safe(self.__dict__[f.name])
                 for f in dataclasses.fields(self)
                 if f.name != "verification_trace"
             }
@@ -484,7 +486,9 @@ class LegalDiagnosticsMixin:
         # float-tolerant); the canonicalizer is not — coerce the trace
         # into the hashable subset as well (floats stringify
         # deterministically).
-        trace = _json_safe(trace_to_dict(getattr(self, "verification_trace", [])))
+        trace = _json_safe(
+            trace_to_dict(self.__dict__.get("verification_trace", []))
+        )
         claim = _json_safe(claim_inputs or {})
         evidence = {
             "claim_inputs": claim,

@@ -234,7 +234,16 @@ class ProvenanceGuard:
                 ),
                 developer_fields=developer_fields,
             )
-        return LegalDiagnosticResult.blocked(
+        # Failure-type mapping (PR #48 review, Sentry): deterministic
+        # tamper/policy rejections are BLOCKED; input-format and
+        # requirement failures (INVALID_PROVENANCE, INCOMPLETE_PROVENANCE,
+        # MISSING_DISCLOSURE, INVALID_TIMESTAMP) are UNVERIFIABLE.
+        if risk in ("CONTENT_TAMPERED", "UNAUTHORIZED_MODEL"):
+            return LegalDiagnosticResult.blocked(
+                agent_message=result.get("message", "Provenance verification failed."),
+                developer_fields=developer_fields,
+            )
+        return LegalDiagnosticResult.unverifiable(
             agent_message=result.get("message", "Provenance verification failed."),
             developer_fields=developer_fields,
         )
