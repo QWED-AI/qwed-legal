@@ -688,3 +688,30 @@ class TestJsonSafeKeyRejection:
         # trace_to_dict / proof hashing), not at construction.
         with pytest.raises(ValueError):
             step.to_dict()
+
+    def test_conflict_with_unsupported_warning_still_blocked(self):
+        """A real conflict BLOCKS even when an unsupported-input warning
+        coexists — the two are independent signals (PR #48 review,
+        Greptile R4 executed: California + German forum + unknown party)."""
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=["United States", "ZZ"],
+            governing_law="California",
+            forum="Germany",
+        )
+        assert result.verified is False
+        assert result.conflicts
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.BLOCKED
+
+    def test_unsupported_only_trace_is_never_blocked(self):
+        """Empty-party branches populate `conflicts` with placeholder
+        entries whose only trace evidence is UNSUPPORTED — those stay
+        UNVERIFIABLE (PR #48 review, CodeRabbit R2/Greptile R4)."""
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=[],
+            governing_law="California",
+        )
+        assert result.verified is False
+        assert result.conflicts  # placeholder entry exists
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE

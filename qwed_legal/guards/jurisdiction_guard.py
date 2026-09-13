@@ -70,17 +70,19 @@ class JurisdictionResult(LegalDiagnosticsMixin):
         # present: the two are independent signals, and suppressing a real
         # detected conflict because of a warning would hide it from
         # downstream consumers (PR #48 review, Greptile-executed).
-        # Unsupported-only outcomes (no conflict, no deterministic
-        # evidence) stay UNVERIFIABLE (CodeRabbit: empty-party branches
-        # populate conflicts but are EVIDENCE_UNSUPPORTED, not
-        # deterministic conflicts).
-        if self.conflicts or (
-            not unsupported
-            and any(
-                step["evidence_type"] == EVIDENCE_DETERMINISTIC
-                for step in trace
-            )
-        ):
+        # BUT a conflicts entry alone is not proof of a conflict: the
+        # unsupported/empty-party branches also populate `conflicts` with
+        # placeholder entries whose only trace evidence is
+        # EVIDENCE_UNSUPPORTED (CodeRabbit; Greptile R4-executed). A real
+        # conflict is one backed by actual analysis evidence (INFERRED or
+        # DETERMINISTIC), so an UNSUPPORTED-only trace stays UNVERIFIABLE.
+        evidence_types = {step["evidence_type"] for step in trace}
+        has_analysis = bool(
+            evidence_types & {EVIDENCE_INFERRED, EVIDENCE_DETERMINISTIC}
+        )
+        if self.conflicts and has_analysis:
+            return LegalDiagnosticStatus.BLOCKED
+        if EVIDENCE_DETERMINISTIC in evidence_types and not unsupported:
             return LegalDiagnosticStatus.BLOCKED
         return LegalDiagnosticStatus.UNVERIFIABLE
 
