@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Set
 from enum import Enum
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -28,8 +29,8 @@ class JurisdictionType(Enum):
     HYBRID = "hybrid"
 
 
-@dataclass
-class JurisdictionResult:
+@dataclass(frozen=True)
+class JurisdictionResult(LegalDiagnosticsMixin):
     """Result of jurisdiction verification."""
 
     verified: bool
@@ -39,6 +40,11 @@ class JurisdictionResult:
     forum: Optional[str] = None
     message: str = ""
     verification_trace: list = field(default_factory=list)
+
+    def _diagnostic_status(self):
+        if self.verified:
+            return LegalDiagnosticStatus.VERIFIED
+        return LegalDiagnosticStatus.BLOCKED
 
 
 class JurisdictionGuard:

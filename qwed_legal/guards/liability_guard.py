@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, DecimalException, ROUND_HALF_UP
 from typing import List, Optional
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_FACT_DERIVED,
@@ -19,8 +20,8 @@ from qwed_legal.models import (
 )
 
 
-@dataclass
-class LiabilityResult:
+@dataclass(frozen=True)
+class LiabilityResult(LegalDiagnosticsMixin):
     """Result of liability verification."""
     verified: bool
     contract_value: Optional[Decimal]
@@ -31,9 +32,15 @@ class LiabilityResult:
     message: str
     verification_trace: list = field(default_factory=list)
 
+    def _diagnostic_status(self):
+        if self.verified:
+            return LegalDiagnosticStatus.VERIFIED
+        if "UNVERIFIABLE" in self.message:
+            return LegalDiagnosticStatus.UNVERIFIABLE
+        return LegalDiagnosticStatus.BLOCKED
 
-@dataclass
-class TieredLiabilityResult:
+@dataclass(frozen=True)
+class TieredLiabilityResult(LegalDiagnosticsMixin):
     """Result of tiered liability verification."""
     verified: bool
     tiers: List[dict]
@@ -41,6 +48,13 @@ class TieredLiabilityResult:
     claimed_total: Optional[Decimal]
     message: str
     verification_trace: list = field(default_factory=list)
+
+    def _diagnostic_status(self):
+        if self.verified:
+            return LegalDiagnosticStatus.VERIFIED
+        if "UNVERIFIABLE" in self.message:
+            return LegalDiagnosticStatus.UNVERIFIABLE
+        return LegalDiagnosticStatus.BLOCKED
 
 
 def _invalid_names(named_values: dict) -> List[str]:

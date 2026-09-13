@@ -12,6 +12,7 @@ from enum import Enum
 from dateutil.parser import parse as parse_date
 from dateutil.relativedelta import relativedelta
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -46,8 +47,8 @@ STATUS_COMPUTED_ONLY = "COMPUTED_ONLY"  # computation performed, no claim suppli
 STATUS_UNVERIFIABLE = "UNVERIFIABLE"  # inputs cannot be verified (parse/lookup/timeline)
 
 
-@dataclass
-class StatuteResult:
+@dataclass(frozen=True)
+class StatuteResult(LegalDiagnosticsMixin):
     """Result of statute of limitations verification."""
 
     verified: bool
@@ -63,6 +64,13 @@ class StatuteResult:
     claim_type_matched: bool = True  # False if claim type is unknown
     status: str = STATUS_UNVERIFIABLE
     verification_trace: list = field(default_factory=list)
+
+    def _diagnostic_status(self):
+        if self.status == STATUS_CLAIM_VERIFIED:
+            return LegalDiagnosticStatus.VERIFIED
+        if self.status == STATUS_CLAIM_INCORRECT:
+            return LegalDiagnosticStatus.BLOCKED
+        return LegalDiagnosticStatus.UNVERIFIABLE
 
 
 class StatuteOfLimitationsGuard:

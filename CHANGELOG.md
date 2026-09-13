@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — DiagnosticResult contract (issue #40, Option A per #37)
+- New `qwed_legal.diagnostics` module: `LegalDiagnosticResult` (frozen 3-layer result: `agent_message` / `developer_fields` / `proof_ref`), `LegalDiagnosticStatus` (VERIFIED / UNVERIFIABLE / BLOCKED), an RFC 8785 (JCS) canonicalizer, `compute_proof_ref`, and `resolve_proof_ref`.
+- `VerificationStep` is now a **frozen** dataclass — evidence steps cannot be mutated after construction (audit P1-L3: the DETERMINISTIC→HEURISTIC flip is structurally impossible).
+- All guard result dataclasses are **frozen** and inherit the `LegalDiagnosticsMixin`: every result exposes `to_diagnostic(claim_inputs=...)`, which builds the RFC 8785 proof evidence over (claim inputs, full verification_trace, result snapshot) and maps the guard outcome onto the ecosystem tri-state.
+- Authority contract (structurally enforced): VERIFIED requires `proof_ref`; UNVERIFIABLE/BLOCKED reject it. Status mapping: verified claim matches → VERIFIED; computed-only / ambiguous / self-declared / heuristic-pass / citation-authority → UNVERIFIABLE; mismatch / contradiction / tamper / format-invalid → BLOCKED. Self-declared provenance attestations are never authoritative (#42/#45).
+- `resolve_proof_ref(proof_ref, evidence)` lets any consumer detect post-issuance tampering (trace mutation, claim alteration, evidence-type flips) by recomputing the canonical hash.
+
+
 ### Fixed
 - `LiabilityGuard`: non-finite inputs (Infinity/NaN) to `verify_cap`, `verify_indemnity_limit`, and `verify_tiered_liability` fail closed with `UNVERIFIABLE` instead of raising `decimal.InvalidOperation` or failing closed only by NaN-comparison accident; affected numeric result fields are now `null` in the failure result (#42).
 - `DeadlineGuard`: quantities beyond the supported range (cap: 100,000 — no legal term spans ~274 years) fail closed with `UNVERIFIABLE` instead of raising `OverflowError`; date-range overflow converts to fail-closed; the business-day loop is bounded so astronomical quantities can no longer stall the loop (#42).

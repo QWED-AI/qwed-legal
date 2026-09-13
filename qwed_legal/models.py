@@ -66,10 +66,15 @@ Example: unknown jurisdiction, unrecognized claim type.
 """
 
 
-@dataclass
+@dataclass(frozen=True)
 class VerificationStep:
     """
     A single auditable step in a guard's verification_trace.
+
+    Frozen (issue #40): evidence records are immutable after construction —
+    a DETERMINISTIC step cannot be silently downgraded or its output
+    rewritten post-verification. Any tampering with a retained trace is
+    additionally detectable via resolve_proof_ref (qwed_legal.diagnostics).
 
     Fields:
         step           — step type constant (STEP_RULE_IDENTIFIED etc.)

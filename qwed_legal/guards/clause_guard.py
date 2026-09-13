@@ -11,6 +11,7 @@ from typing import Any, List, Optional, Tuple
 
 from z3 import BoolRef, Solver, sat, unknown, unsat
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -22,8 +23,8 @@ from qwed_legal.models import (
 )
 
 
-@dataclass
-class ClauseResult:
+@dataclass(frozen=True)
+class ClauseResult(LegalDiagnosticsMixin):
     """Result of clause consistency check."""
 
     consistent: bool
@@ -36,6 +37,14 @@ class ClauseResult:
     #   "heuristic_pass_limited"      — no propositions extracted; guard has no coverage
     #                                   consistent=False but NOT a detected contradiction
     verification_trace: list = field(default_factory=list)
+
+    def _diagnostic_status(self):
+        # ClauseGuard is heuristic (INFERRED evidence): a heuristic pass is
+        # never authority (UNVERIFIABLE); a detected contradiction is a
+        # deterministic rejection (BLOCKED).
+        if self.status == "contradiction":
+            return LegalDiagnosticStatus.BLOCKED
+        return LegalDiagnosticStatus.UNVERIFIABLE
 
 
 class ClauseGuard:

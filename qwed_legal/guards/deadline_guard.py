@@ -13,6 +13,7 @@ from dateutil.parser import parse as parse_date
 from dateutil.relativedelta import relativedelta
 import holidays
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -24,8 +25,8 @@ from qwed_legal.models import (
 )
 
 
-@dataclass
-class DeadlineResult:
+@dataclass(frozen=True)
+class DeadlineResult(LegalDiagnosticsMixin):
     """Result of deadline verification."""
     verified: bool
     signing_date: Optional[datetime]
@@ -37,6 +38,13 @@ class DeadlineResult:
     is_computable: bool = True  # False if term is ambiguous/unparseable
     verification_mode: str = "SYMBOLIC"  # Always SYMBOLIC for legal (SymPy/Z3)
     verification_trace: list = field(default_factory=list)
+
+    def _diagnostic_status(self):
+        if not self.is_computable:
+            return LegalDiagnosticStatus.UNVERIFIABLE
+        if self.verified:
+            return LegalDiagnosticStatus.VERIFIED
+        return LegalDiagnosticStatus.BLOCKED
 
 
 class DeadlineGuard:
