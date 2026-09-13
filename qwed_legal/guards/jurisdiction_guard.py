@@ -66,12 +66,21 @@ class JurisdictionResult(LegalDiagnosticsMixin):
         # INFERRED — conflicts are deterministic rejections of the claim,
         # and requiring DETERMINISTIC evidence here would misreport a
         # jurisdiction mismatch as UNVERIFIABLE (PR #48 review, Sentry).
-        # Unsupported/unanalyzable inputs stay UNVERIFIABLE (CodeRabbit:
-        # empty-party branches populate conflicts but are EVIDENCE_
-        # UNSUPPORTED, not deterministic conflicts).
-        if not unsupported and (self.conflicts or any(
-            step["evidence_type"] == EVIDENCE_DETERMINISTIC for step in trace
-        )):
+        # A conflict BLOCKS even when an unsupported-input warning is also
+        # present: the two are independent signals, and suppressing a real
+        # detected conflict because of a warning would hide it from
+        # downstream consumers (PR #48 review, Greptile-executed).
+        # Unsupported-only outcomes (no conflict, no deterministic
+        # evidence) stay UNVERIFIABLE (CodeRabbit: empty-party branches
+        # populate conflicts but are EVIDENCE_UNSUPPORTED, not
+        # deterministic conflicts).
+        if self.conflicts or (
+            not unsupported
+            and any(
+                step["evidence_type"] == EVIDENCE_DETERMINISTIC
+                for step in trace
+            )
+        ):
             return LegalDiagnosticStatus.BLOCKED
         return LegalDiagnosticStatus.UNVERIFIABLE
 

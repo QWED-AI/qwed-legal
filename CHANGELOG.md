@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Z3 clause diagnostics bind the actual constraint expressions (`str()` per constraint) in the SAT trace, so two different satisfiable sets with the same count never produce identical proof evidence.
 - Jurisdiction diagnostics: a detected conflict is BLOCKED even though its evidence is INFERRED; unsupported/unanalyzable inputs stay UNVERIFIABLE.
 - The diagnostics mixin never maps `verified=True` with an empty agent message to VERIFIED (Layer 1 is mandatory), and supplies a fallback message otherwise.
+- Jurisdiction refinement (PR #48 review R4): a detected conflict BLOCKS even when an unsupported-input warning is also present — the two are independent signals.
+- `_FrozenDict` blocks in-place union (`|=`); `models._json_safe` rejects non-string mapping keys (step inputs and proof evidence) instead of coercing with `str(k)`, which collapsed distinct keys.
 
 
 ### Fixed

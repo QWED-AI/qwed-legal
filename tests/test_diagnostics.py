@@ -537,12 +537,16 @@ class TestRound3Hardening:
         with pytest.raises(TypeError):
             inner["status"] = "tampered"
 
-    def test_deep_freeze_set_elements_frozen(self):
+    def test_deep_freeze_set_is_immutable_and_canonical(self):
+        """The set branch of deep_freeze_evidence must freeze elements
+        immutably and in canonical sorted order (PR #48 review,
+        CodeRabbit R4)."""
         from qwed_legal.diagnostics import deep_freeze_evidence
 
-        frozen = deep_freeze_evidence({"tags": [{"a": 1}]})
-        with pytest.raises((TypeError, AttributeError)):
-            frozen["tags"][0]["a"] = 2
+        frozen = deep_freeze_evidence({"tags": {"c", "a", "b"}})
+        with pytest.raises(AttributeError):
+            frozen["tags"].add("tampered")
+        assert frozen["tags"] == ("a", "b", "c")
 
     def test_json_safe_rejects_non_string_keys(self):
         from qwed_legal.diagnostics import _json_safe
@@ -640,3 +644,47 @@ class TestRound3Hardening:
             evidence_type=EVIDENCE_PARSED,
         )
         assert step_a.to_dict() == step_b.to_dict()
+        assert step_a.to_dict()["inputs"]["parties"] == [
+            "agent", "buyer", "seller"
+        ]
+
+
+class TestJsonSafeKeyRejection:
+    """PR #48 review R4: models._json_safe must reject non-string mapping
+    keys instead of coercing with str(k), which collapses {1: "a"} and
+    {"1": "a"}."""
+
+    def test_non_string_keys_rejected(self):
+        from qwed_legal.models import _json_safe
+
+        with pytest.raises(ValueError):
+            _json_safe({1: "a"})
+
+    def test_mixed_keys_rejected(self):
+        from qwed_legal.models import _json_safe
+
+        with pytest.raises(ValueError):
+            _json_safe({1: "a", "1": "b"})
+
+    def test_string_keys_pass(self):
+        from qwed_legal.models import _json_safe
+
+        assert _json_safe({"1": "b"}) == {"1": "b"}
+
+    def test_step_inputs_non_string_key_rejected(self):
+        from qwed_legal.models import (
+            EVIDENCE_PARSED,
+            VerificationStep,
+        )
+
+        step = VerificationStep(
+            step="RULE_IDENTIFIED",
+            description="d",
+            inputs={1: "non-string key"},
+            output="out",
+            evidence_type=EVIDENCE_PARSED,
+        )
+        # The rejection fires at the _json_safe boundary (to_dict /
+        # trace_to_dict / proof hashing), not at construction.
+        with pytest.raises(ValueError):
+            step.to_dict()

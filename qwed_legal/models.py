@@ -106,6 +106,9 @@ class _FrozenDict(dict):
     setdefault = _immutable
     pop = _immutable
     popitem = _immutable
+    # In-place union mutates via dict.__ior__ without calling the
+    # disabled methods above (PR #48 review, CodeRabbit).
+    __ior__ = _immutable
 
 
 @dataclass(frozen=True)
@@ -171,9 +174,18 @@ class VerificationStep:
 
 
 def _json_safe(value: Any) -> Any:
-    """Coerce a value into a JSON-serializable structure without losing data."""
+    """Coerce a value into a JSON-serializable structure without losing data.
+
+    Non-string mapping keys are rejected, not coerced: str(k) would
+    collapse distinct keys ({1: "a"} vs {"1": "b"}) before the evidence
+    reaches proof hashing (PR #48 review, CodeRabbit)."""
     if isinstance(value, Mapping):
-        return {str(k): _json_safe(v) for k, v in value.items()}
+        if not all(isinstance(k, str) for k in value):
+            raise ValueError(
+                "_json_safe: mapping keys must be strings — coercing "
+                "would collapse distinct evidence keys (fail-closed)."
+            )
+        return {k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_json_safe(v) for v in value]
     if isinstance(value, (str, int, float, bool)) or value is None:
