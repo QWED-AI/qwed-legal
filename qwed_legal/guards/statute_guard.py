@@ -169,7 +169,7 @@ class StatuteOfLimitationsGuard:
             "breach_of_warranty": 6.0,
             "negligence": 6.0,
             "professional_malpractice": 6.0,
-            "fraud": 6.0,  # No limit for fraud in UK
+            "fraud": 6.0,  # 6 years (Limitation Act 1980)
             "personal_injury": 3.0,
             "property_damage": 6.0,
             "employment": 3.0,

@@ -798,3 +798,96 @@ class TestContradictionGuardValueProvenance:
         assert steps[0].inputs["encoded_constraints"] == [{"op": "le", "operand": 5000}]
         assert result["status"] == "consistent"
         assert result["verified"] is True
+
+
+class TestClauseGuardDayExtraction:
+    """Issue #41: day extraction must cover phrasings where the day count
+    is not directly attached to the context word."""
+
+    def setup_method(self):
+        self.guard = ClauseGuard()
+
+    def test_issue_repro_proximity_extraction(self):
+        """'give notice within 10 days of discovery' returned None before
+        the fix — the number is separated from 'notice' by 'within'."""
+        days = self.guard._extract_days(
+            "buyer shall give notice within 10 days of discovery", "notice"
+        )
+        assert days == 10
+
+    def test_directional_patterns_still_work(self):
+        assert self.guard._extract_days(
+            "seller may terminate with 30 days notice", "notice"
+        ) == 30
+        assert self.guard._extract_days(
+            "neither party may terminate before 90 days from execution", "before"
+        ) == 90
+
+    def test_no_day_expression_near_context_returns_none(self):
+        assert self.guard._extract_days(
+            "the notice requirement is governed by the appendix", "notice"
+        ) is None
+
+    def test_proximity_requires_context_word_nearby(self):
+        """A day-expression far from the context word must not be
+        misattributed."""
+        far_text = (
+            "notice requirements are set out in the earlier provisions of this "
+            "agreement, and the Parties shall comply with a 10 days cure period "
+            "described elsewhere"
+        )
+        assert self.guard._extract_days(far_text, "notice") is None
+
+    def test_singular_day_directional_match(self):
+        """day_expr must keep the optional singular 'day' in the
+        directional patterns — '1 day notice' returns 1, not the earlier
+        competing duration (PR #47 review, Sentry/CodeRabbit)."""
+        assert (
+            self.guard._extract_days(
+                "terminate 30 days or 1 day notice", "notice"
+            )
+            == 1
+        )
+
+    def test_proximity_picks_closest_day_expression(self):
+        """Greptile R1 executed: '10 days cure; notice within 30 days' —
+        the fallback must pick the 30-day notice period (closest gap),
+        not the earlier 10-day cure period."""
+        days = self.guard._extract_days(
+            "seller may terminate; 10 days cure; notice within 30 days.", "notice"
+        )
+        assert days == 30
+
+    def test_proximity_gap_boundary_inclusive(self):
+        """A gap of exactly _CONTEXT_WINDOW characters is accepted
+        (PR #45 review follow-up: inclusive boundary)."""
+        gap_40 = "notice " + "x" * 39 + "10 days"
+        assert self.guard._extract_days(gap_40, "notice") == 10
+        gap_41 = "notice " + "x" * 40 + "10 days"
+        assert self.guard._extract_days(gap_41, "notice") is None
+
+    def test_proximity_tie_between_different_values_is_ambiguous(self):
+        """Two day-expressions equidistant from the context word with
+        different values stay unresolved (PR #47 review, Greptile)."""
+        # Whitespace separation would be a directional match; letter
+        # separators force the proximity layer, where both day
+        # expressions sit 6 characters from "notice".
+        text = "10 days abcd notice dcba 30 days"
+        assert self.guard._extract_days(text, "notice") is None
+
+    def test_multiple_linked_durations_are_ambiguous(self):
+        """Greptile R2 executed: two linked notice durations with
+        different values ('breach notice within 10 days; termination
+        notice within 120 days') are ambiguous — unresolved rather than
+        picking the first in document order."""
+        days = self.guard._extract_days(
+            "breach notice within 10 days; termination notice within 120 days",
+            "notice",
+        )
+        assert days is None
+
+    def test_same_value_repeated_linked_durations_resolve(self):
+        linked = self.guard._extract_days(
+            "notice within 30 days; further notice within 30 days", "notice"
+        )
+        assert linked == 30
