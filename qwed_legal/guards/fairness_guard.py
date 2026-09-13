@@ -21,7 +21,6 @@ IMPORTANT — scope of this guard (see issue #18):
 import re
 from typing import Dict, Any
 
-from qwed_legal.diagnostics import LegalDiagnosticResult
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -51,26 +50,6 @@ class FairnessGuard:
 
     def __init__(self, llm_client=None):
         self.llm_client = llm_client  # Used for synchronous counterfactual generation
-
-    @staticmethod
-    def to_diagnostic(result: Dict[str, Any]) -> LegalDiagnosticResult:
-        """Convert a verify_decision_fairness() result dict to the 3-layer
-        LegalDiagnosticResult (issue #40).
-
-        FairnessGuard can NEVER return verified=True — legal fairness is
-        not deterministically provable — so every outcome maps to
-        UNVERIFIABLE (non-authoritative by construction).
-        """
-        return LegalDiagnosticResult.unverifiable(
-            agent_message=result.get(
-                "message",
-                "Fairness cannot be deterministically verified.",
-            ),
-            developer_fields={
-                "verified": result.get("verified", False),
-                "fairness_result": result,
-            },
-        )
 
     def verify_decision_fairness(
         self,

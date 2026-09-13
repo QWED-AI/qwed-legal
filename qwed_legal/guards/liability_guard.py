@@ -32,10 +32,17 @@ class LiabilityResult(LegalDiagnosticsMixin):
     message: str
     verification_trace: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self._freeze_evidence_fields("verification_trace")
+
     def _diagnostic_status(self):
+        # Structured classification: a None computed cap means the input
+        # was unverifiable (non-finite/out-of-range); a computed cap with
+        # a mismatch is a deterministic rejection. Message wording must
+        # not drive machine state (PR #48 review, Greptile).
         if self.verified:
             return LegalDiagnosticStatus.VERIFIED
-        if "UNVERIFIABLE" in self.message:
+        if self.computed_cap is None:
             return LegalDiagnosticStatus.UNVERIFIABLE
         return LegalDiagnosticStatus.BLOCKED
 
@@ -49,10 +56,13 @@ class TieredLiabilityResult(LegalDiagnosticsMixin):
     message: str
     verification_trace: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self._freeze_evidence_fields("tiers", "verification_trace")
+
     def _diagnostic_status(self):
         if self.verified:
             return LegalDiagnosticStatus.VERIFIED
-        if "UNVERIFIABLE" in self.message:
+        if self.total_computed is None:
             return LegalDiagnosticStatus.UNVERIFIABLE
         return LegalDiagnosticStatus.BLOCKED
 

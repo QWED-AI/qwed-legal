@@ -38,10 +38,19 @@ class ClauseResult(LegalDiagnosticsMixin):
     #                                   consistent=False but NOT a detected contradiction
     verification_trace: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self._freeze_evidence_fields("conflicts", "verification_trace")
+
     def _diagnostic_status(self):
-        # ClauseGuard is heuristic (INFERRED evidence): a heuristic pass is
-        # never authority (UNVERIFIABLE); a detected contradiction is a
-        # deterministic rejection (BLOCKED).
+        # ClauseGuard's heuristic tier is INFERRED evidence: a heuristic
+        # pass is never authority (UNVERIFIABLE); a detected heuristic
+        # contradiction is BLOCKED. Explicit Z3 outcomes
+        # (z3_satisfiable / z3_unsat) are DETERMINISTIC and map to
+        # VERIFIED / BLOCKED respectively (PR #48 review, Greptile).
+        if self.status == "z3_satisfiable":
+            return LegalDiagnosticStatus.VERIFIED
+        if self.status == "z3_unsat":
+            return LegalDiagnosticStatus.BLOCKED
         if self.status == "contradiction":
             return LegalDiagnosticStatus.BLOCKED
         return LegalDiagnosticStatus.UNVERIFIABLE
@@ -483,6 +492,7 @@ class ClauseGuard:
         if result == sat:
             return ClauseResult(
                 consistent=True,
+                status="z3_satisfiable",
                 conflicts=[],
                 message="VERIFIED: Provided Z3 constraints are satisfiable.",
                 verification_trace=[
@@ -499,6 +509,7 @@ class ClauseGuard:
         if result == unsat:
             return ClauseResult(
                 consistent=False,
+                status="z3_unsat",
                 conflicts=[],
                 message=(
                     "CONTRADICTION: Provided Z3 constraints are "

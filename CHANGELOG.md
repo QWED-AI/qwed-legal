@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All guard result dataclasses are **frozen** and inherit the `LegalDiagnosticsMixin`: every result exposes `to_diagnostic(claim_inputs=...)`, which builds the RFC 8785 proof evidence over (claim inputs, full verification_trace, result snapshot) and maps the guard outcome onto the ecosystem tri-state.
 - Authority contract (structurally enforced): VERIFIED requires `proof_ref`; UNVERIFIABLE/BLOCKED reject it. Status mapping: verified claim matches → VERIFIED; computed-only / ambiguous / self-declared / heuristic-pass / citation-authority → UNVERIFIABLE; mismatch / contradiction / tamper / format-invalid → BLOCKED. Self-declared provenance attestations are never authoritative (#42/#45).
 - `resolve_proof_ref(proof_ref, evidence)` lets any consumer detect post-issuance tampering (trace mutation, claim alteration, evidence-type flips) by recomputing the canonical hash.
+- Deep-freeze hardening (PR #48 review): `VerificationStep.inputs` is exposed through a mutation-disabled mapping, result evidence containers (traces, conflicts, tiers, parsed components) are frozen at construction, `LegalDiagnosticResult.developer_fields` is deep-frozen, and `proof_ref` format (`sha256:` + 64 hex) is validated at construction.
+- Status mappings refined per review: jurisdiction results are never VERIFIED (PARSED/INFERRED evidence only); liability diagnostics classify from structured fields (computed cap present/absent), not message wording; deadline fallback-calendar results map to UNVERIFIABLE; clause `verify_using_z3` emits explicit `z3_satisfiable` / `z3_unsat` statuses mapping to VERIFIED / BLOCKED.
+- Canonicalizer hardening: integers outside the IEEE 754 safe range and lone surrogates fail closed; set evidence is sorted deterministically; non-primitive values are type-tagged so distinct evidence types never collide.
+- `fairness_to_diagnostic` adapter lives in `diagnostics.py` (FairnessGuard module left untouched — its pre-existing scanner findings must not be dragged into a release-blocking state); the fairness payload is JSON-serialized.
+- `ContradictionGuard.to_diagnostic` retains the exact claim/result structures in `developer_fields` so `resolve_proof_ref` reconstructs the hash from the diagnostic alone.
 
 
 ### Fixed

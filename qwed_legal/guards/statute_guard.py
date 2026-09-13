@@ -65,6 +65,9 @@ class StatuteResult(LegalDiagnosticsMixin):
     status: str = STATUS_UNVERIFIABLE
     verification_trace: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self._freeze_evidence_fields("verification_trace")
+
     def _diagnostic_status(self):
         if self.status == STATUS_CLAIM_VERIFIED:
             return LegalDiagnosticStatus.VERIFIED

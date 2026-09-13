@@ -84,15 +84,22 @@ class ContradictionGuard:
                 and step.get("step") == "FACT_DERIVED"
             ]
             claim_texts = [t for t in claim_texts if t]
+        # Retain the exact claim/result structures in developer_fields so
+        # resolve_proof_ref() can reconstruct the hash from the
+        # LegalDiagnosticResult alone (PR #48 review, CodeRabbit).
+        claim_inputs = {"clauses": claim_texts}
+        result_snapshot = {"status": status}
         developer_fields = {
+            "claim_inputs": claim_inputs,
             "verification_trace": trace_dicts,
+            "result": result_snapshot,
             "unsupported": result.get("unsupported", []),
             "contradiction_status": status,
         }
         evidence = {
-            "claim_inputs": {"clauses": claim_texts},
+            "claim_inputs": claim_inputs,
             "trace": trace_dicts,
-            "result": {"status": status},
+            "result": result_snapshot,
         }
         if status == "consistent":
             return LegalDiagnosticResult.verified(

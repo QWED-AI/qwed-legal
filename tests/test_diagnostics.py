@@ -4,21 +4,29 @@ decision from #37) and the RFC 8785 proof_ref binding.
 """
 
 import dataclasses
+import json
 
 import pytest
 
 from qwed_legal import (
+    Clause,
     CitationGuard,
     ClauseGuard,
+    ContradictionGuard,
     DeadlineGuard,
+    FairnessGuard,
+    IRACGuard,
+    JurisdictionGuard,
     LegalDiagnosticResult,
     LegalDiagnosticStatus,
+    LiabilityGuard,
     ProvenanceGuard,
     StatuteOfLimitationsGuard,
     canonicalize,
     compute_proof_ref,
     resolve_proof_ref,
 )
+from qwed_legal.diagnostics import fairness_to_diagnostic
 
 
 class TestCanonicalize:
@@ -300,3 +308,218 @@ class TestGuardToDiagnostic:
         )
         diagnostic = guard.to_diagnostic(result)
         assert diagnostic.status is LegalDiagnosticStatus.BLOCKED
+
+
+class TestDiagnosticsEdgePaths:
+    """Coverage for error paths and adapters (Sonar new-code coverage)."""
+
+    def test_from_dict_round_trip(self):
+        diagnostic = LegalDiagnosticResult.unverifiable(
+            agent_message="unverifiable message",
+            developer_fields={"guard": "deadline"},
+        )
+        restored = LegalDiagnosticResult.from_dict(diagnostic.to_dict())
+        assert restored.status is LegalDiagnosticStatus.UNVERIFIABLE
+        assert restored.agent_message == "unverifiable message"
+
+    def test_from_dict_rejects_bad_status(self):
+        with pytest.raises(ValueError):
+            LegalDiagnosticResult.from_dict({"status": "MAYBE"})
+
+    def test_from_dict_rejects_missing_agent_message(self):
+        with pytest.raises(ValueError):
+            LegalDiagnosticResult.from_dict({"status": "UNVERIFIABLE"})
+
+    def test_from_dict_rejects_bad_developer_fields(self):
+        with pytest.raises(ValueError):
+            LegalDiagnosticResult.from_dict(
+                {"status": "UNVERIFIABLE", "agent_message": "m", "developer_fields": []}
+            )
+
+    def test_proof_ref_format_enforced(self):
+        with pytest.raises(ValueError):
+            LegalDiagnosticResult(
+                status=LegalDiagnosticStatus.VERIFIED,
+                agent_message="msg",
+                proof_ref="not-a-hash",
+            )
+
+    def test_blocked_constructor(self):
+        blocked = LegalDiagnosticResult.blocked(
+            agent_message="blocked", developer_fields={"guard": "x"}
+        )
+        assert blocked.is_fail_closed is True
+        assert blocked.proof_ref is None
+
+    def test_safe_integer_boundary(self):
+        """Integers within the IEEE 754 safe range hash; outside it the
+        canonicalizer fails closed (PR #48 review, Greptile)."""
+        edge = 2**53
+        assert canonicalize(edge) == str(edge)
+        with pytest.raises(ValueError):
+            canonicalize(edge + 1)
+
+    def test_lone_surrogate_rejected(self):
+        with pytest.raises(ValueError):
+            canonicalize("bad \ud800 surrogate")
+
+    def test_set_evidence_is_order_deterministic(self):
+        """Equivalent sets hash identically regardless of iteration
+        order (PR #48 review)."""
+        a = compute_proof_ref({"items": {"b", "a", "c"}})
+        b = compute_proof_ref({"items": {"c", "b", "a"}})
+        assert a == b
+
+    def test_type_tagged_stringification_distinguishes_types(self):
+        """float 1.0 and string '1.0' must not collide in proof data
+        (PR #48 review)."""
+        assert compute_proof_ref({"v": 1.0}) != compute_proof_ref({"v": "1.0"})
+
+    def test_from_dict_round_trip_authorized(self):
+        verified = LegalDiagnosticResult.verified(
+            agent_message="proven",
+            developer_fields={"guard": "deadline"},
+            evidence={"claim": "inputs"},
+        )
+        restored = LegalDiagnosticResult.from_dict(verified.to_dict())
+        assert restored.status is LegalDiagnosticStatus.VERIFIED
+        assert restored.proof_ref == verified.proof_ref
+
+    def test_frozen_developer_fields_block_mutation(self):
+        diagnostic = LegalDiagnosticResult.unverifiable(
+            agent_message="m", developer_fields={"guard": "deadline"}
+        )
+        with pytest.raises(TypeError):
+            diagnostic.developer_fields["guard"] = "tampered"
+
+    def test_frozen_trace_blocks_append(self):
+        result = DeadlineGuard().verify("2026-01-01", "30 days", "2026-01-31")
+        diagnostic = result.to_diagnostic()
+        trace = diagnostic.developer_fields["verification_trace"]
+        with pytest.raises(AttributeError):
+            trace.append("forged")
+
+    def test_step_inputs_block_mutation(self):
+        from qwed_legal.models import (
+            EVIDENCE_DETERMINISTIC,
+            VerificationStep,
+        )
+
+        step = VerificationStep(
+            step="CONCLUSION",
+            description="d",
+            inputs={"z3_result": "sat"},
+            output="out",
+            evidence_type=EVIDENCE_DETERMINISTIC,
+        )
+        with pytest.raises(TypeError):
+            step.inputs["z3_result"] = "unsat"
+
+    def test_result_trace_is_immutable_sequence(self):
+        result = DeadlineGuard().verify("2026-01-01", "30 days", "2026-01-31")
+        with pytest.raises(AttributeError):
+            result.verification_trace.append("forged")
+
+    def test_contradiction_adapter_verified(self):
+        guard = ContradictionGuard()
+        clauses = [
+            Clause(text="Term is exactly 12 months.", category="DURATION", value=12),
+        ]
+        result = guard.verify_consistency(clauses)
+        diagnostic = ContradictionGuard.to_diagnostic(result, clauses)
+        assert diagnostic.status is LegalDiagnosticStatus.VERIFIED
+        assert diagnostic.is_authoritative is True
+        # Evidence reconstruction from developer_fields alone.
+        assert resolve_proof_ref(diagnostic.proof_ref, {
+            "claim_inputs": diagnostic.developer_fields["claim_inputs"],
+            "trace": diagnostic.developer_fields["verification_trace"],
+            "result": diagnostic.developer_fields["result"],
+        }) is True
+
+    def test_contradiction_adapter_blocked(self):
+        guard = ContradictionGuard()
+        result = guard.verify_consistency(
+            [
+                Clause(text="Term is exactly 12 months.", category="DURATION", value=12),
+                Clause(text="Term is maximum 2 months.", category="DURATION", value=2),
+            ]
+        )
+        diagnostic = ContradictionGuard.to_diagnostic(result)
+        assert diagnostic.status is LegalDiagnosticStatus.BLOCKED
+
+    def test_fairness_adapter_json_encodable(self):
+        from qwed_legal.diagnostics import fairness_to_diagnostic
+
+        class _MockLLM:
+            def generate(self, prompt):
+                return "approved"
+
+        guard = FairnessGuard(llm_client=_MockLLM())
+        result = guard.verify_decision_fairness(
+            original_prompt="Should we approve the application?",
+            original_decision="approved",
+            protected_attribute_swap={"John": "Jane"},
+        )
+        diagnostic = fairness_to_diagnostic(result)
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+        # The payload must be JSON-encodable (steps serialized).
+        json.dumps(diagnostic.to_dict())
+
+    def test_irac_diagnostic_mapping(self):
+
+        result = IRACGuard().verify(
+            "Issue: was X? Rule: r. Application: a. Conclusion: c."
+        )
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status in (
+            LegalDiagnosticStatus.UNVERIFIABLE,
+            LegalDiagnosticStatus.BLOCKED,
+        )
+        assert diagnostic.is_authoritative is False
+
+    def test_jurisdiction_diagnostic_mapping(self):
+
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=["United States", "United States"],
+            governing_law="California",
+        )
+        diagnostic = result.to_diagnostic()
+        # PARSED/INFERRED evidence can never back VERIFIED (CodeAnt
+        # Critical): a passing jurisdiction check is non-authoritative.
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+        assert diagnostic.is_authoritative is False
+
+    def test_tiered_liability_diagnostic_mapping(self):
+        from qwed_legal import LiabilityGuard
+
+        result = LiabilityGuard().verify_tiered_liability(
+            [{"base": 1_000_000, "percentage": 100}], 1_000_000
+        )
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.VERIFIED
+
+    def test_liability_unverifiable_mapping(self):
+        result = LiabilityGuard().verify_cap(float("inf"), 200, 1_000_000)
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+
+    def test_fairness_adapter(self):
+        from qwed_legal import FairnessGuard
+
+        class _MockLLM:
+            def generate(self, prompt):
+                return "approved"
+
+        guard = FairnessGuard(llm_client=_MockLLM())
+        result = guard.verify_decision_fairness(
+            original_prompt="Should we approve the application?",
+            original_decision="approved",
+            protected_attribute_swap={"John": "Jane"},
+        )
+        diagnostic = fairness_to_diagnostic(result)
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+        # The payload must be JSON-encodable (steps serialized).
+        import json
+
+        json.dumps(diagnostic.to_dict())
+

@@ -44,8 +44,12 @@ floats and other types fail closed rather than being hashed loosely.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import dataclasses
 import hashlib
+import re
+import types
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -83,7 +87,17 @@ class LegalDiagnosticStatus(str, Enum):
 
 
 def _rfc8785_string(value: str) -> str:
-    """Serialize a string per RFC 8785 §3.2.2.2 (ECMAScript escaping)."""
+    """Serialize a string per RFC 8785 §3.2.2.2 (ECMAScript escaping).
+
+    Lone surrogates are rejected — they cannot be encoded as UTF-8 and
+    would make the proof reference unresolvable (PR #48 review).
+    """
+    for ch in value:
+        if 0xD800 <= ord(ch) <= 0xDFFF:
+            raise ValueError(
+                "canonicalize: string contains a lone surrogate — "
+                "unencodable as UTF-8 (fail-closed)."
+            )
     out = ['"']
     for ch in value:
         code = ord(ch)
@@ -130,6 +144,16 @@ def canonicalize(value: Any) -> str:
     if value is None:
         return "null"
     if isinstance(value, int):
+        # RFC 8785 number serialization follows ECMAScript: integers
+        # outside the IEEE 754 safe range are not interoperable — an
+        # ECMAScript consumer would serialize them differently, so the
+        # proof reference would not resolve cross-language (PR #48
+        # review, Greptile).
+        if not (-(2**53) <= value <= 2**53):
+            raise ValueError(
+                "canonicalize: integer outside the IEEE 754 safe range "
+                "(-2^53..2^53) — fail-closed."
+            )
         return str(value)
     if isinstance(value, float):
         raise ValueError(
@@ -138,7 +162,9 @@ def canonicalize(value: Any) -> str:
         )
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(canonicalize(item) for item in value) + "]"
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
+        # Includes the read-only mappings produced by _deep_freeze —
+        # resolution must work directly on the retained frozen evidence.
         if not all(isinstance(key, str) for key in value):
             raise ValueError(
                 "canonicalize: object keys must be strings (fail-closed)."
@@ -173,7 +199,10 @@ def compute_proof_ref(evidence: Dict[str, Any]) -> str:
     Raises:
         ValueError: If evidence cannot be canonicalized (fail-closed).
     """
-    digest = hashlib.sha256(canonicalize(evidence).encode("utf-8")).hexdigest()
+    # Coerce the evidence into the canonicalization-supported subset
+    # first (sets sorted, non-primitives type-tagged) so callers never
+    # hash a loosely-specified structure.
+    digest = hashlib.sha256(canonicalize(_json_safe(evidence)).encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
 
 
@@ -198,6 +227,23 @@ def resolve_proof_ref(proof_ref: str, evidence: Dict[str, Any]) -> bool:
         return compute_proof_ref(evidence) == proof_ref
     except ValueError:
         return False
+
+
+_PROOF_REF_RE = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _deep_freeze(value: Any) -> Any:
+    """Recursively freeze containers: dicts become read-only mappings,
+    lists become tuples. Deep-freezing the retained evidence prevents
+    in-place mutation that would decouple it from its proof_ref
+    (PR #48 review)."""
+    if isinstance(value, dict):
+        return types.MappingProxyType(
+            {k: _deep_freeze(v) for k, v in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_deep_freeze(v) for v in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -253,6 +299,17 @@ class LegalDiagnosticResult:
                 "non-VERIFIED states are non-authoritative by construction."
             )
 
+        if self.proof_ref is not None and not _PROOF_REF_RE.fullmatch(self.proof_ref):
+            raise ValueError(
+                "proof_ref must be 'sha256:' followed by 64 hex characters — "
+                "forged or malformed references are rejected at construction."
+            )
+
+        # Deep-freeze the evidence container: frozen=True does not cover
+        # nested dicts/lists, and post-hash mutation of the retained
+        # evidence would decouple it from the proof_ref (PR #48 review).
+        object.__setattr__(self, "developer_fields", _deep_freeze(self.developer_fields))
+
     @property
     def is_verified(self) -> bool:
         """True only when status is VERIFIED (implies proof_ref present)."""
@@ -273,11 +330,19 @@ class LegalDiagnosticResult:
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dict for API/SDK responses."""
+        """Serialize to dict for API/SDK responses (frozen containers are
+        converted back to plain dicts/lists)."""
+        def _plain(value: Any) -> Any:
+            if isinstance(value, types.MappingProxyType):
+                return {k: _plain(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [_plain(v) for v in value]
+            return value
+
         return {
             "status": self.status.value,
             "agent_message": self.agent_message,
-            "developer_fields": self.developer_fields,
+            "developer_fields": _plain(self.developer_fields),
             "proof_ref": self.proof_ref,
             "is_authoritative": self.is_authoritative,
         }
@@ -376,6 +441,13 @@ class LegalDiagnosticsMixin:
     message needs adjustment; the default uses ``self.message``.
     """
 
+    def _freeze_evidence_fields(self, *names: str) -> None:
+        """Deep-freeze the named evidence fields (lists -> tuples, dicts
+        -> read-only mappings) so post-construction mutation cannot
+        decouple retained evidence from its proof_ref (PR #48 review)."""
+        for name in names:
+            object.__setattr__(self, name, _deep_freeze(getattr(self, name)))
+
     def _diagnostic_status(self) -> LegalDiagnosticStatus:
         """Map the guard outcome onto the ecosystem tri-state. Default:
         verified=True → VERIFIED, everything else → UNVERIFIABLE.
@@ -398,11 +470,14 @@ class LegalDiagnosticsMixin:
         """
         from qwed_legal.models import trace_to_dict
 
+        # _json_safe handles the deep-frozen evidence containers directly
+        # (dataclasses.asdict would deepcopy them, and mapping proxies
+        # cannot be pickled).
         result_snapshot = _json_safe(
             {
-                k: v
-                for k, v in dataclasses.asdict(self).items()
-                if k != "verification_trace"
+                f.name: _json_safe(getattr(self, f.name))
+                for f in dataclasses.fields(self)
+                if f.name != "verification_trace"
             }
         )
         # trace_to_dict passes floats through (models._json_safe is
@@ -443,21 +518,70 @@ class LegalDiagnosticsMixin:
 def _json_safe(value: Any) -> Any:
     """Coerce a value into the canonicalization-supported subset without
     losing data (mirrors models._json_safe; kept local to avoid a
-    circular import)."""
-    if isinstance(value, dict):
+    circular import).
+
+    Determinism guarantees (PR #48 review): sets are sorted by their
+    serialized representation so equivalent evidence hashes identically,
+    and non-primitive values are type-tagged when stringified so distinct
+    evidence types (1.0 vs "1.0") never collide.
+    """
+    if isinstance(value, Mapping):
+        # Includes the read-only mappings produced by _deep_freeze.
         return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted(
+            (_json_safe(v) for v in value),
+            key=lambda item: canonicalize(item) if not isinstance(item, (dict, list)) else str(item),
+        )
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, int):
         return value
-    # Everything else (float, Decimal, datetime, objects) stringifies —
-    # str() is deterministic for these types in the guards' usage.
-    return str(value)
+    if isinstance(value, str):
+        return value
+    # Everything else (float, Decimal, datetime, objects) type-tags its
+    # stringified form so distinct evidence types never collide.
+    return f"{type(value).__name__}:{value}"
+
+
+def deep_freeze_evidence(value: Any) -> Any:
+    """Public wrapper around the recursive evidence freezer."""
+    return _deep_freeze(value)
+
+
+def fairness_to_diagnostic(result: Dict[str, Any]) -> LegalDiagnosticResult:
+    """Convert a FairnessGuard.verify_decision_fairness() result dict to
+    the 3-layer LegalDiagnosticResult (issue #40).
+
+    Lives here rather than on FairnessGuard so that guard module stays
+    untouched (its pre-existing scanner findings must not be dragged
+    into a release-blocking state by unrelated edits). FairnessGuard can
+    NEVER return verified=True — legal fairness is not deterministically
+    provable — so every outcome maps to UNVERIFIABLE. The raw result is
+    serialized (VerificationStep objects stringified) so the payload is
+    JSON-encodable.
+    """
+    from qwed_legal.models import trace_to_dict
+
+    serialized = _json_safe(result)
+    trace = trace_to_dict(result.get("verification_trace", []))
+    return LegalDiagnosticResult.unverifiable(
+        agent_message=result.get(
+            "message",
+            "Fairness cannot be deterministically verified.",
+        ),
+        developer_fields={
+            "verified": result.get("verified", False),
+            "fairness_result": {**serialized, "verification_trace": trace},
+        },
+    )
 
 
 __all__ = [
+    "fairness_to_diagnostic",
+    "deep_freeze_evidence",
     "LegalDiagnosticStatus",
     "LegalDiagnosticResult",
     "LegalDiagnosticsMixin",

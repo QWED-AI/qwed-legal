@@ -371,7 +371,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is False
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert result.warnings
         assert "UNVERIFIABLE" in result.message
         assert "VERIFIED" not in result.message
@@ -385,7 +385,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is False
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert any("different legal systems" in warning for warning in result.warnings)
         assert "AMBIGUOUS" in result.message
 
@@ -397,7 +397,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is False
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert any("CISG" in warning for warning in result.warnings)
         assert "UNVERIFIABLE" in result.message
 
@@ -411,7 +411,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is True
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert not any("CISG" in warning for warning in result.warnings)
 
     def test_party_country_normalization_does_not_treat_states_as_foreign(self):
@@ -424,7 +424,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is True
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert not result.warnings
 
     def test_ambiguous_de_code_still_supports_delaware_mismatch_check(self):
@@ -448,7 +448,7 @@ class TestJurisdictionGuardFailClosed:
             forum="London",
         )
 
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert not any("US state" in conflict for conflict in result.conflicts)
 
     def test_state_law_does_not_match_colliding_party_country_code(self):
@@ -466,7 +466,7 @@ class TestJurisdictionGuardFailClosed:
 
         for result in [delaware_result, indiana_result]:
             assert result.verified is True
-            assert result.conflicts == []
+            assert list(result.conflicts) == []
             assert not any("favors one party" in warning for warning in result.warnings)
 
     def test_conflict_message_includes_warning_count_when_both_exist(self):

@@ -87,6 +87,11 @@ class CitationResult(LegalDiagnosticsMixin):
     risk: Optional[str] = None
     verification_trace: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self._freeze_evidence_fields(
+            "parsed_components", "issues", "verification_trace"
+        )
+
     def _diagnostic_status(self):
         # Citation authority is never verifiable (verified is always False):
         # a format-invalid cite is a deterministic rejection (BLOCKED), a

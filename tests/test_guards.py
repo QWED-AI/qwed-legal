@@ -226,7 +226,7 @@ class TestClauseGuard:
         )
         assert result.consistent is False
         assert result.status == "heuristic_pass_limited"
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert "LIMITED COVERAGE" in result.message.upper()
 
     def test_may_review_cancellation_process_not_operative_permission(self):
@@ -240,7 +240,7 @@ class TestClauseGuard:
         )
         assert result.consistent is False
         assert result.status == "heuristic_pass_limited"
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert "LIMITED COVERAGE" in result.message.upper()
 
     def test_termination_conflict_detected_in_reverse_order(self):
@@ -420,7 +420,7 @@ class TestLegalGuard:
         )
 
         assert result.verified is False
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert result.forum == "New York"
         assert result.warnings
         assert "UNVERIFIABLE" in result.message

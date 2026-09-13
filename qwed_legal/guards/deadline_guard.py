@@ -39,6 +39,9 @@ class DeadlineResult(LegalDiagnosticsMixin):
     verification_mode: str = "SYMBOLIC"  # Always SYMBOLIC for legal (SymPy/Z3)
     verification_trace: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self._freeze_evidence_fields("verification_trace")
+
     def _diagnostic_status(self):
         if not self.is_computable:
             return LegalDiagnosticStatus.UNVERIFIABLE
@@ -260,7 +263,7 @@ class DeadlineGuard:
             term_parsed=term,
             difference_days=diff,
             message=message,
-            is_computable=True,
+            is_computable=not calendar_unreliable,
             verification_trace=trace,
         )
     

@@ -75,6 +75,12 @@ class IRACResult(LegalDiagnosticsMixin):
     message: str = ""
     verification_trace: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self._freeze_evidence_fields(
+            "components", "missing_sections", "coherence_issues",
+            "verification_trace",
+        )
+
     def _diagnostic_status(self):
         # IRAC reasoning is never verifiable (verified always False): a
         # structure/coherence failure is a deterministic rejection

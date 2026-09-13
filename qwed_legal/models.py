@@ -14,7 +14,7 @@ Key distinction:
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 # ── Step type constants ────────────────────────────────────────────────────────
 STEP_RULE_IDENTIFIED = "RULE_IDENTIFIED"
@@ -66,6 +66,30 @@ Example: unknown jurisdiction, unrecognized claim type.
 """
 
 
+class _FrozenDict(dict):
+    """A dict whose mutation methods are disabled (issue #40).
+
+    Evidence dicts inside a frozen VerificationStep must not be mutated
+    in place. A dict subclass keeps full read compatibility (isinstance,
+    subscripting, deepcopy, JSON serialization) while every mutating
+    operation raises.
+    """
+
+    def _immutable(self, *args, **kwargs):
+        raise TypeError(
+            "VerificationStep.inputs is immutable — evidence records "
+            "cannot be modified after verification (issue #40)."
+        )
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    update = _immutable
+    setdefault = _immutable
+    pop = _immutable
+    popitem = _immutable
+
+
 @dataclass(frozen=True)
 class VerificationStep:
     """
@@ -73,8 +97,9 @@ class VerificationStep:
 
     Frozen (issue #40): evidence records are immutable after construction —
     a DETERMINISTIC step cannot be silently downgraded or its output
-    rewritten post-verification. Any tampering with a retained trace is
-    additionally detectable via resolve_proof_ref (qwed_legal.diagnostics).
+    rewritten post-verification, and the inputs mapping is exposed through
+    a read-only proxy. Any tampering with a retained trace is additionally
+    detectable via resolve_proof_ref (qwed_legal.diagnostics).
 
     Fields:
         step           — step type constant (STEP_RULE_IDENTIFIED etc.)
@@ -93,6 +118,12 @@ class VerificationStep:
     inputs: Dict[str, Any]
     output: str
     evidence_type: str
+
+    def __post_init__(self) -> None:
+        # Shallow-freeze closure: the dataclass lock does not cover the
+        # nested inputs mapping — swap in a mutation-disabled dict so
+        # callers cannot alter evidence in place (PR #48 review).
+        object.__setattr__(self, "inputs", _FrozenDict(self.inputs))
 
     def is_proven(self) -> bool:
         """
@@ -122,6 +153,8 @@ class VerificationStep:
 
 def _json_safe(value: Any) -> Any:
     """Coerce a value into a JSON-serializable structure without losing data."""
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
