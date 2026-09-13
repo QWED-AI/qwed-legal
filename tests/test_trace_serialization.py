@@ -64,8 +64,9 @@ class TestVerificationStepToDict:
         hashing (PR #48 review, CodeRabbit)."""
         import pytest
 
+        step = _step(inputs={1: "one"})
         with pytest.raises(ValueError):
-            _step(inputs={1: "one"}).to_dict()
+            step.to_dict()
 
 
 class TestTraceToDict:

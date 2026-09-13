@@ -715,3 +715,29 @@ class TestJsonSafeKeyRejection:
         assert result.conflicts  # placeholder entry exists
         diagnostic = result.to_diagnostic()
         assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+
+    def test_unrecognized_governing_law_is_unverifiable(self):
+        """An unrecognized governing law ('Atlantis') is an unsupported
+        lookup input, not a detected mismatch — UNVERIFIABLE, never
+        BLOCKED (PR #48 review, Greptile P2 executed)."""
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=["United States", "Germany"],
+            governing_law="Atlantis",
+        )
+        assert result.verified is False
+        assert result.conflicts  # the unrecognized-law entry exists
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+        assert diagnostic.is_authoritative is False
+
+    def test_recognized_law_conflict_still_blocked(self):
+        """The refinement must not weaken the real-conflict path:
+        recognized governing law + recognized-but-mismatched forum stays
+        BLOCKED."""
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=["United States", "United States"],
+            governing_law="California",
+            forum="Germany",
+        )
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.BLOCKED

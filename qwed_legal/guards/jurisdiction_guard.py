@@ -70,17 +70,24 @@ class JurisdictionResult(LegalDiagnosticsMixin):
         # present: the two are independent signals, and suppressing a real
         # detected conflict because of a warning would hide it from
         # downstream consumers (PR #48 review, Greptile-executed).
-        # BUT a conflicts entry alone is not proof of a conflict: the
-        # unsupported/empty-party branches also populate `conflicts` with
-        # placeholder entries whose only trace evidence is
-        # EVIDENCE_UNSUPPORTED (CodeRabbit; Greptile R4-executed). A real
-        # conflict is one backed by actual analysis evidence (INFERRED or
-        # DETERMINISTIC), so an UNSUPPORTED-only trace stays UNVERIFIABLE.
+        # BUT a conflicts entry alone is not proof of a conflict:
+        # 1. Unsupported/empty-party branches also populate `conflicts`
+        #    with placeholder entries whose only trace evidence is
+        #    EVIDENCE_UNSUPPORTED (CodeRabbit; Greptile R4-executed).
+        # 2. An UNRECOGNIZED governing law ("Atlantis") is an unsupported
+        #    lookup input, not a detected mismatch — its conflict entry
+        #    must not block (PR #48 review, Greptile P2-executed).
+        # A real conflict is one backed by actual analysis evidence
+        # (INFERRED or DETERMINISTIC) AND a recognized governing law, so
+        # unsupported-lookup traces stay UNVERIFIABLE.
         evidence_types = {step["evidence_type"] for step in trace}
         has_analysis = bool(
             evidence_types & {EVIDENCE_INFERRED, EVIDENCE_DETERMINISTIC}
         )
-        if self.conflicts and has_analysis:
+        governing_law_recognized = JurisdictionGuard()._is_valid_jurisdiction(
+            JurisdictionGuard()._normalize_jurisdiction(self.governing_law or "")
+        )
+        if self.conflicts and has_analysis and governing_law_recognized:
             return LegalDiagnosticStatus.BLOCKED
         if EVIDENCE_DETERMINISTIC in evidence_types and not unsupported:
             return LegalDiagnosticStatus.BLOCKED
