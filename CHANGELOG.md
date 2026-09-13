@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Canonicalizer hardening: integers outside the IEEE 754 safe range and lone surrogates fail closed; set evidence is sorted deterministically; non-primitive values are type-tagged so distinct evidence types never collide.
 - `fairness_to_diagnostic` adapter lives in `diagnostics.py` (FairnessGuard module left untouched — its pre-existing scanner findings must not be dragged into a release-blocking state); the fairness payload is JSON-serialized.
 - `ContradictionGuard.to_diagnostic` retains the exact claim/result structures in `developer_fields` so `resolve_proof_ref` reconstructs the hash from the diagnostic alone.
+- Deep-freeze completeness (PR #48 review R3): `_deep_freeze` recurses into tuples, sets, and frozensets (sets sorted deterministically before freezing), `_plain` serializes the frozen containers back, `_json_safe` rejects non-string mapping keys instead of coercing them, and `VerificationStep` inputs are deep-frozen at any nesting depth.
+- Z3 clause diagnostics bind the actual constraint expressions (`str()` per constraint) in the SAT trace, so two different satisfiable sets with the same count never produce identical proof evidence.
+- Jurisdiction diagnostics: a detected conflict is BLOCKED even though its evidence is INFERRED; unsupported/unanalyzable inputs stay UNVERIFIABLE.
+- The diagnostics mixin never maps `verified=True` with an empty agent message to VERIFIED (Layer 1 is mandatory), and supplies a fallback message otherwise.
 
 
 ### Fixed

@@ -214,9 +214,11 @@ class ProvenanceGuard:
 
         Status mapping: a passing provenance check is NEVER VERIFIED —
         every field is caller-supplied (assurance: SELF_DECLARED), so a
-        pass attests internal consistency only (UNVERIFIABLE). A
-        deterministic tamper/rejection (CONTENT_TAMPERED, incomplete
-        metadata, invalid timestamp) is BLOCKED.
+        pass attests internal consistency only (UNVERIFIABLE). BLOCKED is
+        reserved for deterministic tamper/policy rejections
+        (CONTENT_TAMPERED, UNAUTHORIZED_MODEL); input-format and
+        requirement failures (INCOMPLETE_PROVENANCE, MISSING_DISCLOSURE,
+        INVALID_TIMESTAMP) are UNVERIFIABLE.
         """
         verified = result.get("verified", False)
         risk = result.get("risk", "")

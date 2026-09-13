@@ -523,3 +523,120 @@ class TestDiagnosticsEdgePaths:
 
         json.dumps(diagnostic.to_dict())
 
+
+
+class TestRound3Hardening:
+    """PR #48 review R3: deep-freeze completeness, Z3 constraint binding,
+    jurisdiction conflicts, deterministic set freezing."""
+
+    def test_deep_freeze_recurses_into_tuples_and_sets(self):
+        from qwed_legal.diagnostics import deep_freeze_evidence
+
+        frozen = deep_freeze_evidence({"evidence": ({"status": "verified"},)})
+        inner = frozen["evidence"][0]
+        with pytest.raises(TypeError):
+            inner["status"] = "tampered"
+
+    def test_deep_freeze_set_elements_frozen(self):
+        from qwed_legal.diagnostics import deep_freeze_evidence
+
+        frozen = deep_freeze_evidence({"tags": [{"a": 1}]})
+        with pytest.raises((TypeError, AttributeError)):
+            frozen["tags"][0]["a"] = 2
+
+    def test_json_safe_rejects_non_string_keys(self):
+        from qwed_legal.diagnostics import _json_safe
+
+        with pytest.raises(ValueError):
+            _json_safe({1: "a"})
+
+    def test_clause_z3_constraints_bound_in_trace(self):
+        """The SAT trace binds the actual constraint expressions, so two
+        different satisfiable sets with the same count produce different
+        proof evidence (PR #48 review, CodeRabbit R3)."""
+        from z3 import Bool, Int
+
+        constraints_a = [Bool("a"), Int("x") > 5]
+        constraints_b = [Bool("b"), Int("y") > 9]
+        result_a = ClauseGuard().verify_using_z3(constraints_a)
+        result_b = ClauseGuard().verify_using_z3(constraints_b)
+        assert result_a.status == "z3_satisfiable"
+        assert result_b.status == "z3_satisfiable"
+        inputs_a = result_a.verification_trace[0].inputs
+        inputs_b = result_b.verification_trace[0].inputs
+        assert list(inputs_a["constraints"]) == [str(c) for c in constraints_a]
+        assert list(inputs_b["constraints"]) == [str(c) for c in constraints_b]
+        assert inputs_a["constraints"] != inputs_b["constraints"]
+
+    def test_z3_satisfiable_diagnostic_is_verified(self):
+        from z3 import Bool, Int
+
+        result = ClauseGuard().verify_using_z3([Bool("a"), Int("x") > 5])
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.VERIFIED
+        assert diagnostic.is_authoritative is True
+
+    def test_z3_unsat_diagnostic_is_blocked(self):
+        from z3 import Int
+
+        x = Int("x")
+        result = ClauseGuard().verify_using_z3([x > 5, x < 5])
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.BLOCKED
+
+    def test_jurisdiction_conflict_is_blocked(self):
+        """A detected jurisdiction mismatch is BLOCKED even though its
+        evidence is INFERRED (PR #48 review, Sentry R3)."""
+        result = JurisdictionGuard().verify_choice_of_law(
+            parties_countries=["United States", "United States"],
+            governing_law="California",
+            forum="Germany",
+        )
+        assert result.verified is False
+        assert result.conflicts
+        assert all(
+            s.evidence_type != "UNSUPPORTED" for s in result.verification_trace
+        )
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.BLOCKED
+
+    def test_empty_message_can_never_be_verified(self):
+        """The mixin default must not map verified=True + empty message to
+        VERIFIED (LegalDiagnosticResult would reject it — Sentry R3)."""
+        from dataclasses import dataclass, field
+
+        from qwed_legal.diagnostics import LegalDiagnosticsMixin
+
+        @dataclass
+        class _Result(LegalDiagnosticsMixin):
+            verified: bool = True
+            message: str = ""
+            verification_trace: list = field(default_factory=list)
+
+        diagnostic = _Result().to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+
+    def test_step_inputs_set_freezing_is_order_deterministic(self):
+        """Equivalent sets in step inputs freeze to identical tuples
+        regardless of hash-seed iteration order (PR #48 review,
+        CodeRabbit R3)."""
+        from qwed_legal.models import (
+            EVIDENCE_PARSED,
+            VerificationStep,
+        )
+
+        step_a = VerificationStep(
+            step="RULE_IDENTIFIED",
+            description="d",
+            inputs={"parties": {"buyer", "seller", "agent"}},
+            output="out",
+            evidence_type=EVIDENCE_PARSED,
+        )
+        step_b = VerificationStep(
+            step="RULE_IDENTIFIED",
+            description="d",
+            inputs={"parties": {"agent", "buyer", "seller"}},
+            output="out",
+            evidence_type=EVIDENCE_PARSED,
+        )
+        assert step_a.to_dict() == step_b.to_dict()

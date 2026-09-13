@@ -59,11 +59,19 @@ class JurisdictionResult(LegalDiagnosticsMixin):
         if self.verified:
             return LegalDiagnosticStatus.UNVERIFIABLE
         trace = trace_to_dict(self.verification_trace)
-        if any(
-            step["evidence_type"] == EVIDENCE_DETERMINISTIC for step in trace
-        ) and not any(
+        unsupported = any(
             step["evidence_type"] == EVIDENCE_UNSUPPORTED for step in trace
-        ):
+        )
+        # A detected conflict is BLOCKED even though its evidence is
+        # INFERRED — conflicts are deterministic rejections of the claim,
+        # and requiring DETERMINISTIC evidence here would misreport a
+        # jurisdiction mismatch as UNVERIFIABLE (PR #48 review, Sentry).
+        # Unsupported/unanalyzable inputs stay UNVERIFIABLE (CodeRabbit:
+        # empty-party branches populate conflicts but are EVIDENCE_
+        # UNSUPPORTED, not deterministic conflicts).
+        if not unsupported and (self.conflicts or any(
+            step["evidence_type"] == EVIDENCE_DETERMINISTIC for step in trace
+        )):
             return LegalDiagnosticStatus.BLOCKED
         return LegalDiagnosticStatus.UNVERIFIABLE
 

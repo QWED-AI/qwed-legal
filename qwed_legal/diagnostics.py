@@ -233,15 +233,21 @@ _PROOF_REF_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _deep_freeze(value: Any) -> Any:
-    """Recursively freeze containers: dicts become read-only mappings,
-    lists become tuples. Deep-freezing the retained evidence prevents
-    in-place mutation that would decouple it from its proof_ref
-    (PR #48 review)."""
-    if isinstance(value, dict):
+    """Recursively freeze containers: mappings become read-only proxies,
+    lists/tuples become tuples, sets/frozensets become sorted tuples.
+    Deep-freezing the retained evidence prevents in-place mutation that
+    would decouple it from its proof_ref (PR #48 review) — including
+    nested tuples, sets, and frozensets (PR #48 review R3: the earlier
+    version did not recurse into them)."""
+    if isinstance(value, Mapping):
         return types.MappingProxyType(
             {k: _deep_freeze(v) for k, v in value.items()}
         )
-    if isinstance(value, list):
+    if isinstance(value, (set, frozenset)):
+        # Sets have no stable iteration order across hash seeds — sort by
+        # a deterministic serialized representation before freezing.
+        return tuple(_deep_freeze(v) for v in sorted(value, key=repr))
+    if isinstance(value, (list, tuple)):
         return tuple(_deep_freeze(v) for v in value)
     return value
 
@@ -335,7 +341,9 @@ class LegalDiagnosticResult:
         def _plain(value: Any) -> Any:
             if isinstance(value, types.MappingProxyType):
                 return {k: _plain(v) for k, v in value.items()}
-            if isinstance(value, (list, tuple)):
+            if isinstance(value, dict):
+                return {k: _plain(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple, set, frozenset)):
                 return [_plain(v) for v in value]
             return value
 
@@ -453,9 +461,13 @@ class LegalDiagnosticsMixin:
 
     def _diagnostic_status(self) -> LegalDiagnosticStatus:
         """Map the guard outcome onto the ecosystem tri-state. Default:
-        verified=True → VERIFIED, everything else → UNVERIFIABLE.
+        verified=True → VERIFIED, everything else → UNVERIFIABLE — except
+        that an empty agent_message can never be VERIFIED (Layer 1 is
+        mandatory and LegalDiagnosticResult would reject it; Sentry R3).
         Subclasses override for guard-specific mappings."""
-        if self.__dict__.get("verified", False):
+        if self.__dict__.get("verified", False) and str(
+            self.__dict__.get("message", "")
+        ).strip():
             return LegalDiagnosticStatus.VERIFIED
         return LegalDiagnosticStatus.UNVERIFIABLE
 
@@ -502,6 +514,12 @@ class LegalDiagnosticsMixin:
         }
         status = self._diagnostic_status()
         agent_message = self._diagnostic_agent_message()
+        if status is LegalDiagnosticStatus.VERIFIED and not str(agent_message).strip():
+            # Layer 1 is mandatory — an empty agent_message can never back
+            # a VERIFIED verdict (PR #48 review, Sentry R3).
+            status = LegalDiagnosticStatus.UNVERIFIABLE
+        if not str(agent_message).strip():
+            agent_message = "Verification completed without an agent-facing message."
         if status is LegalDiagnosticStatus.VERIFIED:
             return LegalDiagnosticResult.verified(
                 agent_message=agent_message,
@@ -531,7 +549,15 @@ def _json_safe(value: Any) -> Any:
     """
     if isinstance(value, Mapping):
         # Includes the read-only mappings produced by _deep_freeze.
-        return {str(k): _json_safe(v) for k, v in value.items()}
+        # Non-string keys are rejected, not coerced: str(k) would collapse
+        # distinct evidence keys ({1: "a"} vs {"1": "a"}) and silently
+        # drop values when both are present (PR #48 review, CodeRabbit).
+        if not all(isinstance(k, str) for k in value):
+            raise ValueError(
+                "_json_safe: proof evidence object keys must be strings "
+                "(fail-closed — coercion would collapse distinct keys)."
+            )
+        return {k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
     if isinstance(value, (set, frozenset)):

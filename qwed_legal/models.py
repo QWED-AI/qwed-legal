@@ -72,8 +72,15 @@ def _freeze_evidence(value: Any) -> Any:
     PR #48 review)."""
     if isinstance(value, Mapping):
         return _FrozenDict({k: _freeze_evidence(v) for k, v in value.items()})
-    if isinstance(value, (list, tuple, set)):
+    if isinstance(value, (list, tuple)):
+        # Original order is significant for sequences.
         return tuple(_freeze_evidence(v) for v in value)
+    if isinstance(value, (set, frozenset)):
+        # Sets have no stable iteration order across hash seeds — sort by
+        # a deterministic serialized representation before freezing, so
+        # equivalent inputs produce identical proof evidence (PR #48
+        # review, CodeRabbit R3).
+        return tuple(_freeze_evidence(v) for v in sorted(value, key=repr))
     return value
 
 

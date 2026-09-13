@@ -499,7 +499,15 @@ class ClauseGuard:
                     VerificationStep(
                         step=STEP_CONCLUSION,
                         description="Z3 evaluated explicit constraints as satisfiable.",
-                        inputs={"z3_result": "sat", "constraint_count": len(constraints)},
+                        inputs={
+                            "z3_result": "sat",
+                            "constraint_count": len(constraints),
+                            # Deterministic str() of each supplied Z3
+                            # expression binds the proof to the actual
+                            # constraints, not just their count (PR #48
+                            # review, CodeRabbit R3).
+                            "constraints": [str(c) for c in constraints],
+                        },
                         output="SATISFIABLE: no contradiction among provided constraints.",
                         evidence_type=EVIDENCE_DETERMINISTIC,
                     )
