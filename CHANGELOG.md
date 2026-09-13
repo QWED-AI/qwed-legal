@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — DiagnosticResult contract (issue #40, Option A per #37)
+- New `qwed_legal.diagnostics` module: `LegalDiagnosticResult` (frozen 3-layer result: `agent_message` / `developer_fields` / `proof_ref`), `LegalDiagnosticStatus` (VERIFIED / UNVERIFIABLE / BLOCKED), an RFC 8785 (JCS) canonicalizer, `compute_proof_ref`, and `resolve_proof_ref`.
+- `VerificationStep` is now a **frozen** dataclass — evidence steps cannot be mutated after construction (audit P1-L3: the DETERMINISTIC→HEURISTIC flip is structurally impossible).
+- All guard result dataclasses are **frozen** and inherit the `LegalDiagnosticsMixin`: every result exposes `to_diagnostic(claim_inputs=...)`, which builds the RFC 8785 proof evidence over (claim inputs, full verification_trace, result snapshot) and maps the guard outcome onto the ecosystem tri-state.
+- Authority contract (structurally enforced): VERIFIED requires `proof_ref`; UNVERIFIABLE/BLOCKED reject it. Status mapping: verified claim matches → VERIFIED; computed-only / ambiguous / self-declared / heuristic-pass / citation-authority → UNVERIFIABLE; mismatch / contradiction / tamper / format-invalid → BLOCKED. Self-declared provenance attestations are never authoritative (#42/#45).
+- `resolve_proof_ref(proof_ref, evidence)` lets any consumer detect post-issuance tampering (trace mutation, claim alteration, evidence-type flips) by recomputing the canonical hash.
+- Deep-freeze hardening (PR #48 review): `VerificationStep.inputs` is exposed through a mutation-disabled mapping, result evidence containers (traces, conflicts, tiers, parsed components) are frozen at construction, `LegalDiagnosticResult.developer_fields` is deep-frozen, and `proof_ref` format (`sha256:` + 64 hex) is validated at construction.
+- Status mappings refined per review: jurisdiction results are never VERIFIED (PARSED/INFERRED evidence only); liability diagnostics classify from structured fields (computed cap present/absent), not message wording; deadline fallback-calendar results map to UNVERIFIABLE; clause `verify_using_z3` emits explicit `z3_satisfiable` / `z3_unsat` statuses mapping to VERIFIED / BLOCKED.
+- Canonicalizer hardening: integers outside the IEEE 754 safe range and lone surrogates fail closed; set evidence is sorted deterministically; non-primitive values are type-tagged so distinct evidence types never collide.
+- `fairness_to_diagnostic` adapter lives in `diagnostics.py` (FairnessGuard module left untouched — its pre-existing scanner findings must not be dragged into a release-blocking state); the fairness payload is JSON-serialized.
+- `ContradictionGuard.to_diagnostic` retains the exact claim/result structures in `developer_fields` so `resolve_proof_ref` reconstructs the hash from the diagnostic alone.
+- Deep-freeze completeness (PR #48 review R3): `_deep_freeze` recurses into tuples, sets, and frozensets (sets sorted deterministically before freezing), `_plain` serializes the frozen containers back, `_json_safe` rejects non-string mapping keys instead of coercing them, and `VerificationStep` inputs are deep-frozen at any nesting depth.
+- Z3 clause diagnostics bind the actual constraint expressions (`str()` per constraint) in the SAT trace, so two different satisfiable sets with the same count never produce identical proof evidence.
+- Jurisdiction diagnostics: a detected conflict is BLOCKED even though its evidence is INFERRED; unsupported/unanalyzable inputs stay UNVERIFIABLE.
+- The diagnostics mixin never maps `verified=True` with an empty agent message to VERIFIED (Layer 1 is mandatory), and supplies a fallback message otherwise.
+- Jurisdiction refinement (PR #48 review R4): a detected conflict BLOCKS even when an unsupported-input warning is also present — the two are independent signals. A conflicts entry backed only by UNSUPPORTED trace evidence (empty-party placeholders) stays UNVERIFIABLE; only conflicts backed by actual analysis evidence (INFERRED/DETERMINISTIC) block.
+- `_FrozenDict` blocks in-place union (`|=`); `models._json_safe` rejects non-string mapping keys (step inputs and proof evidence) instead of coercing with `str(k)`, which collapsed distinct keys.
+
+
 ### Fixed
 - `LiabilityGuard`: non-finite inputs (Infinity/NaN) to `verify_cap`, `verify_indemnity_limit`, and `verify_tiered_liability` fail closed with `UNVERIFIABLE` instead of raising `decimal.InvalidOperation` or failing closed only by NaN-comparison accident; affected numeric result fields are now `null` in the failure result (#42).
 - `DeadlineGuard`: quantities beyond the supported range (cap: 100,000 — no legal term spans ~274 years) fail closed with `UNVERIFIABLE` instead of raising `OverflowError`; date-range overflow converts to fail-closed; the business-day loop is bounded so astronomical quantities can no longer stall the loop (#42).

@@ -371,7 +371,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is False
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert result.warnings
         assert "UNVERIFIABLE" in result.message
         assert "VERIFIED" not in result.message
@@ -385,7 +385,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is False
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert any("different legal systems" in warning for warning in result.warnings)
         assert "AMBIGUOUS" in result.message
 
@@ -397,7 +397,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is False
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert any("CISG" in warning for warning in result.warnings)
         assert "UNVERIFIABLE" in result.message
 
@@ -411,7 +411,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is True
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert not any("CISG" in warning for warning in result.warnings)
 
     def test_party_country_normalization_does_not_treat_states_as_foreign(self):
@@ -424,7 +424,7 @@ class TestJurisdictionGuardFailClosed:
         )
 
         assert result.verified is True
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert not result.warnings
 
     def test_ambiguous_de_code_still_supports_delaware_mismatch_check(self):
@@ -448,7 +448,7 @@ class TestJurisdictionGuardFailClosed:
             forum="London",
         )
 
-        assert result.conflicts == []
+        assert list(result.conflicts) == []
         assert not any("US state" in conflict for conflict in result.conflicts)
 
     def test_state_law_does_not_match_colliding_party_country_code(self):
@@ -466,7 +466,7 @@ class TestJurisdictionGuardFailClosed:
 
         for result in [delaware_result, indiana_result]:
             assert result.verified is True
-            assert result.conflicts == []
+            assert list(result.conflicts) == []
             assert not any("favors one party" in warning for warning in result.warnings)
 
     def test_conflict_message_includes_warning_count_when_both_exist(self):
@@ -504,7 +504,7 @@ class TestContradictionGuardValueProvenance:
         result, steps = self._fact_steps(
             [Clause(text="Contract term is exactly 1 month", category="DURATION", value=999)]
         )
-        assert steps[0].inputs["encoded_constraints"] == [{"op": "eq", "operand": 1}]
+        assert list(steps[0].inputs["encoded_constraints"]) == [{"op": "eq", "operand": 1}]
         assert steps[0].inputs["caller_value"] == 999
         assert steps[0].inputs["caller_value_agrees"] is False
         assert "disagree" in result["message"]
@@ -513,7 +513,7 @@ class TestContradictionGuardValueProvenance:
         result, steps = self._fact_steps(
             [Clause(text="Liability capped at 5000.", category="LIABILITY", value=5000)]
         )
-        assert steps[0].inputs["encoded_constraints"] == [{"op": "le", "operand": 5000}]
+        assert list(steps[0].inputs["encoded_constraints"]) == [{"op": "le", "operand": 5000}]
         assert steps[0].inputs["caller_value_agrees"] is True
 
     def test_substring_keyword_no_longer_encodes(self):
@@ -559,7 +559,7 @@ class TestContradictionGuardValueProvenance:
                 )
             ]
         )
-        assert steps[0].inputs["encoded_constraints"] == [{"op": "eq", "operand": 12}]
+        assert list(steps[0].inputs["encoded_constraints"]) == [{"op": "eq", "operand": 12}]
         assert steps[0].inputs["caller_value"] == 6
         assert steps[0].inputs["caller_value_agrees"] is False
         assert "disagree" in result["message"]
@@ -578,7 +578,7 @@ class TestContradictionGuardValueProvenance:
         conclusion = [s for s in result["verification_trace"] if s.step == "CONCLUSION"][0]
         assert conclusion.evidence_type == "DETERMINISTIC"
         fact_steps = [s for s in result["verification_trace"] if s.step == "FACT_DERIVED"]
-        assert [s.inputs["encoded_constraints"] for s in fact_steps] == [[{"op": "eq", "operand": 1}], [{"op": "eq", "operand": 2}]]
+        assert [list(s.inputs["encoded_constraints"]) for s in fact_steps] == [[{"op": "eq", "operand": 1}], [{"op": "eq", "operand": 2}]]
         assert all(s.inputs["caller_value_agrees"] is False for s in fact_steps)
         assert "disagree" in result["message"]
 
@@ -706,7 +706,7 @@ class TestContradictionGuardValueProvenance:
             ]
         )
         assert len(steps) == 1
-        assert steps[0].inputs["encoded_constraints"] == [
+        assert list(steps[0].inputs["encoded_constraints"]) == [
             {"op": "le", "operand": 5000},
             {"op": "le", "operand": 6000},
         ]
@@ -748,7 +748,7 @@ class TestContradictionGuardValueProvenance:
         )
         assert result["status"] == "contradiction"
         fact_steps = [s for s in result["verification_trace"] if s.step == "FACT_DERIVED"]
-        assert fact_steps[0].inputs["encoded_constraints"] == [
+        assert list(fact_steps[0].inputs["encoded_constraints"]) == [
             {"op": "le", "operand": 7000},
             {"op": "le", "operand": 5000},
         ]
@@ -795,7 +795,7 @@ class TestContradictionGuardValueProvenance:
             [Clause(text="Max liability capped at 5000", category="LIABILITY", value=5000)]
         )
         assert len(steps) == 1
-        assert steps[0].inputs["encoded_constraints"] == [{"op": "le", "operand": 5000}]
+        assert list(steps[0].inputs["encoded_constraints"]) == [{"op": "le", "operand": 5000}]
         assert result["status"] == "consistent"
         assert result["verified"] is True
 

@@ -14,7 +14,7 @@ Key distinction:
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 # ── Step type constants ────────────────────────────────────────────────────────
 STEP_RULE_IDENTIFIED = "RULE_IDENTIFIED"
@@ -66,10 +66,61 @@ Example: unknown jurisdiction, unrecognized claim type.
 """
 
 
-@dataclass
+def _freeze_evidence(value: Any) -> Any:
+    """Recursively freeze evidence containers: mappings become
+    mutation-disabled dicts, lists/tuples/sets become tuples (issue #40,
+    PR #48 review)."""
+    if isinstance(value, Mapping):
+        return _FrozenDict({k: _freeze_evidence(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple)):
+        # Original order is significant for sequences.
+        return tuple(_freeze_evidence(v) for v in value)
+    if isinstance(value, (set, frozenset)):
+        # Sets have no stable iteration order across hash seeds — sort by
+        # a deterministic serialized representation before freezing, so
+        # equivalent inputs produce identical proof evidence (PR #48
+        # review, CodeRabbit R3).
+        return tuple(_freeze_evidence(v) for v in sorted(value, key=repr))
+    return value
+
+
+class _FrozenDict(dict):
+    """A dict whose mutation methods are disabled (issue #40).
+
+    Evidence dicts inside a frozen VerificationStep must not be mutated
+    in place. A dict subclass keeps full read compatibility (isinstance,
+    subscripting, deepcopy, JSON serialization) while every mutating
+    operation raises.
+    """
+
+    def _immutable(self, *args, **kwargs):
+        raise TypeError(
+            "VerificationStep.inputs is immutable — evidence records "
+            "cannot be modified after verification (issue #40)."
+        )
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    update = _immutable
+    setdefault = _immutable
+    pop = _immutable
+    popitem = _immutable
+    # In-place union mutates via dict.__ior__ without calling the
+    # disabled methods above (PR #48 review, CodeRabbit).
+    __ior__ = _immutable
+
+
+@dataclass(frozen=True)
 class VerificationStep:
     """
     A single auditable step in a guard's verification_trace.
+
+    Frozen (issue #40): evidence records are immutable after construction —
+    a DETERMINISTIC step cannot be silently downgraded or its output
+    rewritten post-verification, and the inputs mapping is exposed through
+    a read-only proxy. Any tampering with a retained trace is additionally
+    detectable via resolve_proof_ref (qwed_legal.diagnostics).
 
     Fields:
         step           — step type constant (STEP_RULE_IDENTIFIED etc.)
@@ -88,6 +139,13 @@ class VerificationStep:
     inputs: Dict[str, Any]
     output: str
     evidence_type: str
+
+    def __post_init__(self) -> None:
+        # Deep-freeze closure: the dataclass lock does not cover the
+        # nested inputs mapping — swap in a mutation-disabled dict and
+        # deep-freeze nested containers, so callers cannot alter evidence
+        # in place at any depth (PR #48 review, Greptile-executed).
+        object.__setattr__(self, "inputs", _freeze_evidence(self.inputs))
 
     def is_proven(self) -> bool:
         """
@@ -116,9 +174,18 @@ class VerificationStep:
 
 
 def _json_safe(value: Any) -> Any:
-    """Coerce a value into a JSON-serializable structure without losing data."""
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
+    """Coerce a value into a JSON-serializable structure without losing data.
+
+    Non-string mapping keys are rejected, not coerced: str(k) would
+    collapse distinct keys ({1: "a"} vs {"1": "b"}) before the evidence
+    reaches proof hashing (PR #48 review, CodeRabbit)."""
+    if isinstance(value, Mapping):
+        if not all(isinstance(k, str) for k in value):
+            raise ValueError(
+                "_json_safe: mapping keys must be strings — coercing "
+                "would collapse distinct evidence keys (fail-closed)."
+            )
+        return {k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_json_safe(v) for v in value]
     if isinstance(value, (str, int, float, bool)) or value is None:

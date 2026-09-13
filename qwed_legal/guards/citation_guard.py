@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -54,8 +55,8 @@ STATUS_UNVERIFIABLE_AUTHORITY = "unverifiable_authority"
 _V_DOT_RE = re.compile(r"\sv\.\s", re.IGNORECASE)
 
 
-@dataclass
-class CitationResult:
+@dataclass(frozen=True)
+class CitationResult(LegalDiagnosticsMixin):
     """
     Result of a citation format check.
 
@@ -85,6 +86,19 @@ class CitationResult:
     message: str = ""
     risk: Optional[str] = None
     verification_trace: list = field(default_factory=list)
+
+    def __post_init__(self):
+        self._freeze_evidence_fields(
+            "parsed_components", "issues", "verification_trace"
+        )
+
+    def _diagnostic_status(self):
+        # Citation authority is never verifiable (verified is always False):
+        # a format-invalid cite is a deterministic rejection (BLOCKED), a
+        # format-valid cite is UNVERIFIABLE_AUTHORITY (non-authoritative).
+        if self.format_valid:
+            return LegalDiagnosticStatus.UNVERIFIABLE
+        return LegalDiagnosticStatus.BLOCKED
 
     # ── Backward-compatibility properties ─────────────────────────────────────
     @property

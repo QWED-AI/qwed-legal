@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, DecimalException, ROUND_HALF_UP
 from typing import List, Optional
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_FACT_DERIVED,
@@ -19,8 +20,8 @@ from qwed_legal.models import (
 )
 
 
-@dataclass
-class LiabilityResult:
+@dataclass(frozen=True)
+class LiabilityResult(LegalDiagnosticsMixin):
     """Result of liability verification."""
     verified: bool
     contract_value: Optional[Decimal]
@@ -31,9 +32,22 @@ class LiabilityResult:
     message: str
     verification_trace: list = field(default_factory=list)
 
+    def __post_init__(self):
+        self._freeze_evidence_fields("verification_trace")
 
-@dataclass
-class TieredLiabilityResult:
+    def _diagnostic_status(self):
+        # Structured classification: a None computed cap means the input
+        # was unverifiable (non-finite/out-of-range); a computed cap with
+        # a mismatch is a deterministic rejection. Message wording must
+        # not drive machine state (PR #48 review, Greptile).
+        if self.verified:
+            return LegalDiagnosticStatus.VERIFIED
+        if self.computed_cap is None:
+            return LegalDiagnosticStatus.UNVERIFIABLE
+        return LegalDiagnosticStatus.BLOCKED
+
+@dataclass(frozen=True)
+class TieredLiabilityResult(LegalDiagnosticsMixin):
     """Result of tiered liability verification."""
     verified: bool
     tiers: List[dict]
@@ -41,6 +55,16 @@ class TieredLiabilityResult:
     claimed_total: Optional[Decimal]
     message: str
     verification_trace: list = field(default_factory=list)
+
+    def __post_init__(self):
+        self._freeze_evidence_fields("tiers", "verification_trace")
+
+    def _diagnostic_status(self):
+        if self.verified:
+            return LegalDiagnosticStatus.VERIFIED
+        if self.total_computed is None:
+            return LegalDiagnosticStatus.UNVERIFIABLE
+        return LegalDiagnosticStatus.BLOCKED
 
 
 def _invalid_names(named_values: dict) -> List[str]:

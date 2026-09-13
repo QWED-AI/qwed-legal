@@ -105,7 +105,7 @@ class TestStatuteVerificationTrace:
             assert isinstance(step.output, str) and step.output.strip()
 
     def test_verification_trace_is_list(self):
-        assert isinstance(_statute().verification_trace, list)
+        assert isinstance(_statute().verification_trace, (list, tuple))
 
     def test_parsed_step_is_not_proven(self):
         assert _statute().verification_trace[0].is_proven() is False

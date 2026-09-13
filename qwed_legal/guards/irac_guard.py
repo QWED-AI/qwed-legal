@@ -31,6 +31,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -48,8 +49,8 @@ STATUS_COHERENCE_INVALID = "coherence_invalid"
 STATUS_UNVERIFIABLE_REASONING = "unverifiable_reasoning"
 
 
-@dataclass
-class IRACResult:
+@dataclass(frozen=True)
+class IRACResult(LegalDiagnosticsMixin):
     """
     Result of an IRAC structure check.
 
@@ -73,6 +74,20 @@ class IRACResult:
     coherence_issues: List[str] = field(default_factory=list)
     message: str = ""
     verification_trace: list = field(default_factory=list)
+
+    def __post_init__(self):
+        self._freeze_evidence_fields(
+            "components", "missing_sections", "coherence_issues",
+            "verification_trace",
+        )
+
+    def _diagnostic_status(self):
+        # IRAC reasoning is never verifiable (verified always False): a
+        # structure/coherence failure is a deterministic rejection
+        # (BLOCKED); a well-formed analysis is UNVERIFIABLE_REASONING.
+        if self.status == STATUS_UNVERIFIABLE_REASONING:
+            return LegalDiagnosticStatus.UNVERIFIABLE
+        return LegalDiagnosticStatus.BLOCKED
 
     @property
     def verified(self) -> bool:

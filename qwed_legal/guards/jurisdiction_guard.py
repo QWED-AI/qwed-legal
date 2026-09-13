@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Set
 from enum import Enum
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -28,8 +29,8 @@ class JurisdictionType(Enum):
     HYBRID = "hybrid"
 
 
-@dataclass
-class JurisdictionResult:
+@dataclass(frozen=True)
+class JurisdictionResult(LegalDiagnosticsMixin):
     """Result of jurisdiction verification."""
 
     verified: bool
@@ -39,6 +40,58 @@ class JurisdictionResult:
     forum: Optional[str] = None
     message: str = ""
     verification_trace: list = field(default_factory=list)
+
+    def __post_init__(self):
+        self._freeze_evidence_fields("conflicts", "warnings", "verification_trace")
+
+    def _diagnostic_status(self):
+        # Jurisdiction evidence is PARSED/INFERRED only (lookup tables and
+        # rule analysis — verified by trace inspection): it can never back
+        # a VERIFIED verdict (PR #48 review, CodeAnt Critical validated by
+        # trace). Unsupported/unanalyzable inputs are UNVERIFIABLE;
+        # deterministic conflicts are BLOCKED (PR #48 review, Greptile).
+        from qwed_legal.models import (
+            EVIDENCE_DETERMINISTIC,
+            EVIDENCE_UNSUPPORTED,
+            trace_to_dict,
+        )
+
+        if self.verified:
+            return LegalDiagnosticStatus.UNVERIFIABLE
+        trace = trace_to_dict(self.verification_trace)
+        unsupported = any(
+            step["evidence_type"] == EVIDENCE_UNSUPPORTED for step in trace
+        )
+        # A detected conflict is BLOCKED even though its evidence is
+        # INFERRED — conflicts are deterministic rejections of the claim,
+        # and requiring DETERMINISTIC evidence here would misreport a
+        # jurisdiction mismatch as UNVERIFIABLE (PR #48 review, Sentry).
+        # A conflict BLOCKS even when an unsupported-input warning is also
+        # present: the two are independent signals, and suppressing a real
+        # detected conflict because of a warning would hide it from
+        # downstream consumers (PR #48 review, Greptile-executed).
+        # BUT a conflicts entry alone is not proof of a conflict:
+        # 1. Unsupported/empty-party branches also populate `conflicts`
+        #    with placeholder entries whose only trace evidence is
+        #    EVIDENCE_UNSUPPORTED (CodeRabbit; Greptile R4-executed).
+        # 2. An UNRECOGNIZED governing law ("Atlantis") is an unsupported
+        #    lookup input, not a detected mismatch — its conflict entry
+        #    must not block (PR #48 review, Greptile P2-executed).
+        # A real conflict is one backed by actual analysis evidence
+        # (INFERRED or DETERMINISTIC) AND a recognized governing law, so
+        # unsupported-lookup traces stay UNVERIFIABLE.
+        evidence_types = {step["evidence_type"] for step in trace}
+        has_analysis = bool(
+            evidence_types & {EVIDENCE_INFERRED, EVIDENCE_DETERMINISTIC}
+        )
+        governing_law_recognized = JurisdictionGuard()._is_valid_jurisdiction(
+            JurisdictionGuard()._normalize_jurisdiction(self.governing_law or "")
+        )
+        if self.conflicts and has_analysis and governing_law_recognized:
+            return LegalDiagnosticStatus.BLOCKED
+        if EVIDENCE_DETERMINISTIC in evidence_types and not unsupported:
+            return LegalDiagnosticStatus.BLOCKED
+        return LegalDiagnosticStatus.UNVERIFIABLE
 
 
 class JurisdictionGuard:

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 from z3 import Int, Solver, sat, unknown
 
+from qwed_legal.diagnostics import LegalDiagnosticResult
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -53,6 +54,68 @@ class ContradictionGuard:
       verified=False (constraint could not be encoded).
     - Z3 unknown → UNVERIFIABLE (not a false contradiction).
     """
+
+    @classmethod
+    def to_diagnostic(
+        cls,
+        result: dict,
+        clauses: "Optional[List[Clause]]" = None,
+    ) -> LegalDiagnosticResult:
+        """Convert a verify_consistency() result dict to the 3-layer
+        LegalDiagnosticResult (issue #40).
+
+        Status mapping: consistent → VERIFIED (Z3 SAT over text-derived
+        operands is deterministic proof); contradiction → BLOCKED;
+        unverifiable / partial_coverage → UNVERIFIABLE. Pass the original
+        ``clauses`` so the proof evidence binds the claim inputs.
+        """
+        status = result.get("status", "unverifiable")
+        trace = result.get("verification_trace", [])
+        trace_dicts = [
+            step.to_dict() if hasattr(step, "to_dict") else step
+            for step in trace
+        ]
+        claim_texts = [c.text for c in (clauses or [])]
+        if not claim_texts:
+            claim_texts = [
+                step.get("inputs", {}).get("clause_text")
+                for step in trace_dicts
+                if isinstance(step, dict)
+                and step.get("step") == "FACT_DERIVED"
+            ]
+            claim_texts = [t for t in claim_texts if t]
+        # Retain the exact claim/result structures in developer_fields so
+        # resolve_proof_ref() can reconstruct the hash from the
+        # LegalDiagnosticResult alone (PR #48 review, CodeRabbit).
+        claim_inputs = {"clauses": claim_texts}
+        result_snapshot = {"status": status}
+        developer_fields = {
+            "claim_inputs": claim_inputs,
+            "verification_trace": trace_dicts,
+            "result": result_snapshot,
+            "unsupported": result.get("unsupported", []),
+            "contradiction_status": status,
+        }
+        evidence = {
+            "claim_inputs": claim_inputs,
+            "trace": trace_dicts,
+            "result": result_snapshot,
+        }
+        if status == "consistent":
+            return LegalDiagnosticResult.verified(
+                agent_message=result.get("message", "Clauses are consistent."),
+                developer_fields=developer_fields,
+                evidence=evidence,
+            )
+        if status == "contradiction":
+            return LegalDiagnosticResult.blocked(
+                agent_message=result.get("message", "Clauses are contradictory."),
+                developer_fields=developer_fields,
+            )
+        return LegalDiagnosticResult.unverifiable(
+            agent_message=result.get("message", "Consistency could not be determined."),
+            developer_fields=developer_fields,
+        )
 
     def verify_consistency(self, clauses: List[Clause]) -> dict:
         """

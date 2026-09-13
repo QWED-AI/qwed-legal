@@ -58,10 +58,15 @@ class TestVerificationStepToDict:
         d = _step(inputs={"x": {"y": [1, 2, 3]}}).to_dict()
         assert d["inputs"]["x"]["y"] == [1, 2, 3]
 
-    def test_non_string_keys_coerced(self):
-        d = _step(inputs={1: "one"}).to_dict()
-        assert d["inputs"]["1"] == "one"
-        json.dumps(d)
+    def test_non_string_keys_rejected(self):
+        """Non-string keys are rejected, not coerced — str(k) would
+        collapse distinct keys ({1: "a"} vs {"1": "b"}) before proof
+        hashing (PR #48 review, CodeRabbit)."""
+        import pytest
+
+        step = _step(inputs={1: "one"})
+        with pytest.raises(ValueError):
+            step.to_dict()
 
 
 class TestTraceToDict:

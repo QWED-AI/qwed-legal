@@ -11,6 +11,7 @@ from typing import Any, List, Optional, Tuple
 
 from z3 import BoolRef, Solver, sat, unknown, unsat
 
+from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -22,8 +23,8 @@ from qwed_legal.models import (
 )
 
 
-@dataclass
-class ClauseResult:
+@dataclass(frozen=True)
+class ClauseResult(LegalDiagnosticsMixin):
     """Result of clause consistency check."""
 
     consistent: bool
@@ -36,6 +37,23 @@ class ClauseResult:
     #   "heuristic_pass_limited"      — no propositions extracted; guard has no coverage
     #                                   consistent=False but NOT a detected contradiction
     verification_trace: list = field(default_factory=list)
+
+    def __post_init__(self):
+        self._freeze_evidence_fields("conflicts", "verification_trace")
+
+    def _diagnostic_status(self):
+        # ClauseGuard's heuristic tier is INFERRED evidence: a heuristic
+        # pass is never authority (UNVERIFIABLE); a detected heuristic
+        # contradiction is BLOCKED. Explicit Z3 outcomes
+        # (z3_satisfiable / z3_unsat) are DETERMINISTIC and map to
+        # VERIFIED / BLOCKED respectively (PR #48 review, Greptile).
+        if self.status == "z3_satisfiable":
+            return LegalDiagnosticStatus.VERIFIED
+        if self.status == "z3_unsat":
+            return LegalDiagnosticStatus.BLOCKED
+        if self.status == "contradiction":
+            return LegalDiagnosticStatus.BLOCKED
+        return LegalDiagnosticStatus.UNVERIFIABLE
 
 
 class ClauseGuard:
@@ -474,13 +492,22 @@ class ClauseGuard:
         if result == sat:
             return ClauseResult(
                 consistent=True,
+                status="z3_satisfiable",
                 conflicts=[],
                 message="VERIFIED: Provided Z3 constraints are satisfiable.",
                 verification_trace=[
                     VerificationStep(
                         step=STEP_CONCLUSION,
                         description="Z3 evaluated explicit constraints as satisfiable.",
-                        inputs={"z3_result": "sat", "constraint_count": len(constraints)},
+                        inputs={
+                            "z3_result": "sat",
+                            "constraint_count": len(constraints),
+                            # Deterministic str() of each supplied Z3
+                            # expression binds the proof to the actual
+                            # constraints, not just their count (PR #48
+                            # review, CodeRabbit R3).
+                            "constraints": [str(c) for c in constraints],
+                        },
                         output="SATISFIABLE: no contradiction among provided constraints.",
                         evidence_type=EVIDENCE_DETERMINISTIC,
                     )
@@ -490,6 +517,7 @@ class ClauseGuard:
         if result == unsat:
             return ClauseResult(
                 consistent=False,
+                status="z3_unsat",
                 conflicts=[],
                 message=(
                     "CONTRADICTION: Provided Z3 constraints are "

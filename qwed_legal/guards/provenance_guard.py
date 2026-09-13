@@ -12,6 +12,8 @@ import re
 import hashlib
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+
+from qwed_legal.diagnostics import LegalDiagnosticResult
 from datetime import datetime, timezone
 
 
@@ -204,6 +206,47 @@ class ProvenanceGuard:
             disclosure_text=disclosure_text,
             human_reviewed=human_reviewed,
             reviewer_id=reviewer_id,
+        )
+
+    def to_diagnostic(self, result: Dict[str, Any]) -> LegalDiagnosticResult:
+        """Convert a verify_provenance() result dict to the 3-layer
+        LegalDiagnosticResult (issue #40).
+
+        Status mapping: a passing provenance check is NEVER VERIFIED —
+        every field is caller-supplied (assurance: SELF_DECLARED), so a
+        pass attests internal consistency only (UNVERIFIABLE). BLOCKED is
+        returned only for CONTENT_TAMPERED and UNAUTHORIZED_MODEL;
+        INCOMPLETE_PROVENANCE, MISSING_DISCLOSURE, and INVALID_TIMESTAMP
+        are UNVERIFIABLE.
+        """
+        verified = result.get("verified", False)
+        risk = result.get("risk", "")
+        developer_fields = {
+            "assurance": result.get("assurance", "SELF_DECLARED"),
+            "checks_passed": result.get("checks_passed", []),
+            "checks_failed": result.get("checks_failed", []),
+            "risk": risk,
+        }
+        if verified:
+            return LegalDiagnosticResult.unverifiable(
+                agent_message=(
+                    result.get("message", "Provenance consistency verified.")
+                    + " Self-declared provenance is non-authoritative."
+                ),
+                developer_fields=developer_fields,
+            )
+        # Failure-type mapping (PR #48 review, Sentry): deterministic
+        # tamper/policy rejections are BLOCKED; input-format and
+        # requirement failures (INVALID_PROVENANCE, INCOMPLETE_PROVENANCE,
+        # MISSING_DISCLOSURE, INVALID_TIMESTAMP) are UNVERIFIABLE.
+        if risk in ("CONTENT_TAMPERED", "UNAUTHORIZED_MODEL"):
+            return LegalDiagnosticResult.blocked(
+                agent_message=result.get("message", "Provenance verification failed."),
+                developer_fields=developer_fields,
+            )
+        return LegalDiagnosticResult.unverifiable(
+            agent_message=result.get("message", "Provenance verification failed."),
+            developer_fields=developer_fields,
         )
 
     # ---- Private check methods ----
