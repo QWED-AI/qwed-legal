@@ -203,6 +203,28 @@ class TestClauseGuard:
         )
         assert result.consistent is True
 
+    @pytest.mark.parametrize(
+        "clauses",
+        [
+            [],
+            {},
+            None,
+            ["A valid clause", 42],
+            [None],
+            [""],
+            ["  \t"],
+            ["A valid clause", "\n"],
+        ],
+    )
+    def test_empty_or_malformed_clause_input_fails_closed(self, clauses):
+        """Invalid clause containers must not mint a positive verdict (#66)."""
+        result = ClauseGuard().check_consistency(clauses)
+
+        assert result.consistent is False
+        assert result.status == "invalid_input"
+        assert "LIMITED COVERAGE" in result.message
+        assert result.verification_trace
+
     def test_permission_prohibition_conflict(self):
         """Test permission vs prohibition conflict."""
         guard = ClauseGuard()
