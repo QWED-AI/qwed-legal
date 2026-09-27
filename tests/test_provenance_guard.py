@@ -386,3 +386,15 @@ class TestFalsyMetadataFailsClosed:
         assert "model_allowed_skipped" in result["checks_failed"]
         assert "model_allowed" not in result["checks_failed"]
         assert result["risk"] == "INCOMPLETE_PROVENANCE"
+
+    @pytest.mark.parametrize("value", [1, " "])
+    def test_truthy_invalid_timestamp_skips_not_fails(self, guard, value):
+        """Same predicate as the sibling checks (Sentry review): a
+        truthy-but-invalid timestamp must skip, not record a
+        timestamp_valid failure against a value never parsed."""
+        prov = _make_provenance(generation_timestamp=value)
+        result = guard.verify_provenance(SAMPLE_CONTENT, prov)
+        assert result["verified"] is False
+        assert "timestamp_valid_skipped" in result["checks_failed"]
+        assert "timestamp_valid" not in result["checks_failed"]
+        assert result["risk"] == "INCOMPLETE_PROVENANCE"

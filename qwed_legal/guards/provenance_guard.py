@@ -303,8 +303,13 @@ class ProvenanceGuard:
         passed: List[str], failed: List[str],
     ) -> None:
         ts = provenance.get("generation_timestamp", "")
-        if not ts:
-            # Explicit skip, never silence (#62) — see hash_integrity_skipped.
+        # Same predicate as the metadata gate (#62 review, Sentry): a
+        # truthy-but-invalid timestamp (e.g. int 1, " ") must skip, not
+        # record timestamp_valid against a value never parsed. Risk
+        # currently stays INCOMPLETE_PROVENANCE only because metadata
+        # sorts first in _classify_risk — the record itself must still
+        # be honest and uniform with the sibling skip tokens.
+        if not isinstance(ts, str) or not ts.strip():
             failed.append("timestamp_valid_skipped")
             return
         try:
