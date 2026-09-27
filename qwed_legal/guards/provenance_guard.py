@@ -278,7 +278,12 @@ class ProvenanceGuard:
         passed: List[str], failed: List[str],
     ) -> None:
         stored_hash = provenance.get("content_hash", "")
-        if not stored_hash:
+        # Same non-empty-string predicate as the metadata gate (#62 review):
+        # a truthy-but-invalid hash (e.g. int 1, " ") must skip, not fail
+        # hash_integrity — recording a tamper finding against an unparseable
+        # value would flip risk to CONTENT_TAMPERED (BLOCKED) on input we
+        # never actually compared.
+        if not isinstance(stored_hash, str) or not stored_hash.strip():
             # Explicit skip, never silence (#62): a missing hash is already
             # caught by metadata_completeness, but the skip must be recorded
             # so it can never read as passed. Distinct token (not
@@ -331,7 +336,10 @@ class ProvenanceGuard:
         passed: List[str], failed: List[str],
     ) -> None:
         model_id = provenance.get("model_id", "")
-        if not model_id:
+        # Same predicate as the metadata gate (#62 review): a truthy-but-
+        # invalid model id must skip the allowlist lookup, not record a
+        # model_allowed pass/fail against an unparseable value.
+        if not isinstance(model_id, str) or not model_id.strip():
             # Explicit skip, never silence (#62) — see hash_integrity_skipped.
             # Distinct token (not "model_allowed") so a missing model keeps
             # INCOMPLETE_PROVENANCE instead of UNAUTHORIZED_MODEL.

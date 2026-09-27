@@ -361,3 +361,28 @@ class TestFalsyMetadataFailsClosed:
         assert "model_allowed_skipped" in result["checks_failed"]
         assert "model_allowed" not in result["checks_failed"]
         assert result["risk"] == "INCOMPLETE_PROVENANCE"
+
+    @pytest.mark.parametrize("value", [1, " "])
+    def test_truthy_invalid_hash_skips_not_tampers(self, guard, value):
+        """A truthy-but-invalid hash (int, whitespace) must skip hash
+        evaluation, not record a tamper finding: CONTENT_TAMPERED/BLOCKED
+        would assert tampering on a value never compared."""
+        prov = _make_provenance(content_hash=value)
+        result = guard.verify_provenance(SAMPLE_CONTENT, prov)
+        assert result["verified"] is False
+        assert "hash_integrity_skipped" in result["checks_failed"]
+        assert "hash_integrity" not in result["checks_failed"]
+        assert result["risk"] == "INCOMPLETE_PROVENANCE"
+        assert guard.to_diagnostic(result).proof_ref is None
+
+    @pytest.mark.parametrize("value", [1, " "])
+    def test_truthy_invalid_model_id_skips_allowlist(self, value):
+        """Same shape on the allowlist path: an unparseable model id is
+        incomplete provenance, not an unauthorized model."""
+        scoped = ProvenanceGuard(allowed_models=["claude-4.5-sonnet"])
+        prov = _make_provenance(model_id=value)
+        result = scoped.verify_provenance(SAMPLE_CONTENT, prov)
+        assert result["verified"] is False
+        assert "model_allowed_skipped" in result["checks_failed"]
+        assert "model_allowed" not in result["checks_failed"]
+        assert result["risk"] == "INCOMPLETE_PROVENANCE"
