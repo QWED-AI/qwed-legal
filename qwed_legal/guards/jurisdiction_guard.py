@@ -702,6 +702,28 @@ class JurisdictionGuard:
                 ],
             )
 
+        # Fail-closed element check (#65): a blank entry carries no party
+        # data. Without this, [""] skips the empty-list guard above (a
+        # non-empty list) and falls through to a DETERMINISTIC "does not
+        # apply" verdict over zero operands.
+        if any(not p for p in parties_upper):
+            return JurisdictionResult(
+                verified=False,
+                message=(
+                    f"❌ UNVERIFIABLE: Cannot determine {convention} applicability "
+                    "with blank party entries."
+                ),
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Blank party country entries provided.",
+                        inputs={"parties": parties_upper, "convention": convention},
+                        output="UNSUPPORTED: blank entries carry no party data.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
         if convention_upper not in self.INTERNATIONAL_CONVENTIONS:
             return JurisdictionResult(
                 verified=False,

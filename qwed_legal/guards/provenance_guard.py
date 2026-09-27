@@ -259,10 +259,13 @@ class ProvenanceGuard:
         if missing:
             failed.append("metadata_completeness")
         else:
-            # Also check for empty values
+            # Strict non-empty strings only (#62): str() coercion counts
+            # None/0/False/[] as present ("None"/"0"/"False"/"[]"), so the
+            # gate passed them while every content check silently skipped.
             empty = [
                 k for k in self.REQUIRED_METADATA_FIELDS
-                if not str(provenance.get(k, "")).strip()
+                if not isinstance(provenance.get(k), str)
+                or not provenance.get(k).strip()
             ]
             if empty:
                 failed.append("metadata_completeness")
@@ -276,7 +279,12 @@ class ProvenanceGuard:
     ) -> None:
         stored_hash = provenance.get("content_hash", "")
         if not stored_hash:
-            # Hash will be caught by metadata_completeness check
+            # Explicit skip, never silence (#62): a missing hash is already
+            # caught by metadata_completeness, but the skip must be recorded
+            # so it can never read as passed. Distinct token (not
+            # "hash_integrity") so risk classification keeps
+            # INCOMPLETE_PROVENANCE instead of CONTENT_TAMPERED.
+            failed.append("hash_integrity_skipped")
             return
         expected = hashlib.sha256(content.encode("utf-8")).hexdigest()
         if stored_hash != expected:
@@ -291,7 +299,9 @@ class ProvenanceGuard:
     ) -> None:
         ts = provenance.get("generation_timestamp", "")
         if not ts:
-            return  # Caught by metadata_completeness
+            # Explicit skip, never silence (#62) — see hash_integrity_skipped.
+            failed.append("timestamp_valid_skipped")
+            return
         try:
             parsed = datetime.fromisoformat(str(ts))
             # Reject timestamps in the future
@@ -322,7 +332,11 @@ class ProvenanceGuard:
     ) -> None:
         model_id = provenance.get("model_id", "")
         if not model_id:
-            return  # Caught by metadata_completeness
+            # Explicit skip, never silence (#62) — see hash_integrity_skipped.
+            # Distinct token (not "model_allowed") so a missing model keeps
+            # INCOMPLETE_PROVENANCE instead of UNAUTHORIZED_MODEL.
+            failed.append("model_allowed_skipped")
+            return
         if model_id not in self.allowed_models:
             failed.append("model_allowed")
         else:
