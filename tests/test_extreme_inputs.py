@@ -243,6 +243,30 @@ class TestLiabilityGuardFiniteExtremes:
         assert "contract_value" not in result.message
         assert "cap_percentage" not in result.message
 
+    def test_tiered_empty_list_fails_closed(self):
+        """Issue #76: an empty tier list has no operands to sum — ([], 0)
+        previously minted verified=True (vacuous 0 == 0 match). Must be
+        UNVERIFIABLE for every zero-valued claimed_total spelling."""
+        for claimed in (0, 0.0, "0", "0.00"):
+            result = self.guard.verify_tiered_liability([], claimed)
+            assert result.verified is False
+            assert result.total_computed is None
+            assert "UNVERIFIABLE" in result.message
+
+    def test_tiered_empty_list_nonzero_claim_stays_blocked(self):
+        """Empty tiers with a nonzero claim must not verify either —
+        guards the differential ([], 1000) -> BLOCKED behavior."""
+        result = self.guard.verify_tiered_liability([], 1000)
+        assert result.verified is False
+
+    def test_tiered_single_tier_still_verifies(self):
+        """The empty-list refusal must not break the normal path: one
+        real operand that matches still verifies."""
+        result = self.guard.verify_tiered_liability(
+            [{"base": 1_000_000, "percentage": 100}], 1_000_000
+        )
+        assert result.verified is True
+
     def test_normal_values_unaffected(self):
         result = self.guard.verify_cap(5_000_000, 200, 10_000_000)
         assert result.verified is True

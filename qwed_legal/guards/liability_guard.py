@@ -284,6 +284,16 @@ class LiabilityGuard:
         Returns:
             TieredLiabilityResult with verification status
         """
+        # Fail closed: an empty tier list has no operands to sum and
+        # cannot be proven correct for any claimed total - the #66
+        # empty-input honesty rule applied to tier lists
+        # (mirrors contradiction_guard.py:130-146).
+        if not tiers:
+            return _unverifiable_tiered_result(
+                "No tiers provided. An empty tier list cannot be proven "
+                "to match any claimed total - no tier operands were supplied.",
+                {"tier_count": 0, "claimed_total": claimed_total},
+            )
         total_computed = Decimal("0")
         computed_tiers = []
 
