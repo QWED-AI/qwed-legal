@@ -13,6 +13,7 @@ import time
 import pytest
 
 from qwed_legal import DeadlineGuard, LiabilityGuard
+from qwed_legal.diagnostics import LegalDiagnosticStatus
 
 
 class TestLiabilityGuardNonFiniteInputs:
@@ -246,18 +247,31 @@ class TestLiabilityGuardFiniteExtremes:
     def test_tiered_empty_list_fails_closed(self):
         """Issue #76: an empty tier list has no operands to sum — ([], 0)
         previously minted verified=True (vacuous 0 == 0 match). Must be
-        UNVERIFIABLE for every zero-valued claimed_total spelling."""
+        UNVERIFIABLE for every zero-valued claimed_total spelling, with
+        no proof_ref at the diagnostic layer (the authority bit)."""
         for claimed in (0, 0.0, "0", "0.00"):
             result = self.guard.verify_tiered_liability([], claimed)
             assert result.verified is False
             assert result.total_computed is None
             assert "UNVERIFIABLE" in result.message
+            diagnostic = result.to_diagnostic({"claimed_total": claimed})
+            assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+            assert diagnostic.proof_ref is None
 
-    def test_tiered_empty_list_nonzero_claim_stays_blocked(self):
-        """Empty tiers with a nonzero claim must not verify either —
-        guards the differential ([], 1000) -> BLOCKED behavior."""
+    def test_tiered_empty_list_nonzero_claim_is_unverifiable(self):
+        """Empty tiers prove nothing about any total: with zero operands
+        there is no computed sum, so even a nonzero claim is UNVERIFIABLE
+        rather than BLOCKED. This is a deliberate change from the old
+        vacuous 0.00-vs-claim mismatch — $0.00 was never computed, so
+        asserting it as a finding would be false precision. Authority
+        outcome is unchanged (no proof_ref either way)."""
         result = self.guard.verify_tiered_liability([], 1000)
         assert result.verified is False
+        assert result.total_computed is None
+        assert "UNVERIFIABLE" in result.message
+        diagnostic = result.to_diagnostic({"claimed_total": 1000})
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+        assert diagnostic.proof_ref is None
 
     def test_tiered_single_tier_still_verifies(self):
         """The empty-list refusal must not break the normal path: one
