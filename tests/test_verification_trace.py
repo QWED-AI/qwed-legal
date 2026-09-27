@@ -391,6 +391,27 @@ class TestJurisdictionVerificationTrace:
         assert result.verified is False
         assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
 
+    def test_convention_blank_parties_fail_closed(self):
+        """Issue #65: [""] skips the empty-list guard (non-empty list)
+        and previously minted a DETERMINISTIC "does not apply" negative
+        over zero party data. Any blank entry must take the
+        UNVERIFIABLE path instead."""
+        for parties in ([""], ["   "], ["US", ""]):
+            result = JurisdictionGuard().check_convention_applicability(
+                parties, "CISG"
+            )
+            assert result.verified is False
+            assert "UNVERIFIABLE" in result.message
+            assert result.verification_trace[0].evidence_type == EVIDENCE_UNSUPPORTED
+
+    def test_convention_genuine_negative_keeps_deterministic_status(self):
+        """The blank-entry refusal must not dilute real negatives:
+        ["XX"] (no members) still gets the DETERMINISTIC verdict."""
+        result = JurisdictionGuard().check_convention_applicability(["XX"], "CISG")
+        assert result.verified is False
+        assert result.verification_trace[-1].evidence_type == EVIDENCE_DETERMINISTIC
+        assert result.verification_trace[-1].is_proven() is True
+
 
 class TestClauseVerificationTrace:
     def test_heuristic_conclusion_not_proven(self):

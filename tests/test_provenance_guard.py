@@ -310,3 +310,91 @@ class TestSelfDeclarationHonesty:
         )
         assert result["verified"] is False
         assert result["risk"] == "UNREVIEWED_CONTENT"
+
+
+# ── Falsy metadata gate (#62) ────────────────────────────────────
+
+class TestFalsyMetadataFailsClosed:
+    """Issue #62: str() coercion counted None/0/False/[] as present
+    ("None"/"0"/"False"/"[]"), so the metadata gate passed them while
+    every content check silently skipped — verified=True with zero
+    integrity properties evaluated."""
+
+    @pytest.mark.parametrize("field", ["content_hash", "model_id", "generation_timestamp"])
+    @pytest.mark.parametrize("value", [None, 0, False, []])
+    def test_falsy_metadata_value_fails_gate(self, guard, field, value):
+        prov = _make_provenance(**{field: value})
+        result = guard.verify_provenance(SAMPLE_CONTENT, prov)
+        assert result["verified"] is False
+        assert "metadata_completeness" in result["checks_failed"]
+        assert result["risk"] == "INCOMPLETE_PROVENANCE"
+
+    def test_three_nulls_bypass_closed(self, guard):
+        """The easiest bypass in the file: three JSON nulls."""
+        result = guard.verify_provenance(
+            SAMPLE_CONTENT,
+            {"content_hash": None, "model_id": None, "generation_timestamp": None},
+        )
+        assert result["verified"] is False
+        assert "metadata_completeness" in result["checks_failed"]
+        diagnostic = guard.to_diagnostic(result)
+        assert diagnostic.proof_ref is None
+
+    def test_skipped_checks_recorded_explicitly(self, guard):
+        """Skipped checks must be recorded, never silent — and under
+        skip-specific tokens so risk stays INCOMPLETE_PROVENANCE
+        (not CONTENT_TAMPERED / UNAUTHORIZED_MODEL)."""
+        result = guard.verify_provenance(
+            SAMPLE_CONTENT,
+            {"content_hash": None, "model_id": None, "generation_timestamp": None},
+        )
+        assert "hash_integrity_skipped" in result["checks_failed"]
+        assert "timestamp_valid_skipped" in result["checks_failed"]
+        assert "hash_integrity" not in result["checks_failed"]
+        assert result["risk"] == "INCOMPLETE_PROVENANCE"
+
+    def test_model_skip_recorded_when_allowlisted(self):
+        scoped = ProvenanceGuard(allowed_models=["claude-4.5-sonnet"])
+        prov = _make_provenance(model_id=None)
+        result = scoped.verify_provenance(SAMPLE_CONTENT, prov)
+        assert result["verified"] is False
+        assert "model_allowed_skipped" in result["checks_failed"]
+        assert "model_allowed" not in result["checks_failed"]
+        assert result["risk"] == "INCOMPLETE_PROVENANCE"
+
+    @pytest.mark.parametrize("value", [1, " "])
+    def test_truthy_invalid_hash_skips_not_tampers(self, guard, value):
+        """A truthy-but-invalid hash (int, whitespace) must skip hash
+        evaluation, not record a tamper finding: CONTENT_TAMPERED/BLOCKED
+        would assert tampering on a value never compared."""
+        prov = _make_provenance(content_hash=value)
+        result = guard.verify_provenance(SAMPLE_CONTENT, prov)
+        assert result["verified"] is False
+        assert "hash_integrity_skipped" in result["checks_failed"]
+        assert "hash_integrity" not in result["checks_failed"]
+        assert result["risk"] == "INCOMPLETE_PROVENANCE"
+        assert guard.to_diagnostic(result).proof_ref is None
+
+    @pytest.mark.parametrize("value", [1, " "])
+    def test_truthy_invalid_model_id_skips_allowlist(self, value):
+        """Same shape on the allowlist path: an unparseable model id is
+        incomplete provenance, not an unauthorized model."""
+        scoped = ProvenanceGuard(allowed_models=["claude-4.5-sonnet"])
+        prov = _make_provenance(model_id=value)
+        result = scoped.verify_provenance(SAMPLE_CONTENT, prov)
+        assert result["verified"] is False
+        assert "model_allowed_skipped" in result["checks_failed"]
+        assert "model_allowed" not in result["checks_failed"]
+        assert result["risk"] == "INCOMPLETE_PROVENANCE"
+
+    @pytest.mark.parametrize("value", [1, " "])
+    def test_truthy_invalid_timestamp_skips_not_fails(self, guard, value):
+        """Same predicate as the sibling checks (Sentry review): a
+        truthy-but-invalid timestamp must skip, not record a
+        timestamp_valid failure against a value never parsed."""
+        prov = _make_provenance(generation_timestamp=value)
+        result = guard.verify_provenance(SAMPLE_CONTENT, prov)
+        assert result["verified"] is False
+        assert "timestamp_valid_skipped" in result["checks_failed"]
+        assert "timestamp_valid" not in result["checks_failed"]
+        assert result["risk"] == "INCOMPLETE_PROVENANCE"

@@ -259,10 +259,13 @@ class ProvenanceGuard:
         if missing:
             failed.append("metadata_completeness")
         else:
-            # Also check for empty values
+            # Strict non-empty strings only (#62): str() coercion counts
+            # None/0/False/[] as present ("None"/"0"/"False"/"[]"), so the
+            # gate passed them while every content check silently skipped.
             empty = [
                 k for k in self.REQUIRED_METADATA_FIELDS
-                if not str(provenance.get(k, "")).strip()
+                if not isinstance(provenance.get(k), str)
+                or not provenance.get(k).strip()
             ]
             if empty:
                 failed.append("metadata_completeness")
@@ -275,8 +278,18 @@ class ProvenanceGuard:
         passed: List[str], failed: List[str],
     ) -> None:
         stored_hash = provenance.get("content_hash", "")
-        if not stored_hash:
-            # Hash will be caught by metadata_completeness check
+        # Same non-empty-string predicate as the metadata gate (#62 review):
+        # a truthy-but-invalid hash (e.g. int 1, " ") must skip, not fail
+        # hash_integrity — recording a tamper finding against an unparseable
+        # value would flip risk to CONTENT_TAMPERED (BLOCKED) on input we
+        # never actually compared.
+        if not isinstance(stored_hash, str) or not stored_hash.strip():
+            # Explicit skip, never silence (#62): a missing hash is already
+            # caught by metadata_completeness, but the skip must be recorded
+            # so it can never read as passed. Distinct token (not
+            # "hash_integrity") so risk classification keeps
+            # INCOMPLETE_PROVENANCE instead of CONTENT_TAMPERED.
+            failed.append("hash_integrity_skipped")
             return
         expected = hashlib.sha256(content.encode("utf-8")).hexdigest()
         if stored_hash != expected:
@@ -290,8 +303,15 @@ class ProvenanceGuard:
         passed: List[str], failed: List[str],
     ) -> None:
         ts = provenance.get("generation_timestamp", "")
-        if not ts:
-            return  # Caught by metadata_completeness
+        # Same predicate as the metadata gate (#62 review, Sentry): a
+        # truthy-but-invalid timestamp (e.g. int 1, " ") must skip, not
+        # record timestamp_valid against a value never parsed. Risk
+        # currently stays INCOMPLETE_PROVENANCE only because metadata
+        # sorts first in _classify_risk — the record itself must still
+        # be honest and uniform with the sibling skip tokens.
+        if not isinstance(ts, str) or not ts.strip():
+            failed.append("timestamp_valid_skipped")
+            return
         try:
             parsed = datetime.fromisoformat(str(ts))
             # Reject timestamps in the future
@@ -321,8 +341,15 @@ class ProvenanceGuard:
         passed: List[str], failed: List[str],
     ) -> None:
         model_id = provenance.get("model_id", "")
-        if not model_id:
-            return  # Caught by metadata_completeness
+        # Same predicate as the metadata gate (#62 review): a truthy-but-
+        # invalid model id must skip the allowlist lookup, not record a
+        # model_allowed pass/fail against an unparseable value.
+        if not isinstance(model_id, str) or not model_id.strip():
+            # Explicit skip, never silence (#62) — see hash_integrity_skipped.
+            # Distinct token (not "model_allowed") so a missing model keeps
+            # INCOMPLETE_PROVENANCE instead of UNAUTHORIZED_MODEL.
+            failed.append("model_allowed_skipped")
+            return
         if model_id not in self.allowed_models:
             failed.append("model_allowed")
         else:
