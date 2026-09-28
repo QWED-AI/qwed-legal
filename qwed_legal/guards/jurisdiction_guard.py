@@ -478,14 +478,48 @@ class JurisdictionGuard:
         cross_border_parties = len(party_country_set) > 1
         us_party = "US" in party_country_set
         foreign_party = any(c != "US" for c in party_country_set)
-        sale_of_goods = contract_type and contract_type.lower().strip() in {
-            "sale_of_goods",
-            "sale of goods",
-            "goods",
+        # Anything outside BOTH vocabularies is unknown coverage, not evidence
+        # that the contract is not a sale of goods - the same rule check 2
+        # applies to unrecognized party country codes (:414-415, :426-431).
+        # A missing/unrecognized classification previously deleted this
+        # check silently, collapsing 'unrecognized' and 'not goods' into
+        # the same verified state (#81).
+        goods_types = {
+            "sale of goods", "goods", "international sale of goods",
+            "sales of goods", "supply of goods", "purchase of goods",
+            "distribution of goods", "sale",
         }
-        if (us_party and foreign_party) or (sale_of_goods and cross_border_parties):
+        non_goods_types = {
+            "services", "service", "consulting", "sow", "msa", "licence",
+            "license", "licensing", "employment", "nda", "confidentiality",
+            "lease", "loan", "construction", "settlement", "employment offer",
+        }
+
+        def _classify_contract_type(value):
+            if not isinstance(value, str) or not value.strip():
+                return "unclassified"
+            key = " ".join(
+                value.strip().lower().replace("-", " ").replace("_", " ").split()
+            )
+            if key in goods_types:
+                return "goods"
+            if key in non_goods_types:
+                return "declared_non_goods"
+            return "unclassified"
+
+        contract_class = _classify_contract_type(contract_type)
+
+        if (us_party and foreign_party) or (
+            contract_class == "goods" and cross_border_parties
+        ):
             warnings.append(
                 "International sale of goods may be subject to CISG unless expressly excluded."
+            )
+        elif cross_border_parties and contract_class == "unclassified":
+            warnings.append(
+                f"Contract classification absent or unrecognized ({contract_type!r}): "
+                "CISG convention-applicability was not evaluated, so cross-border "
+                "coverage is partial for this contract."
             )
 
         # Check 5: Neutral jurisdiction suggestion
@@ -535,6 +569,8 @@ class JurisdictionGuard:
                     "governing_law": governing_law,
                     "forum": selected_forum,
                     "parties_countries": parties_countries,
+                    "contract_type": contract_type,
+                    "contract_classification": contract_class,
                 },
                 output=(
                     f"Governing law: {governing_law_upper}; "

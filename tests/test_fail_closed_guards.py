@@ -361,6 +361,52 @@ class TestJurisdictionGuardFailClosed:
             "unrecognized" in w.lower() for w in result.warnings
         )
 
+    def test_unclassified_contract_type_warns_on_cross_border(self):
+        """Issue #81: omitted/empty/blank contract_type must not delete
+        the CISG check — unclassified coverage warns instead of verifying."""
+        for extra in ({}, {"contract_type": ""}, {"contract_type": "   "}):
+            result = self.guard.verify_choice_of_law(
+                parties_countries=["FR", "IT"],
+                governing_law="Germany",
+                **extra,
+            )
+            assert result.verified is False
+            assert any("CISG" in w for w in result.warnings)
+
+    def test_unrecognized_contract_spellings_normalize_to_goods(self):
+        """Separator variants of declared goods must classify as goods
+        (CISG arm fires), not verify clean."""
+        for value in ("sale-of-goods", "international_sale_of_goods", "SALE OF GOODS"):
+            result = self.guard.verify_choice_of_law(
+                parties_countries=["FR", "IT"],
+                governing_law="Germany",
+                contract_type=value,
+            )
+            assert result.verified is False
+            assert any("CISG" in w for w in result.warnings)
+
+    def test_declared_non_goods_stays_verified(self):
+        """A declared non-goods contract keeps the CISG arms silent —
+        the fix must not warn on genuine non-goods coverage."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["FR", "IT"],
+            governing_law="Germany",
+            contract_type="services",
+        )
+        assert result.verified is True
+        assert list(result.warnings) == []
+
+    def test_trace_records_contract_classification(self):
+        """contract_type and its classification must appear in trace
+        inputs (previously absent — silent deletion left no record)."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["FR", "IT"],
+            governing_law="Germany",
+        )
+        inputs = result.verification_trace[0].inputs
+        assert inputs["contract_type"] is None
+        assert inputs["contract_classification"] == "unclassified"
+
     def test_choice_of_law_warnings_fail_closed(self):
         """Issue #16: warning-only ambiguity must not return verified=True."""
         result = self.guard.verify_choice_of_law(
@@ -452,16 +498,21 @@ class TestJurisdictionGuardFailClosed:
         assert not any("US state" in conflict for conflict in result.conflicts)
 
     def test_state_law_does_not_match_colliding_party_country_code(self):
-        """US state laws must not match colliding foreign party country codes."""
+        """US state laws must not match colliding foreign party country codes.
+        contract_type is classified (services) so the assertion stays
+        scoped to collision handling — unclassified contracts now warn
+        per #81 and would fail the verified assertion for that reason."""
         delaware_result = self.guard.verify_choice_of_law(
             parties_countries=["DE", "FR"],
             governing_law="Delaware",
             forum="Delaware",
+            contract_type="services",
         )
         indiana_result = self.guard.verify_choice_of_law(
             parties_countries=["IN", "GB"],
             governing_law="Indiana",
             forum="Indiana",
+            contract_type="services",
         )
 
         for result in [delaware_result, indiana_result]:
