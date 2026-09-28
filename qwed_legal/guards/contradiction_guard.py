@@ -101,12 +101,18 @@ class ContradictionGuard:
             "trace": trace_dicts,
             "result": result_snapshot,
         }
-        if status == "consistent":
-            return LegalDiagnosticResult.verified(
-                agent_message=result.get("message", "Clauses are consistent."),
-                developer_fields=developer_fields,
-                evidence=evidence,
-            )
+        if status == "consistent" and claim_texts:
+            try:
+                return LegalDiagnosticResult.verified(
+                    agent_message=result.get("message", "Clauses are consistent."),
+                    developer_fields=developer_fields,
+                    evidence=evidence,
+                )
+            except ValueError:
+                # Empty-evidence binding refused (#73): a traceless or
+                # heuristic-only "consistent" dict demotes to UNVERIFIABLE
+                # below instead of minting an authoritative proof_ref.
+                pass
         if status == "contradiction":
             return LegalDiagnosticResult.blocked(
                 agent_message=result.get("message", "Clauses are contradictory."),
