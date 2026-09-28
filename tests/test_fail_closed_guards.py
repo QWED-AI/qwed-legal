@@ -432,6 +432,44 @@ class TestJurisdictionGuardFailClosed:
         assert not any("sale of goods" in w for w in result.warnings)
         assert not any("not evaluated" in w for w in result.warnings)
 
+    def test_us_foreign_services_gets_no_cisg_mention(self):
+        """CodeRabbit review on PR #85: the check-2 legal-systems warning
+        must not carry a CISG suggestion on declared non-goods — the
+        difference is a genuine ambiguity, the CISG pointer is not."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "FR"],
+            governing_law="France",
+            contract_type="services",
+        )
+        assert not any("CISG" in w for w in result.warnings)
+        # The legal-system difference itself is still recorded.
+        assert any("legal systems" in w for w in result.warnings)
+
+    def test_us_foreign_goods_keeps_cisg_mentions(self):
+        """Control: classified goods on a mixed-system pair keeps both
+        CISG mentions (check-2 suggestion + sale-of-goods arm)."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "FR"],
+            governing_law="France",
+            contract_type="goods",
+        )
+        assert sum("CISG" in w for w in result.warnings) == 2
+
+    def test_form_labels_stay_unclassified(self):
+        """CodeRabbit review on PR #85: msa/sow describe agreement form,
+        not subject matter — a goods sale labeled "msa" must not verify
+        as declared non-goods. "distribution of goods" is a framework,
+        not itself a sale. All three are unclassified."""
+        for value in ("msa", "sow", "distribution of goods"):
+            result = self.guard.verify_choice_of_law(
+                parties_countries=["FR", "IT"],
+                governing_law="Germany",
+                contract_type=value,
+            )
+            assert result.verified is False
+            assert any("not evaluated" in w for w in result.warnings)
+            assert not any("sale of goods" in w for w in result.warnings)
+
     def test_us_foreign_unclassified_gets_partial_not_goods_warning(self):
         """PR #85 review: US-foreign with no classification gets the
         partial-coverage warning, never the definitive goods warning —

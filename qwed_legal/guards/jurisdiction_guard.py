@@ -379,15 +379,19 @@ class JurisdictionGuard:
         goods_types = {
             "sale of goods", "goods", "international sale of goods",
             "sales of goods", "supply of goods", "purchase of goods",
-            "distribution of goods",
-            # NOTE: bare "sale" is deliberately absent (Sentry review on
-            # PR #85). A sale of unspecified object is ambiguous — CISG
-            # Art. 2 excludes immovables, ships, electricity and shares —
-            # so it classifies as unclassified, not goods. Multi-word
-            # forms ("sale of goods", ...) still resolve above.
+            # NOTE: "distribution of goods" deliberately absent (CodeRabbit
+            # review on PR #85). A distribution framework is not itself a
+            # sale — CISG may govern sales made under it, but the agreement
+            # alone does not establish goods subject matter. Same for bare
+            # "sale" (CISG Art. 2 exclusions).
         }
         non_goods_types = {
-            "services", "service", "consulting", "sow", "msa", "licence",
+            # NOTE: "sow"/"msa" deliberately absent (CodeRabbit review on
+            # PR #85). They describe agreement form, not subject matter —
+            # a goods sale labeled "msa" must not verify as non-goods.
+            # Subject-matter labels (services, lease, employment, ...)
+            # stay: they genuinely establish non-goods scope.
+            "services", "service", "consulting", "licence",
             "license", "licensing", "employment", "nda", "confidentiality",
             "lease", "loan", "construction", "settlement", "employment offer",
         }
@@ -468,9 +472,19 @@ class JurisdictionGuard:
             )
 
         if len(party_legal_systems) > 1:
+            # The CISG suggestion is subject-matter advice: Append it only
+            # when the contract is not declared non-goods. On a declared
+            # services contract the legal-system difference is still a
+            # genuine ambiguity, but a CISG pointer misdirects remediation
+            # (CISG does not cover services) — CodeRabbit review on PR #85.
+            cisg_note = (
+                ""
+                if contract_class == "declared_non_goods"
+                else " Consider CISG applicability."
+            )
             warnings.append(
                 "Cross-border contract with parties from different legal systems "
-                "(Common Law and Civil Law). Consider CISG applicability."
+                f"(Common Law and Civil Law).{cisg_note}"
             )
 
         # Check 3: Forum vs governing law mismatch
