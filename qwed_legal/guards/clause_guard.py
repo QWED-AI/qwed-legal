@@ -35,6 +35,8 @@ class ClauseResult(LegalDiagnosticsMixin):
     #   "consistent"                  — heuristic checks found no conflicts
     #   "contradiction"               — at least one conflict detected
     #   "invalid_input"               — input is not a non-empty list of strings
+    #   "insufficient_input"          — fewer than two clauses; no pair to
+    #                                   compare, consistent=False (#67 comment)
     #   "heuristic_pass_limited"      — no propositions extracted; guard has no coverage
     #                                   consistent=False but NOT a detected contradiction
     verification_trace: list = field(default_factory=list)
@@ -138,16 +140,21 @@ class ClauseGuard:
             )
         if len(clauses) < 2:
             return ClauseResult(
-                consistent=True,
+                consistent=False,
                 conflicts=[],
-                message="Single clause - no conflicts possible.",
+                status="insufficient_input",
+                message=(
+                    "UNVERIFIABLE: Fewer than two clauses provided — consistency "
+                    "requires at least two clauses to compare. A single clause "
+                    "is not evidence of consistency."
+                ),
                 verification_trace=[
                     VerificationStep(
                         step=STEP_CONCLUSION,
                         description="Fewer than two clauses provided — no pair to compare.",
                         inputs={"clause_count": len(clauses)},
-                        output="NO CONFLICT POSSIBLE (single clause)",
-                        evidence_type=EVIDENCE_INFERRED,
+                        output="UNSUPPORTED: insufficient input cannot be verified.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
                     )
                 ],
             )
