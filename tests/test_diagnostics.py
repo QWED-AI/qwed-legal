@@ -145,13 +145,38 @@ class TestLegalDiagnosticResultContract:
         verified = LegalDiagnosticResult.verified(
             agent_message="msg",
             developer_fields={},
-            evidence={"claim": "x"},
+            evidence={
+                "claim_inputs": {"claim": "x"},
+                "trace": [{"evidence_type": "DETERMINISTIC"}],
+                "result": {},
+            },
         )
         assert verified.is_authoritative is True
         assert verified.is_verified is True
         blocked = LegalDiagnosticResult.blocked(agent_message="msg")
         assert blocked.is_authoritative is False
         assert blocked.is_fail_closed is True
+
+    def test_traceless_evidence_refuses_verified(self):
+        """Issue #73: binding proof_ref over evidence with no
+        DETERMINISTIC verification step must raise — callers demote to
+        UNVERIFIABLE instead of minting authority."""
+        with pytest.raises(ValueError):
+            LegalDiagnosticResult.verified(
+                agent_message="msg",
+                developer_fields={},
+                evidence={"claim": "x"},
+            )
+        with pytest.raises(ValueError):
+            LegalDiagnosticResult.verified(
+                agent_message="msg",
+                developer_fields={},
+                evidence={
+                    "claim_inputs": {"clauses": []},
+                    "trace": [],
+                    "result": {"status": "consistent"},
+                },
+            )
 
 
 class TestVerificationStepFrozen:
@@ -379,7 +404,11 @@ class TestDiagnosticsEdgePaths:
         verified = LegalDiagnosticResult.verified(
             agent_message="proven",
             developer_fields={"guard": "deadline"},
-            evidence={"claim": "inputs"},
+            evidence={
+                "claim_inputs": {"claim": "inputs"},
+                "trace": [{"evidence_type": "DETERMINISTIC"}],
+                "result": {},
+            },
         )
         restored = LegalDiagnosticResult.from_dict(verified.to_dict())
         assert restored.status is LegalDiagnosticStatus.VERIFIED
@@ -446,6 +475,101 @@ class TestDiagnosticsEdgePaths:
         )
         diagnostic = ContradictionGuard.to_diagnostic(result)
         assert diagnostic.status is LegalDiagnosticStatus.BLOCKED
+
+    def test_traceless_verdict_dict_is_not_authoritative(self):
+        """Issue #73: a verdict dict with status "consistent" but no
+        usable verification evidence — hand-emitted or transported with
+        its trace dropped — must not mint VERIFIED plus proof_ref."""
+        for verdict in (
+            {"status": "consistent"},
+            {
+                "verified": True,
+                "status": "consistent",
+                "message": "...",
+                "unsupported": [],
+            },
+        ):
+            diagnostic = ContradictionGuard.to_diagnostic(verdict)
+            assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+            assert diagnostic.is_authoritative is False
+            assert diagnostic.proof_ref is None
+
+    def test_claim_recovered_from_trace_still_attests(self):
+        """A transported verdict that kept its trace but lost the separate
+        clauses argument recovers claim content from FACT_DERIVED trace
+        steps — authority preserved because the evidence itself is
+        complete (sufficient trace + recoverable claim)."""
+        guard = ContradictionGuard()
+        clauses = [
+            Clause(text="Term is exactly 12 months.", category="DURATION", value=12),
+        ]
+        result = guard.verify_consistency(clauses)
+        assert result["status"] == "consistent"
+        diagnostic = ContradictionGuard.to_diagnostic(result, clauses=[])
+        assert diagnostic.status is LegalDiagnosticStatus.VERIFIED
+        assert diagnostic.is_authoritative is True
+
+    def test_blank_message_never_crashes_adapter(self):
+        """Sentry review on PR #88: empty/whitespace/non-string messages
+        must fall back to the default message on every branch — the
+        except-ValueError fallthrough previously re-raised the identical
+        error uncaught, and the contradiction branch had no guard at all."""
+        for verdict in (
+            {"status": "consistent", "message": ""},
+            {"status": "consistent", "message": "   "},
+            {"status": "consistent", "message": None},
+            {"status": "contradiction", "message": ""},
+            {"status": "whatever", "message": 123},
+        ):
+            diagnostic = ContradictionGuard.to_diagnostic(verdict)
+            assert diagnostic.status in (
+                LegalDiagnosticStatus.UNVERIFIABLE,
+                LegalDiagnosticStatus.BLOCKED,
+            )
+            assert diagnostic.proof_ref is None
+
+    def test_blank_message_fallback_matches_verdict(self):
+        """Greptile P2 on PR #88: the fallback message must not
+        contradict the verdict it accompanies."""
+        blocked = ContradictionGuard.to_diagnostic(
+            {"status": "contradiction", "message": ""}
+        )
+        assert blocked.status is LegalDiagnosticStatus.BLOCKED
+        assert "contradictory" in blocked.agent_message
+        assert "could not be determined" not in blocked.agent_message
+
+    def test_mixin_traceless_verified_demotes_not_raises(self):
+        """Greptile P1 / CodeRabbit Minor on PR #88: a result mapping to
+        VERIFIED with a traceless evidence path must demote to
+        UNVERIFIABLE through the mixin, never raise out of
+        to_diagnostic() (which would crash callers like #87's helper)."""
+        from qwed_legal.guards.clause_guard import ClauseResult
+
+        result = ClauseResult(
+            consistent=True, conflicts=[], message="m", status="z3_satisfiable"
+        )
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+        assert diagnostic.proof_ref is None
+
+    def test_empty_string_claim_is_not_authoritative(self):
+        """Greptile P1 / CodeRabbit Major on PR #88: claim_texts=[""]
+        passes truthiness but binds no claim — demote even when the
+        trace is sufficient."""
+        from qwed_legal.guards.contradiction_guard import Clause
+
+        diagnostic = ContradictionGuard.to_diagnostic(
+            {
+                "status": "consistent",
+                "message": "m",
+                "verification_trace": [
+                    {"step": "CONCLUSION", "evidence_type": "DETERMINISTIC"}
+                ],
+            },
+            clauses=[Clause(text="", category="DURATION", value=0)],
+        )
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+        assert diagnostic.proof_ref is None
 
     def test_fairness_adapter_json_encodable(self):
         from qwed_legal.diagnostics import fairness_to_diagnostic

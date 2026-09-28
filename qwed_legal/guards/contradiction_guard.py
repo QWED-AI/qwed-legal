@@ -101,19 +101,48 @@ class ContradictionGuard:
             "trace": trace_dicts,
             "result": result_snapshot,
         }
-        if status == "consistent":
-            return LegalDiagnosticResult.verified(
-                agent_message=result.get("message", "Clauses are consistent."),
-                developer_fields=developer_fields,
-                evidence=evidence,
-            )
+        # Sanitize per branch: an empty/non-string message must not crash
+        # any return below — __post_init__ rejects blank agent messages, so
+        # the except-ValueError fallthrough would otherwise re-raise the
+        # identical error uncaught (Sentry review on PR #88). Each branch
+        # keeps its own default so the fallback never contradicts the
+        # verdict (Greptile P2: a BLOCKED result must not say "could not
+        # be determined", nor a VERIFIED one). Mirrors the mixin's own
+        # fallback message (diagnostics.py) for the UNVERIFIABLE tail.
+        def _message(default: str) -> str:
+            raw = result.get("message")
+            return raw if isinstance(raw, str) and raw.strip() else default
+
+        agent_message = _message("Consistency could not be determined.")
+        if status == "consistent" and claim_texts:
+            # Claim texts must be real content, not empty placeholders:
+            # [""] passes a truthiness check but binds authority over no
+            # claim (#88 review, CodeRabbit/Greptile P1).
+            if not all(
+                isinstance(text, str) and text.strip() for text in claim_texts
+            ):
+                return LegalDiagnosticResult.unverifiable(
+                    agent_message=agent_message,
+                    developer_fields=developer_fields,
+                )
+            try:
+                return LegalDiagnosticResult.verified(
+                    agent_message=_message("Clauses are consistent."),
+                    developer_fields=developer_fields,
+                    evidence=evidence,
+                )
+            except ValueError:
+                # Empty-evidence binding refused (#73): a traceless or
+                # heuristic-only "consistent" dict demotes to UNVERIFIABLE
+                # below instead of minting an authoritative proof_ref.
+                pass
         if status == "contradiction":
             return LegalDiagnosticResult.blocked(
-                agent_message=result.get("message", "Clauses are contradictory."),
+                agent_message=_message("Clauses are contradictory."),
                 developer_fields=developer_fields,
             )
         return LegalDiagnosticResult.unverifiable(
-            agent_message=result.get("message", "Consistency could not be determined."),
+            agent_message=agent_message,
             developer_fields=developer_fields,
         )
 

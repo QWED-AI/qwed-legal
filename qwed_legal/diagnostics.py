@@ -232,6 +232,21 @@ def resolve_proof_ref(proof_ref: str, evidence: Dict[str, Any]) -> bool:
 _PROOF_REF_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
+def _trace_has_deterministic_step(trace: Any) -> bool:
+    """True when the proof trace contains at least one DETERMINISTIC step.
+
+    No proof without a proof step (#73): evidence_type is compared as the
+    literal "DETERMINISTIC" (== models.EVIDENCE_DETERMINISTIC) rather than
+    imported, because models imports this module (circular).
+    """
+    if not isinstance(trace, (list, tuple)):
+        return False
+    return any(
+        isinstance(step, Mapping) and step.get("evidence_type") == "DETERMINISTIC"
+        for step in trace
+    )
+
+
 def _deep_freeze(value: Any) -> Any:
     """Recursively freeze containers: mappings become read-only proxies,
     lists/tuples become tuples, sets/frozensets become sorted tuples.
@@ -400,7 +415,23 @@ class LegalDiagnosticResult:
         developer_fields: Dict[str, Any],
         evidence: Dict[str, Any],
     ) -> "LegalDiagnosticResult":
-        """Construct a VERIFIED result with proof_ref computed from evidence."""
+        """Construct a VERIFIED result with proof_ref computed from evidence.
+
+        Refuses to bind proof_ref over evidence with no DETERMINISTIC
+        verification step (#73): a verdict with zero verification evidence
+        must be UNVERIFIABLE — callers demote instead of minting. Note the
+        deliberate scope: only the trace is gated here. Claim-emptiness is
+        enforced where claim content exists (the contradiction adapter);
+        the mixin path passes no claim, and changing its hash input would
+        rotate every existing proof_ref.
+        """
+        trace = evidence.get("trace") if isinstance(evidence, dict) else None
+        if not _trace_has_deterministic_step(trace):
+            raise ValueError(
+                "verified(): proof evidence must contain at least one "
+                "DETERMINISTIC verification step — a verdict with zero "
+                "verification evidence must be UNVERIFIABLE."
+            )
         return cls(
             status=LegalDiagnosticStatus.VERIFIED,
             agent_message=agent_message,
@@ -521,6 +552,17 @@ class LegalDiagnosticsMixin:
         if not str(agent_message).strip():
             agent_message = "Verification completed without an agent-facing message."
         if status is LegalDiagnosticStatus.VERIFIED:
+            if not _trace_has_deterministic_step(trace):
+                # A VERIFIED mapping over traceless evidence (e.g. a
+                # hand-built result object) demotes instead of raising:
+                # verified() refuses the binding either way, but the mixin
+                # must return a diagnostic, never crash a caller (#88
+                # review — this also keeps #87's action helper fail-closed
+                # instead of traceback-failing).
+                return LegalDiagnosticResult.unverifiable(
+                    agent_message=agent_message,
+                    developer_fields=developer_fields,
+                )
             return LegalDiagnosticResult.verified(
                 agent_message=agent_message,
                 developer_fields=developer_fields,
