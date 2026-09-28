@@ -118,31 +118,33 @@ def test_mode_with_missing_inputs_fails_closed(monkeypatch, capsys, tmp_path):
     assert "verified<<ghadelimiter_qwed\nfalse" in output
 
 
-def test_clause_helper_attests_only_attesting_statuses():
-    """Issue #68: only consistent + z3_satisfiable keep the action green;
-    every refusal status (and any unknown future one) fails."""
+def test_block_attests_only_diagnostic_verified():
+    """Issues #67/#68 + CodeAnt review: every block is gated on the
+    diagnostic ladder (VERIFIED admits), not convenience booleans. Only
+    deterministic proof attests — heuristic passes, refusals and
+    contradictions all fail, including a novel result shape with
+    consistent=False under the default status (Greptile P2)."""
     from qwed_legal.guards.clause_guard import ClauseGuard
+    from z3 import Bool, Int
 
     guard = ClauseGuard()
-    assert action_entrypoint._clause_block_attests(
-        guard.check_consistency(
-            ["Seller may terminate with 30 days notice",
-             "Buyer may terminate with 60 days notice"]
-        )
+    assert action_entrypoint._block_attests(
+        guard.verify_using_z3([Bool("a"), Int("x") > 5])
     ) is True
     for clauses in (
+        ["Seller may terminate with 30 days notice",
+         "Buyer may terminate with 60 days notice"],
         ["Payment due upon receipt", "Buyer shall pay upon receipt"],
         ["Payment due upon receipt"],
         [],
         ["  \t"],
     ):
-        result = guard.check_consistency(clauses)
-        assert result.status in (
-            "heuristic_pass_limited",
-            "insufficient_input",
-            "invalid_input",
-        ), result.status
-        assert action_entrypoint._clause_block_attests(result) is False
+        assert action_entrypoint._block_attests(
+            guard.check_consistency(clauses)
+        ) is False
+    assert action_entrypoint._block_attests(
+        guard.verify_using_z3([])
+    ) is False
 
 
 def test_citation_helper_never_attests():
@@ -156,4 +158,17 @@ def test_citation_helper_never_attests():
         "garbage!!! not a citation",
     ):
         result = guard.verify(text)
-        assert action_entrypoint._citation_block_attests(result) is False
+        assert action_entrypoint._block_attests(result) is False
+
+
+def test_deadline_liability_blocks_follow_ladder():
+    """Deadline/liability blocks use the same helper; deterministic
+    matches attest, mismatches do not (no behavior change there)."""
+    from qwed_legal import DeadlineGuard, LiabilityGuard
+
+    assert action_entrypoint._block_attests(
+        LiabilityGuard().verify_cap(5_000_000, 200, 10_000_000)
+    ) is True
+    assert action_entrypoint._block_attests(
+        LiabilityGuard().verify_cap(5_000_000, 200, 15_000_000)
+    ) is False

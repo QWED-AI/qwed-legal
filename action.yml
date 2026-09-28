@@ -8,7 +8,7 @@ branding:
 
 inputs:
   mode:
-    description: 'Verification mode: deadline, liability, clause, citation, or all'
+    description: 'Verification mode: deadline, liability, clause, citation, or all. Unknown modes fail closed. A run that executes zero verifications (missing inputs) fails closed.'
     required: true
     default: 'all'
   
@@ -41,7 +41,7 @@ inputs:
     required: false
   
   citation:
-    description: 'Legal citation to verify (for citation verification)'
+    description: 'Legal citation to check (for citation verification). Citation authority is unconfirmable by design: this mode records the format check in results.citation (see results.citation.valid) but can never produce a passing step.'
     required: false
   
   country:
@@ -55,7 +55,7 @@ inputs:
 
 outputs:
   verified:
-    description: 'Whether all verifications passed'
+    description: 'Whether all verifications passed. Only deterministic proofs pass (deadline/liability exact matches, z3 clause proofs). Heuristic clause results, citations, unknown modes, and runs executing zero verifications fail closed — branch on the results JSON for limited-coverage handling.'
   
   results:
     description: 'JSON string with detailed verification results'

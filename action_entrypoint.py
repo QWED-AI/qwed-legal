@@ -14,24 +14,18 @@ from qwed_legal.diagnostics import LegalDiagnosticStatus
 
 VALID_MODES = ("deadline", "liability", "clause", "citation", "all")
 
-# Clause statuses that attest consistency and may keep the action verified
-# (#68): heuristic "consistent" and deterministic z3_satisfiable. Every
-# other status — contradiction, heuristic_pass_limited, invalid_input,
-# insufficient_input, or any unknown future status — fails closed.
-_ATTESTING_CLAUSE_STATUSES = ("consistent", "z3_satisfiable")
 
+def _block_attests(result) -> bool:
+    """Whether a guard result may keep an action verified.
 
-def _clause_block_attests(result) -> bool:
-    """Whether a clause result may keep an action verified."""
-    return result.status in _ATTESTING_CLAUSE_STATUSES
-
-
-def _citation_block_attests(result) -> bool:
-    """Whether a citation result may keep an action verified.
-
-    Never True: citation authority is unconfirmable by design — a
-    format-valid cite maps to UNVERIFIABLE_AUTHORITY (non-authoritative),
-    so there is no attesting citation outcome (#67 comment).
+    VERIFIED admits; UNVERIFIABLE/BLOCKED clear all_verified (#67
+    comment). This is why heuristic clause passes (UNVERIFIABLE on the
+    ladder) and all citation outcomes (never VERIFIED by design) fail
+    the action, while deterministic deadline/liability matches and z3
+    clause proofs pass. Greptile P2 on PR #87: the check is the
+    diagnostic status, not the convenience booleans, so novel result
+    shapes (e.g. consistent=False with default status) cannot slip
+    through a status allowlist.
     """
     return result.to_diagnostic().status is LegalDiagnosticStatus.VERIFIED
 
@@ -98,7 +92,7 @@ def main():
             "difference_days": result.difference_days,
             "message": result.message,
         }
-        if not result.verified:
+        if not _block_attests(result):
             all_verified = False
         messages.append(result.message)
         print(result.message)
@@ -137,7 +131,7 @@ def main():
             ),
             "message": result.message,
         }
-        if not result.verified:
+        if not _block_attests(result):
             all_verified = False
         messages.append(result.message)
         print(result.message)
@@ -155,11 +149,12 @@ def main():
                 "conflicts": [(c[0], c[1], c[2]) for c in result.conflicts],
                 "message": result.message,
             }
-            # Fail on every non-attesting status (#68): contradiction,
-            # heuristic_pass_limited, invalid_input and insufficient_input
-            # (single-clause no-coverage) all clear all_verified — only an
-            # attesting status keeps the action green.
-            if not _clause_block_attests(result):
+            # Fail on every non-attesting outcome (#68): the diagnostic
+            # ladder admits only VERIFIED, so heuristic passes (including
+            # plain "consistent"), refusals and contradictions all clear
+            # all_verified — only deterministic proof (e.g. z3_satisfiable)
+            # keeps the action green.
+            if not _block_attests(result):
                 all_verified = False
             messages.append(result.message)
             print(result.message)
@@ -181,7 +176,7 @@ def main():
         }
         # Citations never attest: format validity is not authority validity,
         # so even a format-valid cite clears all_verified (#67 comment).
-        if not _citation_block_attests(result):
+        if not _block_attests(result):
             all_verified = False
         messages.append(result.message)
         print(result.message)
