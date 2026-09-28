@@ -102,6 +102,18 @@ class ContradictionGuard:
             "result": result_snapshot,
         }
         if status == "consistent" and claim_texts:
+            # Claim texts must be real content, not empty placeholders:
+            # [""] passes a truthiness check but binds authority over no
+            # claim (#88 review, CodeRabbit/Greptile P1).
+            if not all(
+                isinstance(text, str) and text.strip() for text in claim_texts
+            ):
+                return LegalDiagnosticResult.unverifiable(
+                    agent_message=result.get(
+                        "message", "Consistency could not be determined."
+                    ),
+                    developer_fields=developer_fields,
+                )
             try:
                 return LegalDiagnosticResult.verified(
                     agent_message=result.get("message", "Clauses are consistent."),

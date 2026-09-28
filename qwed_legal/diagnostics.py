@@ -552,6 +552,17 @@ class LegalDiagnosticsMixin:
         if not str(agent_message).strip():
             agent_message = "Verification completed without an agent-facing message."
         if status is LegalDiagnosticStatus.VERIFIED:
+            if not _trace_has_deterministic_step(trace):
+                # A VERIFIED mapping over traceless evidence (e.g. a
+                # hand-built result object) demotes instead of raising:
+                # verified() refuses the binding either way, but the mixin
+                # must return a diagnostic, never crash a caller (#88
+                # review — this also keeps #87's action helper fail-closed
+                # instead of traceback-failing).
+                return LegalDiagnosticResult.unverifiable(
+                    agent_message=agent_message,
+                    developer_fields=developer_fields,
+                )
             return LegalDiagnosticResult.verified(
                 agent_message=agent_message,
                 developer_fields=developer_fields,

@@ -509,6 +509,39 @@ class TestDiagnosticsEdgePaths:
         assert diagnostic.status is LegalDiagnosticStatus.VERIFIED
         assert diagnostic.is_authoritative is True
 
+    def test_mixin_traceless_verified_demotes_not_raises(self):
+        """Greptile P1 / CodeRabbit Minor on PR #88: a result mapping to
+        VERIFIED with a traceless evidence path must demote to
+        UNVERIFIABLE through the mixin, never raise out of
+        to_diagnostic() (which would crash callers like #87's helper)."""
+        from qwed_legal.guards.clause_guard import ClauseResult
+
+        result = ClauseResult(
+            consistent=True, conflicts=[], message="m", status="z3_satisfiable"
+        )
+        diagnostic = result.to_diagnostic()
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+        assert diagnostic.proof_ref is None
+
+    def test_empty_string_claim_is_not_authoritative(self):
+        """Greptile P1 / CodeRabbit Major on PR #88: claim_texts=[""]
+        passes truthiness but binds no claim — demote even when the
+        trace is sufficient."""
+        from qwed_legal.guards.contradiction_guard import Clause
+
+        diagnostic = ContradictionGuard.to_diagnostic(
+            {
+                "status": "consistent",
+                "message": "m",
+                "verification_trace": [
+                    {"step": "CONCLUSION", "evidence_type": "DETERMINISTIC"}
+                ],
+            },
+            clauses=[Clause(text="", category="DURATION", value=0)],
+        )
+        assert diagnostic.status is LegalDiagnosticStatus.UNVERIFIABLE
+        assert diagnostic.proof_ref is None
+
     def test_fairness_adapter_json_encodable(self):
         from qwed_legal.diagnostics import fairness_to_diagnostic
 
