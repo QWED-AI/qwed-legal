@@ -396,6 +396,20 @@ class TestJurisdictionGuardFailClosed:
         assert result.verified is True
         assert list(result.warnings) == []
 
+    def test_bare_sale_is_unclassified_not_goods(self):
+        """Sentry review on PR #85: bare "sale" says nothing about the
+        object (CISG Art. 2 excludes immovables/shares), so it must not
+        earn the definitive goods warning — unclassified instead."""
+        for value in ("sale", "real estate sale", "share sale"):
+            result = self.guard.verify_choice_of_law(
+                parties_countries=["FR", "IT"],
+                governing_law="Germany",
+                contract_type=value,
+            )
+            assert result.verified is False
+            assert any("not evaluated" in w for w in result.warnings)
+            assert not any("sale of goods" in w for w in result.warnings)
+
     def test_trace_records_contract_classification(self):
         """contract_type and its classification must appear in trace
         inputs (previously absent — silent deletion left no record)."""

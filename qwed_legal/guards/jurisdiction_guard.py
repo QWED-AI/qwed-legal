@@ -379,7 +379,12 @@ class JurisdictionGuard:
         goods_types = {
             "sale of goods", "goods", "international sale of goods",
             "sales of goods", "supply of goods", "purchase of goods",
-            "distribution of goods", "sale",
+            "distribution of goods",
+            # NOTE: bare "sale" is deliberately absent (Sentry review on
+            # PR #85). A sale of unspecified object is ambiguous — CISG
+            # Art. 2 excludes immovables, ships, electricity and shares —
+            # so it classifies as unclassified, not goods. Multi-word
+            # forms ("sale of goods", ...) still resolve above.
         }
         non_goods_types = {
             "services", "service", "consulting", "sow", "msa", "licence",
