@@ -269,11 +269,14 @@ class TestClauseGuardFailClosed:
         assert result.consistent is False
 
     def test_single_clause_heuristic(self):
-        """Single clause returns consistent — cannot conflict with itself."""
+        """A single clause is insufficient input, not consistency — one
+        clause cannot conflict with itself, but neither can it be proven
+        consistent (#67 comment)."""
         result = self.guard.check_consistency(
             ["Seller may terminate with 30 days notice."]
         )
-        assert result.consistent is True
+        assert result.consistent is False
+        assert result.status == "insufficient_input"
 
     def test_payment_clauses_not_falsely_verified(self):
         """Payment-only clauses must not return VERIFIED — guard has no payment model."""

@@ -194,14 +194,16 @@ class TestClauseGuard:
         assert len(result.conflicts) >= 1
 
     def test_single_clause(self):
-        """Test single clause (no conflict possible)."""
+        """A single clause is insufficient input (#67 comment) — no pair
+        to compare, so consistency cannot be established."""
         guard = ClauseGuard()
         result = guard.check_consistency(
             [
                 "Payment due within 30 days",
             ]
         )
-        assert result.consistent is True
+        assert result.consistent is False
+        assert result.status == "insufficient_input"
 
     @pytest.mark.parametrize(
         "clauses",

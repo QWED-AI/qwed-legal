@@ -10,6 +10,30 @@ import os
 import sys
 
 from qwed_legal import DeadlineGuard, LiabilityGuard, ClauseGuard, CitationGuard
+from qwed_legal.diagnostics import LegalDiagnosticStatus
+
+VALID_MODES = ("deadline", "liability", "clause", "citation", "all")
+
+# Clause statuses that attest consistency and may keep the action verified
+# (#68): heuristic "consistent" and deterministic z3_satisfiable. Every
+# other status — contradiction, heuristic_pass_limited, invalid_input,
+# insufficient_input, or any unknown future status — fails closed.
+_ATTESTING_CLAUSE_STATUSES = ("consistent", "z3_satisfiable")
+
+
+def _clause_block_attests(result) -> bool:
+    """Whether a clause result may keep an action verified."""
+    return result.status in _ATTESTING_CLAUSE_STATUSES
+
+
+def _citation_block_attests(result) -> bool:
+    """Whether a citation result may keep an action verified.
+
+    Never True: citation authority is unconfirmable by design — a
+    format-valid cite maps to UNVERIFIABLE_AUTHORITY (non-authoritative),
+    so there is no attesting citation outcome (#67 comment).
+    """
+    return result.to_diagnostic().status is LegalDiagnosticStatus.VERIFIED
 
 
 def set_output(name: str, value: str):
@@ -47,9 +71,20 @@ def main():
     results = {}
     all_verified = True
     messages = []
+    executed_blocks = []
+
+    # Fail closed on unknown modes (#67): a typo'd mode previously skipped
+    # every block yet emitted verified="true" + exit 0.
+    if mode not in VALID_MODES:
+        all_verified = False
+        messages.append(
+            f"Unknown mode '{mode}': expected one of {', '.join(VALID_MODES)}."
+        )
+        print(messages[-1])
 
     # Deadline verification
     if mode in ["deadline", "all"] and signing_date and term and claimed_deadline:
+        executed_blocks.append("deadline")
         guard = DeadlineGuard(country=country, state=state)
         result = guard.verify(signing_date, term, claimed_deadline)
         results["deadline"] = {
@@ -75,6 +110,7 @@ def main():
         and cap_percentage
         and claimed_cap
     ):
+        executed_blocks.append("liability")
         guard = LiabilityGuard()
         result = guard.verify_cap(
             float(contract_value), float(cap_percentage), float(claimed_cap)
@@ -108,6 +144,7 @@ def main():
 
     # Clause verification
     if mode in ["clause", "all"] and clauses_json:
+        executed_blocks.append("clause")
         try:
             clauses = json.loads(clauses_json)
             guard = ClauseGuard()
@@ -118,9 +155,11 @@ def main():
                 "conflicts": [(c[0], c[1], c[2]) for c in result.conflicts],
                 "message": result.message,
             }
-            # ClauseGuard is fail-closed: any result that is not consistent is
-            # not verified, including clauses outside its heuristic coverage.
-            if not result.consistent:
+            # Fail on every non-attesting status (#68): contradiction,
+            # heuristic_pass_limited, invalid_input and insufficient_input
+            # (single-clause no-coverage) all clear all_verified — only an
+            # attesting status keeps the action green.
+            if not _clause_block_attests(result):
                 all_verified = False
             messages.append(result.message)
             print(result.message)
@@ -130,6 +169,7 @@ def main():
 
     # Citation verification
     if mode in ["citation", "all"] and citation:
+        executed_blocks.append("citation")
         guard = CitationGuard()
         result = guard.verify(citation)
         results["citation"] = {
@@ -139,10 +179,22 @@ def main():
             "issues": result.issues,
             "message": result.message,
         }
-        if not result.valid:
+        # Citations never attest: format validity is not authority validity,
+        # so even a format-valid cite clears all_verified (#67 comment).
+        if not _citation_block_attests(result):
             all_verified = False
         messages.append(result.message)
         print(result.message)
+
+    # Fail closed when nothing executed (#67): missing inputs or a default
+    # invocation previously skipped every block yet emitted verified="true".
+    if mode in VALID_MODES and not executed_blocks:
+        all_verified = False
+        messages.append(
+            f"No verification performed for mode '{mode}': required inputs "
+            "were missing, so every block was skipped. Failing closed."
+        )
+        print(messages[-1])
 
     # Set outputs
     set_output("verified", str(all_verified).lower())
