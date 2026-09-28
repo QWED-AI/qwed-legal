@@ -407,6 +407,52 @@ class TestJurisdictionGuardFailClosed:
         assert inputs["contract_type"] is None
         assert inputs["contract_classification"] == "unclassified"
 
+    def test_us_foreign_services_gets_no_goods_warning(self):
+        """PR #85 review: the sale-of-goods arm must not fire on a
+        declared services contract just because one party is the US."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "FR"],
+            governing_law="France",
+            contract_type="services",
+        )
+        assert not any("sale of goods" in w for w in result.warnings)
+        assert not any("not evaluated" in w for w in result.warnings)
+
+    def test_us_foreign_unclassified_gets_partial_not_goods_warning(self):
+        """PR #85 review: US-foreign with no classification gets the
+        partial-coverage warning, never the definitive goods warning —
+        including over unknown parties (no definitive claim over
+        unevaluated input)."""
+        for parties in (["US", "FR"], ["US", "XX"]):
+            result = self.guard.verify_choice_of_law(
+                parties_countries=parties,
+                governing_law="France",
+            )
+            assert any("not evaluated" in w for w in result.warnings)
+            assert not any("sale of goods" in w for w in result.warnings)
+
+    def test_us_foreign_goods_keeps_goods_warning(self):
+        """The goods arm still fires for classified goods on US-foreign
+        pairs (pre-existing behavior preserved)."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "FR"],
+            governing_law="France",
+            contract_type="goods",
+        )
+        assert any("sale of goods" in w for w in result.warnings)
+
+    def test_empty_parties_trace_records_contract(self):
+        """The empty-parties refusal trace must also record the
+        supplied contract type and its classification."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=[],
+            governing_law="France",
+            contract_type="services",
+        )
+        inputs = result.verification_trace[0].inputs
+        assert inputs["contract_type"] == "services"
+        assert inputs["contract_classification"] == "declared_non_goods"
+
     def test_choice_of_law_warnings_fail_closed(self):
         """Issue #16: warning-only ambiguity must not return verified=True."""
         result = self.guard.verify_choice_of_law(

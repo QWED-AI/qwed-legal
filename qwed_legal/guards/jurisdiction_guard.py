@@ -373,6 +373,34 @@ class JurisdictionGuard:
         warnings = []
         selected_forum = forum if forum is not None else forum_selection
 
+        # Contract classification vocabularies, defined once and used by
+        # every return path below (including the empty-parties refusal, so
+        # its trace records the classification too).
+        goods_types = {
+            "sale of goods", "goods", "international sale of goods",
+            "sales of goods", "supply of goods", "purchase of goods",
+            "distribution of goods", "sale",
+        }
+        non_goods_types = {
+            "services", "service", "consulting", "sow", "msa", "licence",
+            "license", "licensing", "employment", "nda", "confidentiality",
+            "lease", "loan", "construction", "settlement", "employment offer",
+        }
+
+        def _classify_contract_type(value):
+            if not isinstance(value, str) or not value.strip():
+                return "unclassified"
+            key = " ".join(
+                value.strip().lower().replace("-", " ").replace("_", " ").split()
+            )
+            if key in goods_types:
+                return "goods"
+            if key in non_goods_types:
+                return "declared_non_goods"
+            return "unclassified"
+
+        contract_class = _classify_contract_type(contract_type)
+
         # Fail-closed: jurisdiction consistency cannot be verified without party
         # information. An empty party list would otherwise produce no conflicts
         # and falsely report verified=True.
@@ -390,7 +418,11 @@ class JurisdictionGuard:
                     VerificationStep(
                         step=STEP_RULE_IDENTIFIED,
                         description="No party countries provided to assess jurisdiction.",
-                        inputs={"parties_countries": parties_countries},
+                        inputs={
+                            "parties_countries": parties_countries,
+                            "contract_type": contract_type,
+                            "contract_classification": contract_class,
+                        },
                         output="UNSUPPORTED: empty party list cannot be verified.",
                         evidence_type=EVIDENCE_UNSUPPORTED,
                     )
@@ -474,44 +506,18 @@ class JurisdictionGuard:
         # `parties_countries` is country-level input. Do not infer US parties from
         # US state abbreviations here because ISO country codes such as DE
         # (Germany) and IN (India) collide with Delaware/Indiana.
-        party_country_set = set(parties_upper)
-        cross_border_parties = len(party_country_set) > 1
-        us_party = "US" in party_country_set
-        foreign_party = any(c != "US" for c in party_country_set)
+        # The sale-of-goods arm fires only on a classified goods contract:
+        # the old unconditional US-foreign arm warned on declared services
+        # contracts and shadowed the partial-coverage arm below (#81 review).
         # Anything outside BOTH vocabularies is unknown coverage, not evidence
         # that the contract is not a sale of goods - the same rule check 2
         # applies to unrecognized party country codes (:414-415, :426-431).
-        # A missing/unrecognized classification previously deleted this
-        # check silently, collapsing 'unrecognized' and 'not goods' into
-        # the same verified state (#81).
-        goods_types = {
-            "sale of goods", "goods", "international sale of goods",
-            "sales of goods", "supply of goods", "purchase of goods",
-            "distribution of goods", "sale",
-        }
-        non_goods_types = {
-            "services", "service", "consulting", "sow", "msa", "licence",
-            "license", "licensing", "employment", "nda", "confidentiality",
-            "lease", "loan", "construction", "settlement", "employment offer",
-        }
+        # (contract_class was computed once at the top so every return path,
+        # including the empty-parties refusal, records the same value.)
+        party_country_set = set(parties_upper)
+        cross_border_parties = len(party_country_set) > 1
 
-        def _classify_contract_type(value):
-            if not isinstance(value, str) or not value.strip():
-                return "unclassified"
-            key = " ".join(
-                value.strip().lower().replace("-", " ").replace("_", " ").split()
-            )
-            if key in goods_types:
-                return "goods"
-            if key in non_goods_types:
-                return "declared_non_goods"
-            return "unclassified"
-
-        contract_class = _classify_contract_type(contract_type)
-
-        if (us_party and foreign_party) or (
-            contract_class == "goods" and cross_border_parties
-        ):
+        if contract_class == "goods" and cross_border_parties:
             warnings.append(
                 "International sale of goods may be subject to CISG unless expressly excluded."
             )
