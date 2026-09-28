@@ -528,6 +528,16 @@ class TestDiagnosticsEdgePaths:
             )
             assert diagnostic.proof_ref is None
 
+    def test_blank_message_fallback_matches_verdict(self):
+        """Greptile P2 on PR #88: the fallback message must not
+        contradict the verdict it accompanies."""
+        blocked = ContradictionGuard.to_diagnostic(
+            {"status": "contradiction", "message": ""}
+        )
+        assert blocked.status is LegalDiagnosticStatus.BLOCKED
+        assert "contradictory" in blocked.agent_message
+        assert "could not be determined" not in blocked.agent_message
+
     def test_mixin_traceless_verified_demotes_not_raises(self):
         """Greptile P1 / CodeRabbit Minor on PR #88: a result mapping to
         VERIFIED with a traceless evidence path must demote to
