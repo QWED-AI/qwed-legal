@@ -101,6 +101,17 @@ class ContradictionGuard:
             "trace": trace_dicts,
             "result": result_snapshot,
         }
+        # Sanitize once: an empty/non-string message must not crash any
+        # branch below — __post_init__ rejects blank agent messages, so
+        # the except-ValueError fallthrough would otherwise re-raise the
+        # identical error uncaught (Sentry review on PR #88). Mirrors the
+        # mixin's own fallback message (diagnostics.py).
+        raw_message = result.get("message")
+        agent_message = (
+            raw_message
+            if isinstance(raw_message, str) and raw_message.strip()
+            else "Consistency could not be determined."
+        )
         if status == "consistent" and claim_texts:
             # Claim texts must be real content, not empty placeholders:
             # [""] passes a truthiness check but binds authority over no
@@ -109,14 +120,12 @@ class ContradictionGuard:
                 isinstance(text, str) and text.strip() for text in claim_texts
             ):
                 return LegalDiagnosticResult.unverifiable(
-                    agent_message=result.get(
-                        "message", "Consistency could not be determined."
-                    ),
+                    agent_message=agent_message,
                     developer_fields=developer_fields,
                 )
             try:
                 return LegalDiagnosticResult.verified(
-                    agent_message=result.get("message", "Clauses are consistent."),
+                    agent_message=agent_message,
                     developer_fields=developer_fields,
                     evidence=evidence,
                 )
@@ -127,11 +136,11 @@ class ContradictionGuard:
                 pass
         if status == "contradiction":
             return LegalDiagnosticResult.blocked(
-                agent_message=result.get("message", "Clauses are contradictory."),
+                agent_message=agent_message,
                 developer_fields=developer_fields,
             )
         return LegalDiagnosticResult.unverifiable(
-            agent_message=result.get("message", "Consistency could not be determined."),
+            agent_message=agent_message,
             developer_fields=developer_fields,
         )
 

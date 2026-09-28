@@ -509,6 +509,25 @@ class TestDiagnosticsEdgePaths:
         assert diagnostic.status is LegalDiagnosticStatus.VERIFIED
         assert diagnostic.is_authoritative is True
 
+    def test_blank_message_never_crashes_adapter(self):
+        """Sentry review on PR #88: empty/whitespace/non-string messages
+        must fall back to the default message on every branch — the
+        except-ValueError fallthrough previously re-raised the identical
+        error uncaught, and the contradiction branch had no guard at all."""
+        for verdict in (
+            {"status": "consistent", "message": ""},
+            {"status": "consistent", "message": "   "},
+            {"status": "consistent", "message": None},
+            {"status": "contradiction", "message": ""},
+            {"status": "whatever", "message": 123},
+        ):
+            diagnostic = ContradictionGuard.to_diagnostic(verdict)
+            assert diagnostic.status in (
+                LegalDiagnosticStatus.UNVERIFIABLE,
+                LegalDiagnosticStatus.BLOCKED,
+            )
+            assert diagnostic.proof_ref is None
+
     def test_mixin_traceless_verified_demotes_not_raises(self):
         """Greptile P1 / CodeRabbit Minor on PR #88: a result mapping to
         VERIFIED with a traceless evidence path must demote to
