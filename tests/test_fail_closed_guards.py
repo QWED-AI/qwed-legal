@@ -455,6 +455,20 @@ class TestJurisdictionGuardFailClosed:
         )
         assert sum("CISG" in w for w in result.warnings) == 2
 
+    def test_unclassified_pair_has_single_cisg_mention(self):
+        """Sentry review on PR #85: on unclassified contracts the check-2
+        CISG suggestion would sit next to the partial-coverage warning
+        ("CISG ... was not evaluated") as guidance in tension. Only the
+        disclaimer may mention CISG."""
+        result = self.guard.verify_choice_of_law(
+            parties_countries=["US", "FR"],
+            governing_law="France",
+        )
+        assert sum("CISG" in w for w in result.warnings) == 1
+        assert any("not evaluated" in w for w in result.warnings)
+        # The systems difference itself is still recorded, minus the tail.
+        assert any("legal systems" in w for w in result.warnings)
+
     def test_form_labels_stay_unclassified(self):
         """CodeRabbit review on PR #85: msa/sow describe agreement form,
         not subject matter — a goods sale labeled "msa" must not verify

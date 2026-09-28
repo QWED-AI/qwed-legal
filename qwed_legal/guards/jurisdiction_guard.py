@@ -472,15 +472,17 @@ class JurisdictionGuard:
             )
 
         if len(party_legal_systems) > 1:
-            # The CISG suggestion is subject-matter advice: Append it only
-            # when the contract is not declared non-goods. On a declared
-            # services contract the legal-system difference is still a
-            # genuine ambiguity, but a CISG pointer misdirects remediation
-            # (CISG does not cover services) — CodeRabbit review on PR #85.
+            # The CISG suggestion is subject-matter advice: emit it only
+            # for classified goods. On unclassified contracts it would sit
+            # next to the partial-coverage warning ("CISG ... was not
+            # evaluated") as guidance in tension — one message presuming
+            # CISG is live, the other disclaiming that knowledge (Sentry
+            # review on PR #85). The systems difference itself is still
+            # recorded in all cases.
             cisg_note = (
-                ""
-                if contract_class == "declared_non_goods"
-                else " Consider CISG applicability."
+                " Consider CISG applicability."
+                if contract_class == "goods"
+                else ""
             )
             warnings.append(
                 "Cross-border contract with parties from different legal systems "
