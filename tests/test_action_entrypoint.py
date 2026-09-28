@@ -164,7 +164,7 @@ def test_citation_helper_never_attests():
 def test_deadline_liability_blocks_follow_ladder():
     """Deadline/liability blocks use the same helper; deterministic
     matches attest, mismatches do not (no behavior change there)."""
-    from qwed_legal import DeadlineGuard, LiabilityGuard
+    from qwed_legal import LiabilityGuard
 
     assert action_entrypoint._block_attests(
         LiabilityGuard().verify_cap(5_000_000, 200, 10_000_000)

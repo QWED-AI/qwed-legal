@@ -55,7 +55,7 @@ inputs:
 
 outputs:
   verified:
-    description: 'Whether all verifications passed. Only deterministic proofs pass (deadline/liability exact matches, z3 clause proofs). Heuristic clause results, citations, unknown modes, and runs executing zero verifications fail closed — branch on the results JSON for limited-coverage handling.'
+    description: 'Whether all verifications passed. Only deterministic proofs pass (deadline/liability exact matches). Heuristic clause results, citations, unknown modes, and runs executing zero verifications fail closed — branch on the results JSON for limited-coverage handling. Formal z3 clause proofs attest through the Python guard API (ClauseGuard.verify_using_z3), not through this Action, which evaluates JSON clause strings via check_consistency.'
   
   results:
     description: 'JSON string with detailed verification results'
