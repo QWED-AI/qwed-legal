@@ -373,6 +373,43 @@ class JurisdictionGuard:
         warnings = []
         selected_forum = forum if forum is not None else forum_selection
 
+        # Contract classification vocabularies, defined once and used by
+        # every return path below (including the empty-parties refusal, so
+        # its trace records the classification too).
+        goods_types = {
+            "sale of goods", "goods", "international sale of goods",
+            "sales of goods", "supply of goods", "purchase of goods",
+            # NOTE: "distribution of goods" deliberately absent (CodeRabbit
+            # review on PR #85). A distribution framework is not itself a
+            # sale — CISG may govern sales made under it, but the agreement
+            # alone does not establish goods subject matter. Same for bare
+            # "sale" (CISG Art. 2 exclusions).
+        }
+        non_goods_types = {
+            # NOTE: "sow"/"msa" deliberately absent (CodeRabbit review on
+            # PR #85). They describe agreement form, not subject matter —
+            # a goods sale labeled "msa" must not verify as non-goods.
+            # Subject-matter labels (services, lease, employment, ...)
+            # stay: they genuinely establish non-goods scope.
+            "services", "service", "consulting", "licence",
+            "license", "licensing", "employment", "nda", "confidentiality",
+            "lease", "loan", "construction", "settlement", "employment offer",
+        }
+
+        def _classify_contract_type(value):
+            if not isinstance(value, str) or not value.strip():
+                return "unclassified"
+            key = " ".join(
+                value.strip().lower().replace("-", " ").replace("_", " ").split()
+            )
+            if key in goods_types:
+                return "goods"
+            if key in non_goods_types:
+                return "declared_non_goods"
+            return "unclassified"
+
+        contract_class = _classify_contract_type(contract_type)
+
         # Fail-closed: jurisdiction consistency cannot be verified without party
         # information. An empty party list would otherwise produce no conflicts
         # and falsely report verified=True.
@@ -390,7 +427,11 @@ class JurisdictionGuard:
                     VerificationStep(
                         step=STEP_RULE_IDENTIFIED,
                         description="No party countries provided to assess jurisdiction.",
-                        inputs={"parties_countries": parties_countries},
+                        inputs={
+                            "parties_countries": parties_countries,
+                            "contract_type": contract_type,
+                            "contract_classification": contract_class,
+                        },
                         output="UNSUPPORTED: empty party list cannot be verified.",
                         evidence_type=EVIDENCE_UNSUPPORTED,
                     )
@@ -431,9 +472,21 @@ class JurisdictionGuard:
             )
 
         if len(party_legal_systems) > 1:
+            # The CISG suggestion is subject-matter advice: emit it only
+            # for classified goods. On unclassified contracts it would sit
+            # next to the partial-coverage warning ("CISG ... was not
+            # evaluated") as guidance in tension — one message presuming
+            # CISG is live, the other disclaiming that knowledge (Sentry
+            # review on PR #85). The systems difference itself is still
+            # recorded in all cases.
+            cisg_note = (
+                " Consider CISG applicability."
+                if contract_class == "goods"
+                else ""
+            )
             warnings.append(
                 "Cross-border contract with parties from different legal systems "
-                "(Common Law and Civil Law). Consider CISG applicability."
+                f"(Common Law and Civil Law).{cisg_note}"
             )
 
         # Check 3: Forum vs governing law mismatch
@@ -474,18 +527,26 @@ class JurisdictionGuard:
         # `parties_countries` is country-level input. Do not infer US parties from
         # US state abbreviations here because ISO country codes such as DE
         # (Germany) and IN (India) collide with Delaware/Indiana.
+        # The sale-of-goods arm fires only on a classified goods contract:
+        # the old unconditional US-foreign arm warned on declared services
+        # contracts and shadowed the partial-coverage arm below (#81 review).
+        # Anything outside BOTH vocabularies is unknown coverage, not evidence
+        # that the contract is not a sale of goods - the same rule check 2
+        # applies to unrecognized party country codes (:414-415, :426-431).
+        # (contract_class was computed once at the top so every return path,
+        # including the empty-parties refusal, records the same value.)
         party_country_set = set(parties_upper)
         cross_border_parties = len(party_country_set) > 1
-        us_party = "US" in party_country_set
-        foreign_party = any(c != "US" for c in party_country_set)
-        sale_of_goods = contract_type and contract_type.lower().strip() in {
-            "sale_of_goods",
-            "sale of goods",
-            "goods",
-        }
-        if (us_party and foreign_party) or (sale_of_goods and cross_border_parties):
+
+        if contract_class == "goods" and cross_border_parties:
             warnings.append(
                 "International sale of goods may be subject to CISG unless expressly excluded."
+            )
+        elif cross_border_parties and contract_class == "unclassified":
+            warnings.append(
+                f"Contract classification absent or unrecognized ({contract_type!r}): "
+                "CISG convention-applicability was not evaluated, so cross-border "
+                "coverage is partial for this contract."
             )
 
         # Check 5: Neutral jurisdiction suggestion
@@ -535,6 +596,8 @@ class JurisdictionGuard:
                     "governing_law": governing_law,
                     "forum": selected_forum,
                     "parties_countries": parties_countries,
+                    "contract_type": contract_type,
+                    "contract_classification": contract_class,
                 },
                 output=(
                     f"Governing law: {governing_law_upper}; "
