@@ -135,34 +135,9 @@ class ClauseGuard:
         Returns:
             ClauseResult with consistency status and any detected conflicts
         """
-        if not isinstance(clauses, list):
-            return self._invalid_input_result(
-                "The clause input must be a list of strings."
-            )
-        if not clauses:
-            return self._invalid_input_result("No clauses were provided.")
-        if len(clauses) > self._MAX_CLAUSES:
-            return self._invalid_input_result(
-                f"Too many clauses: {len(clauses)} provided, "
-                f"maximum {self._MAX_CLAUSES}."
-            )
-        if any(
-            len(clause) > self._MAX_CLAUSE_LENGTH
-            for clause in clauses
-            if isinstance(clause, str)
-        ):
-            return self._invalid_input_result(
-                "Every clause must be at most "
-                f"{self._MAX_CLAUSE_LENGTH} characters."
-            )
-        if any(not isinstance(clause, str) for clause in clauses):
-            return self._invalid_input_result(
-                "Every clause must be a string."
-            )
-        if any(not clause.strip() for clause in clauses):
-            return self._invalid_input_result(
-                "Every clause must contain non-whitespace text."
-            )
+        refused = self._validate_clause_input(clauses)
+        if refused is not None:
+            return refused
         if len(clauses) < 2:
             return ClauseResult(
                 consistent=False,
@@ -328,6 +303,43 @@ class ClauseGuard:
 
         return propositions
 
+    def _validate_clause_input(self, clauses: List[str]) -> Optional[ClauseResult]:
+        """Input-shape gates for check_consistency (Sonar: keeps the main
+        flow under the cognitive-complexity budget).
+
+        Returns a fail-closed result when the input cannot be analyzed,
+        else None to proceed. Messages preserved verbatim.
+        """
+        if not isinstance(clauses, list):
+            return self._invalid_input_result(
+                "The clause input must be a list of strings."
+            )
+        if not clauses:
+            return self._invalid_input_result("No clauses were provided.")
+        if len(clauses) > self._MAX_CLAUSES:
+            return self._invalid_input_result(
+                f"Too many clauses: {len(clauses)} provided, "
+                f"maximum {self._MAX_CLAUSES}."
+            )
+        if any(
+            len(clause) > self._MAX_CLAUSE_LENGTH
+            for clause in clauses
+            if isinstance(clause, str)
+        ):
+            return self._invalid_input_result(
+                "Every clause must be at most "
+                f"{self._MAX_CLAUSE_LENGTH} characters."
+            )
+        if any(not isinstance(clause, str) for clause in clauses):
+            return self._invalid_input_result(
+                "Every clause must be a string."
+            )
+        if any(not clause.strip() for clause in clauses):
+            return self._invalid_input_result(
+                "Every clause must contain non-whitespace text."
+            )
+        return None
+
     def _find_conflicts(self, propositions: List[dict]) -> Tuple[List[Tuple[int, int, str]], bool]:
         """Find logical conflicts between clauses.
 
@@ -343,22 +355,29 @@ class ClauseGuard:
                     continue
                 if len(conflicts) >= self._MAX_CONFLICTS:
                     return conflicts, True
-
-                conflict = self._check_termination_conflict(prop1, prop2)
-                if conflict:
-                    conflicts.append((i, j, conflict))
-                    continue
-
-                conflict = self._check_permission_prohibition_conflict(prop1, prop2)
-                if conflict:
-                    conflicts.append((i, j, conflict))
-                    continue
-
-                conflict = self._check_exclusivity_conflict(prop1, prop2)
-                if conflict:
-                    conflicts.append((i, j, conflict))
+                conflict = self._check_pair_conflict(prop1, prop2, i, j)
+                if conflict is not None:
+                    conflicts.append(conflict)
 
         return conflicts, False
+
+    def _check_pair_conflict(
+        self, prop1: dict, prop2: dict, i: int, j: int
+    ) -> Optional[Tuple[int, int, str]]:
+        """Check one proposition pair; return the conflict tuple or None."""
+        conflict = self._check_termination_conflict(prop1, prop2)
+        if conflict:
+            return (i, j, conflict)
+
+        conflict = self._check_permission_prohibition_conflict(prop1, prop2)
+        if conflict:
+            return (i, j, conflict)
+
+        conflict = self._check_exclusivity_conflict(prop1, prop2)
+        if conflict:
+            return (i, j, conflict)
+
+        return None
 
     def _check_termination_conflict(self, prop1: dict, prop2: dict) -> Optional[str]:
         """Check for conflicting termination clauses."""
@@ -475,6 +494,16 @@ class ClauseGuard:
 
         return self._nearest_days(text, context, day_expr)
 
+    @staticmethod
+    def _span_gap(ctx_match, day_match) -> Optional[int]:
+        """Gap between a context span and a day-expression span, or None
+        when they overlap (direct attachment is handled elsewhere)."""
+        if ctx_match.end() <= day_match.start():
+            return day_match.start() - ctx_match.end()
+        if day_match.end() <= ctx_match.start():
+            return ctx_match.start() - day_match.end()
+        return None
+
     def _nearest_days(self, text: str, context: str, day_expr: str) -> Optional[int]:
         """Proximity fallback: rank day-expression candidates by the gap
         between the context word and the expression (inclusive of
@@ -484,13 +513,8 @@ class ClauseGuard:
         candidates = []
         for ctx_match in context_re.finditer(text):
             for day_match in re.finditer(day_expr, text):
-                if ctx_match.end() <= day_match.start():
-                    gap = day_match.start() - ctx_match.end()
-                elif day_match.end() <= ctx_match.start():
-                    gap = ctx_match.start() - day_match.end()
-                else:
-                    # Overlapping spans: direct attachment already handled
-                    # by the directional patterns above.
+                gap = self._span_gap(ctx_match, day_match)
+                if gap is None:
                     continue
                 if gap <= self._CONTEXT_WINDOW:
                     day_digits = day_match.group(1)
