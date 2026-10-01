@@ -379,6 +379,26 @@ class TestLongDigitRunsFailClosed:
             ]
         )
         assert result.consistent is False
+        # The 4314-char clause trips the length gate first: exact status
+        # pins which layer refused it.
+        assert result.status == "invalid_input"
+
+    def test_overlong_digit_run_beside_valid_is_skipped(self):
+        """CodeRabbit review: an over-long run next to a valid value must
+        not poison the valid extraction — the uninterpretable token is
+        skipped and the clean association stands (same verdict as the
+        input with the over-long token removed)."""
+        guard = ClauseGuard()
+        assert (
+            guard._extract_days(
+                "notice within " + "9" * 4301 + " days and notice within 30 days",
+                "notice",
+            )
+            == 30
+        )
+        assert (
+            guard._extract_days("notice " + "9" * 4301 + " days", "notice") is None
+        )
 
     def test_contradiction_long_run_fails_closed(self):
         guard = ContradictionGuard()
@@ -386,6 +406,7 @@ class TestLongDigitRunsFailClosed:
             [Clause(text="exactly " + "9" * 4301, category="DURATION", value=1)]
         )
         assert result["verified"] is False
+        assert result["status"] == "partial_coverage"
 
     def test_normal_numbers_unaffected(self):
         result = DeadlineGuard().verify("2026-01-01", "30 days", "2026-01-31")

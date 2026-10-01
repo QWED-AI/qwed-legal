@@ -242,8 +242,6 @@ class CitationGuard:
                 # "v." must exist AND appear before the volume number.
                 # Use match.start("volume") — the volume group is always the first
                 # numeric capture and is the true start of the reporter section.
-                # match.start() alone would be 0 because the pattern has an optional
-                # case-name prefix group, making match.start() unreliable here.
                 volume_start = (
                     match.start("volume")
                     if "volume" in match.groupdict()
