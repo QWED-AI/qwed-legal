@@ -445,3 +445,22 @@ class TestLongDigitRunsFailClosed:
             ]
         )
         assert result.status == "contradiction"
+
+    def test_digit_run_without_day_keyword_is_fast(self):
+        """Greptile P1 on PR #89: long digit runs followed by spaces with
+        no day keyword must not backtrack — every day_expr match requires
+        the literal "day", so its absence short-circuits in linear time.
+        The vacuous clause contributes no proposition; the operative
+        clause alone yields the honest heuristic result."""
+        guard = ClauseGuard()
+        start = time.perf_counter()
+        result = guard.check_consistency(
+            [
+                "9" * 2000 + " " * 2000,
+                "Neither party may terminate before 30 days",
+            ]
+        )
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0
+        assert result.consistent is True
+        assert result.status == "consistent"

@@ -461,7 +461,16 @@ class ClauseGuard:
         skipped there, so a proposition built without it may miss a real
         comparison dimension (CodeRabbit review on PR #89). Scoped to
         day-shaped runs — long account/contract numbers are not day values.
+
+        The literal pre-check is load-bearing, not cosmetic: day_expr
+        nests (\d+) against optional whitespace/words, which backtracks
+        quadratically on long digit runs followed by spaces with no "days"
+        (Greptile P1 on PR #89 — 42 s for 200 such clauses). Every
+        day_expr match requires the literal "day", so its absence
+        short-circuits the whole search in linear C-speed time.
         """
+        if "day" not in text:
+            return False
         day_expr = r"(\d+)\s*(?:calendar\s+|business\s+)?days?"
         return any(
             len(match.group(1)) > self._MAX_DAY_DIGITS
@@ -479,6 +488,11 @@ class ClauseGuard:
         ClauseGuard is a heuristic guard — broader extraction is
         coverage, not proof (issue #41).
         """
+        # Linear fast path (Greptile P1 on PR #89): every day_expr match
+        # requires the literal "day", so its absence skips all three
+        # regex layers below instead of backtracking over digit runs.
+        if "day" not in text:
+            return None
         if context not in text:
             return None
 
@@ -525,6 +539,10 @@ class ClauseGuard:
         between the context word and the expression (inclusive of
         _CONTEXT_WINDOW); a tie at the minimum gap between different
         values is ambiguous and stays unresolved."""
+        # Linear fast path, as in _extract_days: no "day" means the
+        # day_expr finditer below can only backtrack, never match.
+        if "day" not in text:
+            return None
         context_re = re.compile(rf"\b{re.escape(context)}\b")
         candidates = []
         for ctx_match in context_re.finditer(text):
