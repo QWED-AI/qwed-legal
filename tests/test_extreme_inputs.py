@@ -14,6 +14,9 @@ import pytest
 
 from qwed_legal import DeadlineGuard, LiabilityGuard
 from qwed_legal.diagnostics import LegalDiagnosticStatus
+from qwed_legal.guards.citation_guard import CitationGuard
+from qwed_legal.guards.clause_guard import ClauseGuard
+from qwed_legal.guards.contradiction_guard import Clause, ContradictionGuard
 
 
 class TestLiabilityGuardNonFiniteInputs:
@@ -285,3 +288,105 @@ class TestLiabilityGuardFiniteExtremes:
         result = self.guard.verify_cap(5_000_000, 200, 10_000_000)
         assert result.verified is True
         assert result.computed_cap == 10_000_000
+
+
+class TestClauseCardinalityBounds:
+    """Issue #75: pairwise work and retained output scale as n^2 — bound
+    cardinality, per-item length and accumulation, all fail-closed."""
+
+    def setup_method(self):
+        self.guard = ClauseGuard()
+
+    def test_huge_array_rejected_fast(self):
+        clauses = ["Seller may terminate with 30 days notice"] * 5000
+        start = time.perf_counter()
+        result = self.guard.check_consistency(clauses)
+        elapsed = time.perf_counter() - start
+        assert result.consistent is False
+        assert result.status == "invalid_input"
+        assert elapsed < 1.0
+
+    def test_boundary_201_rejected_200_evaluated(self):
+        pair = [
+            "Seller may terminate with 10 days notice",
+            "Neither party may terminate before 30 days",
+        ]
+        over = (pair * 101)[:201]
+        assert self.guard.check_consistency(over).status == "invalid_input"
+        at = (pair * 100)[:200]
+        result = self.guard.check_consistency(at)
+        assert result.status == "contradiction"
+
+    def test_conflicts_capped_with_disclosure(self):
+        pair = [
+            "Seller may terminate with 10 days notice",
+            "Neither party may terminate before 30 days",
+        ]
+        clauses = (pair * 80)[:160]
+        result = self.guard.check_consistency(clauses)
+        assert result.status == "contradiction"
+        assert len(result.conflicts) == ClauseGuard._MAX_CONFLICTS
+        assert "truncated" in result.message
+
+    def test_single_overlong_clause_rejected(self):
+        result = self.guard.check_consistency(["x" * 4097])
+        assert result.consistent is False
+        assert result.status == "invalid_input"
+
+    def test_single_max_length_clause_uses_short_circuit(self):
+        """A 4096-char single clause passes the length gate and reaches
+        the pre-existing insufficient-input path (not invalid_input)."""
+        result = self.guard.check_consistency(["x" * 4096])
+        assert result.consistent is False
+        assert result.status == "insufficient_input"
+
+
+class TestCitationRegexBounds:
+    """Issue #79: the case-prefix group backtracked cubically on
+    digit-free ' v. '-floods. The prefix is gone; positional enforcement
+    covers it in linear time."""
+
+    def setup_method(self):
+        self.guard = CitationGuard()
+
+    def test_adversarial_flood_is_fast(self):
+        start = time.perf_counter()
+        result = self.guard.verify("a v. " * 160 + "x")
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0
+        assert result.verified is False
+
+    def test_canonical_citations_unaffected(self):
+        assert self.guard.verify("Brown v. Board, 347 U.S. 483").format_valid is True
+        result = self.guard.verify("Smith v. Jones, 123 F.3d 456")
+        assert result.format_valid is True
+
+
+class TestLongDigitRunsFailClosed:
+    """Issue #80: CPython caps int() conversion at 4300 digits — bound
+    the run before coercion at all five sites, fail closed."""
+
+    def test_deadline_long_run_fails_closed(self):
+        result = DeadlineGuard().verify("2026-01-01", "9" * 4301 + " days", "2026-02-01")
+        assert result.verified is False
+
+    def test_clause_long_runs_fail_closed(self):
+        guard = ClauseGuard()
+        result = guard.check_consistency(
+            [
+                "Seller may terminate with 30 days notice",
+                "notice " + "9" * 4301 + " days",
+            ]
+        )
+        assert result.consistent is False
+
+    def test_contradiction_long_run_fails_closed(self):
+        guard = ContradictionGuard()
+        result = guard.verify_consistency(
+            [Clause(text="exactly " + "9" * 4301, category="DURATION", value=1)]
+        )
+        assert result["verified"] is False
+
+    def test_normal_numbers_unaffected(self):
+        result = DeadlineGuard().verify("2026-01-01", "30 days", "2026-01-31")
+        assert result.verified is True

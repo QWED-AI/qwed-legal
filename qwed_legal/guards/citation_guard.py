@@ -162,15 +162,16 @@ class CitationGuard:
     # do not mandate a party-name prefix.
     CASE_PATTERNS: Dict[str, str] = {
         # U.S. Supreme Court: "Brown v. Board, 347 U.S. 483"
-        # Case name enforced by requiring .+ v. . prefix before the volume/reporter
+        # Case-name prefix is enforced positionally after the match via _V_DOT_RE
+        # (:239-254); it must NOT appear as an optional (?:.+\sv\.\s...)? regex
+        # group, because nested unbounded quantifiers over the ambiguous `.`
+        # character class cause cubic backtracking on digit-free input (#79).
         "US_SCOTUS": (
-            r"(?i)(?:.+\sv\.\s\S.+?\s)?"
-            r"(?P<volume>\d{1,4})\s+(?P<reporter>U\.?S\.?)\s+(?P<page>\d{1,4})"
+            r"(?i)(?P<volume>\d{1,4})\s+(?P<reporter>U\.?S\.?)\s+(?P<page>\d{1,4})"
         ),
         # Federal Reporter: "Smith v. Jones, 123 F.3d 456"
         "US_FED": (
-            r"(?i)(?:.+\sv\.\s\S.+?\s)?"
-            r"(?P<volume>\d{1,4})\s+(?P<reporter>F\.(?:2d|3d)?)\s+(?P<page>\d{1,4})"
+            r"(?i)(?P<volume>\d{1,4})\s+(?P<reporter>F\.(?:2d|3d)?)\s+(?P<page>\d{1,4})"
         ),
         # UK Neutral: "[2020] UKSC 5" — no party names required
         "UK_NEUTRAL": (

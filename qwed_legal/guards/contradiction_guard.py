@@ -358,10 +358,14 @@ class ContradictionGuard:
             # means an uninterpretable constraint — fail closed the whole
             # clause rather than silently omitting it.
             occurrences = len(detector_pattern.findall(text))
+            # Digit-run bound (#80): CPython caps int() conversion at 4300
+            # digits — over-long runs are uninterpretable, so they yield no
+            # operand (the occurrences-vs-operands gap below then fails the
+            # whole clause closed, never silently omitting them).
             operands = [
                 int(token)
                 for token in valid_pattern.findall(text)
-                if token.isdigit()
+                if token.isdigit() and len(token) <= 18
             ]
             if len(operands) != occurrences:
                 return None

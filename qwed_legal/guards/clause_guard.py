@@ -80,6 +80,17 @@ class ClauseGuard:
     # Max chars between a context word and its day-expression for the
     # proximity fallback in _extract_days (issue #41).
     _CONTEXT_WINDOW = 40
+    # Input-size bounds (issue #75): pairwise conflict work and retained
+    # output both scale as n^2, so cardinality and per-item length are
+    # capped before any analysis; the conflict accumulator is capped with
+    # truncation disclosed in the message.
+    _MAX_CLAUSES = 200
+    _MAX_CLAUSE_LENGTH = 4096
+    _MAX_CONFLICTS = 100
+    # Digit-run bound for day-count coercion (#80): CPython caps int()
+    # string conversion at 4300 digits, and no day count needs >18 digits.
+    # Over-long runs are skipped as uninterpretable (fail-closed downstream).
+    _MAX_DAY_DIGITS = 18
 
     def __init__(self):
         """Initialize ClauseGuard."""
@@ -130,6 +141,20 @@ class ClauseGuard:
             )
         if not clauses:
             return self._invalid_input_result("No clauses were provided.")
+        if len(clauses) > self._MAX_CLAUSES:
+            return self._invalid_input_result(
+                f"Too many clauses: {len(clauses)} provided, "
+                f"maximum {self._MAX_CLAUSES}."
+            )
+        if any(
+            len(clause) > self._MAX_CLAUSE_LENGTH
+            for clause in clauses
+            if isinstance(clause, str)
+        ):
+            return self._invalid_input_result(
+                "Every clause must be at most "
+                f"{self._MAX_CLAUSE_LENGTH} characters."
+            )
         if any(not isinstance(clause, str) for clause in clauses):
             return self._invalid_input_result(
                 "Every clause must be a string."
@@ -163,7 +188,7 @@ class ClauseGuard:
         propositions = self._extract_propositions(clauses)
 
         # Check for conflicts using supported heuristics
-        conflicts = self._find_conflicts(propositions)
+        conflicts, conflicts_truncated = self._find_conflicts(propositions)
 
         # Count how many propositions had any extractable content.
         # If none of the clauses triggered a recognizable proposition, the
@@ -249,6 +274,12 @@ class ClauseGuard:
             conflict_msgs.append(
                 f"  - Clause {idx1 + 1} vs Clause {idx2 + 1}: {reason}"
             )
+        truncation_note = (
+            f" Conflict list truncated at {self._MAX_CONFLICTS} pairs — "
+            "additional conflicts may exist."
+            if conflicts_truncated
+            else ""
+        )
 
         return ClauseResult(
             consistent=False,
@@ -257,6 +288,7 @@ class ClauseGuard:
             message=(
                 f"WARNING: {len(conflicts)} potential conflict(s) detected:\n"
                 + "\n".join(conflict_msgs)
+                + truncation_note
             ),
             verification_trace=[
                 rule_step,
@@ -296,14 +328,21 @@ class ClauseGuard:
 
         return propositions
 
-    def _find_conflicts(self, propositions: List[dict]) -> List[Tuple[int, int, str]]:
-        """Find logical conflicts between clauses."""
+    def _find_conflicts(self, propositions: List[dict]) -> Tuple[List[Tuple[int, int, str]], bool]:
+        """Find logical conflicts between clauses.
+
+        Returns (conflicts, truncated): accumulation stops at _MAX_CONFLICTS
+        pairs to bound retained output (issue #75) — truncation is disclosed
+        to the caller, never silent.
+        """
         conflicts = []
 
         for i, prop1 in enumerate(propositions):
             for j, prop2 in enumerate(propositions):
                 if j <= i:
                     continue
+                if len(conflicts) >= self._MAX_CONFLICTS:
+                    return conflicts, True
 
                 conflict = self._check_termination_conflict(prop1, prop2)
                 if conflict:
@@ -319,7 +358,7 @@ class ClauseGuard:
                 if conflict:
                     conflicts.append((i, j, conflict))
 
-        return conflicts
+        return conflicts, False
 
     def _check_termination_conflict(self, prop1: dict, prop2: dict) -> Optional[str]:
         """Check for conflicting termination clauses."""
@@ -414,7 +453,7 @@ class ClauseGuard:
             rf"{context}\s*{day_expr}",
         ):
             match = re.search(pattern, text)
-            if match:
+            if match and len(match.group(1)) <= self._MAX_DAY_DIGITS:
                 return int(match.group(1))
 
         # Linked: a linker word binds the duration to the context even
@@ -426,7 +465,11 @@ class ClauseGuard:
         linked_re = re.compile(
             rf"{context}\s*(?:within|of|from|after|no\s+later\s+than|following)\s*{day_expr}"
         )
-        linked_values = {int(m.group(1)) for m in linked_re.finditer(text)}
+        linked_values = {
+            int(m.group(1))
+            for m in linked_re.finditer(text)
+            if len(m.group(1)) <= self._MAX_DAY_DIGITS
+        }
         if linked_values:
             return linked_values.pop() if len(linked_values) == 1 else None
 
@@ -450,7 +493,10 @@ class ClauseGuard:
                     # by the directional patterns above.
                     continue
                 if gap <= self._CONTEXT_WINDOW:
-                    candidates.append((gap, int(day_match.group(1))))
+                    day_digits = day_match.group(1)
+                    if len(day_digits) > self._MAX_DAY_DIGITS:
+                        continue
+                    candidates.append((gap, int(day_digits)))
         if not candidates:
             return None
         candidates.sort(key=lambda c: c[0])
