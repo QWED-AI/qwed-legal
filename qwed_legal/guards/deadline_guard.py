@@ -302,6 +302,12 @@ class DeadlineGuard:
             return None, False
 
         num_str, business_qualifier, unit = expression
+        # Fail-closed digit-length bound (#80): CPython caps int() string
+        # conversion at 4300 digits, so bound the run before coercion — the
+        # _MAX_TERM_QUANTITY range cap below cannot run until int() succeeds.
+        # No legal term needs >18 digits.
+        if len(num_str) > 18:
+            return None, False
         return self._compute_from_expression(
             start_date, int(num_str), bool(business_qualifier), unit
         )

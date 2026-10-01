@@ -80,6 +80,20 @@ class ClauseGuard:
     # Max chars between a context word and its day-expression for the
     # proximity fallback in _extract_days (issue #41).
     _CONTEXT_WINDOW = 40
+    # Day suffix used by the linear _day_occurrences scan: the tail of
+    # day_expr without the leading digit run, anchored at each run end.
+    _DAY_SUFFIX_RE = re.compile(r"\s*(?:calendar\s+|business\s+)?days?")
+    # Input-size bounds (issue #75): pairwise conflict work and retained
+    # output both scale as n^2, so cardinality and per-item length are
+    # capped before any analysis; the conflict accumulator is capped with
+    # truncation disclosed in the message.
+    _MAX_CLAUSES = 200
+    _MAX_CLAUSE_LENGTH = 4096
+    _MAX_CONFLICTS = 100
+    # Digit-run bound for day-count coercion (#80): CPython caps int()
+    # string conversion at 4300 digits, and no day count needs >18 digits.
+    # Over-long runs are skipped as uninterpretable (fail-closed downstream).
+    _MAX_DAY_DIGITS = 18
 
     def __init__(self):
         """Initialize ClauseGuard."""
@@ -124,20 +138,9 @@ class ClauseGuard:
         Returns:
             ClauseResult with consistency status and any detected conflicts
         """
-        if not isinstance(clauses, list):
-            return self._invalid_input_result(
-                "The clause input must be a list of strings."
-            )
-        if not clauses:
-            return self._invalid_input_result("No clauses were provided.")
-        if any(not isinstance(clause, str) for clause in clauses):
-            return self._invalid_input_result(
-                "Every clause must be a string."
-            )
-        if any(not clause.strip() for clause in clauses):
-            return self._invalid_input_result(
-                "Every clause must contain non-whitespace text."
-            )
+        refused = self._validate_clause_input(clauses)
+        if refused is not None:
+            return refused
         if len(clauses) < 2:
             return ClauseResult(
                 consistent=False,
@@ -163,7 +166,7 @@ class ClauseGuard:
         propositions = self._extract_propositions(clauses)
 
         # Check for conflicts using supported heuristics
-        conflicts = self._find_conflicts(propositions)
+        conflicts, conflicts_truncated = self._find_conflicts(propositions)
 
         # Count how many propositions had any extractable content.
         # If none of the clauses triggered a recognizable proposition, the
@@ -178,6 +181,7 @@ class ClauseGuard:
         )
         ambiguous = [p for p in propositions if p["ambiguous_termination_reference"]]
         has_ambiguous = len(ambiguous) > 0
+        has_unreadable = any(p["unreadable_day_value"] for p in propositions)
 
         rule_step = VerificationStep(
             step=STEP_RULE_IDENTIFIED,
@@ -190,7 +194,7 @@ class ClauseGuard:
         )
 
         if not conflicts:
-            if covered == 0 or has_ambiguous:
+            if covered == 0 or has_ambiguous or has_unreadable:
                 caveat = (
                     "No heuristic propositions were extracted from the provided clauses."
                     if covered == 0
@@ -198,7 +202,7 @@ class ClauseGuard:
                         "Some clauses contain recognised heuristic propositions, but "
                         "one or more clauses mention termination-related language "
                         "ambiguously rather than as an operative termination right "
-                        "or restriction."
+                        "or restriction, or hold day counts too long to interpret."
                     )
                 )
                 return ClauseResult(
@@ -217,7 +221,7 @@ class ClauseGuard:
                         VerificationStep(
                             step=STEP_AMBIGUITY_NOTED,
                             description="Coverage is limited or ambiguous — cannot confirm consistency.",
-                            inputs={"covered": covered, "has_ambiguous": has_ambiguous},
+                            inputs={"covered": covered, "has_ambiguous": has_ambiguous, "has_unreadable": has_unreadable},
                             output="UNSUPPORTED: limited heuristic coverage, not verified.",
                             evidence_type=EVIDENCE_UNSUPPORTED,
                         ),
@@ -249,6 +253,12 @@ class ClauseGuard:
             conflict_msgs.append(
                 f"  - Clause {idx1 + 1} vs Clause {idx2 + 1}: {reason}"
             )
+        truncation_note = (
+            f" Conflict list truncated at {self._MAX_CONFLICTS} pairs — "
+            "additional conflicts may exist."
+            if conflicts_truncated
+            else ""
+        )
 
         return ClauseResult(
             consistent=False,
@@ -257,6 +267,7 @@ class ClauseGuard:
             message=(
                 f"WARNING: {len(conflicts)} potential conflict(s) detected:\n"
                 + "\n".join(conflict_msgs)
+                + truncation_note
             ),
             verification_trace=[
                 rule_step,
@@ -285,6 +296,7 @@ class ClauseGuard:
                 ),
                 "termination_notice_days": self._extract_days(lower, "notice"),
                 "min_term_days": self._extract_days(lower, "before"),
+                "unreadable_day_value": self._has_unreadable_day_value(lower),
                 "is_exclusive": "exclusive" in lower or "only" in lower,
                 "is_prohibition": any(
                     w in lower for w in ["may not", "cannot", "neither", "shall not"]
@@ -296,30 +308,81 @@ class ClauseGuard:
 
         return propositions
 
-    def _find_conflicts(self, propositions: List[dict]) -> List[Tuple[int, int, str]]:
-        """Find logical conflicts between clauses."""
+    def _validate_clause_input(self, clauses: List[str]) -> Optional[ClauseResult]:
+        """Input-shape gates for check_consistency (Sonar: keeps the main
+        flow under the cognitive-complexity budget).
+
+        Returns a fail-closed result when the input cannot be analyzed,
+        else None to proceed. Messages preserved verbatim.
+        """
+        if not isinstance(clauses, list):
+            return self._invalid_input_result(
+                "The clause input must be a list of strings."
+            )
+        if not clauses:
+            return self._invalid_input_result("No clauses were provided.")
+        if len(clauses) > self._MAX_CLAUSES:
+            return self._invalid_input_result(
+                f"Too many clauses: {len(clauses)} provided, "
+                f"maximum {self._MAX_CLAUSES}."
+            )
+        if any(
+            len(clause) > self._MAX_CLAUSE_LENGTH
+            for clause in clauses
+            if isinstance(clause, str)
+        ):
+            return self._invalid_input_result(
+                "Every clause must be at most "
+                f"{self._MAX_CLAUSE_LENGTH} characters."
+            )
+        if any(not isinstance(clause, str) for clause in clauses):
+            return self._invalid_input_result(
+                "Every clause must be a string."
+            )
+        if any(not clause.strip() for clause in clauses):
+            return self._invalid_input_result(
+                "Every clause must contain non-whitespace text."
+            )
+        return None
+
+    def _find_conflicts(self, propositions: List[dict]) -> Tuple[List[Tuple[int, int, str]], bool]:
+        """Find logical conflicts between clauses.
+
+        Returns (conflicts, truncated): accumulation stops at _MAX_CONFLICTS
+        pairs to bound retained output (issue #75) — truncation is disclosed
+        to the caller, never silent.
+        """
         conflicts = []
 
         for i, prop1 in enumerate(propositions):
             for j, prop2 in enumerate(propositions):
                 if j <= i:
                     continue
+                if len(conflicts) >= self._MAX_CONFLICTS:
+                    return conflicts, True
+                conflict = self._check_pair_conflict(prop1, prop2, i, j)
+                if conflict is not None:
+                    conflicts.append(conflict)
 
-                conflict = self._check_termination_conflict(prop1, prop2)
-                if conflict:
-                    conflicts.append((i, j, conflict))
-                    continue
+        return conflicts, False
 
-                conflict = self._check_permission_prohibition_conflict(prop1, prop2)
-                if conflict:
-                    conflicts.append((i, j, conflict))
-                    continue
+    def _check_pair_conflict(
+        self, prop1: dict, prop2: dict, i: int, j: int
+    ) -> Optional[Tuple[int, int, str]]:
+        """Check one proposition pair; return the conflict tuple or None."""
+        conflict = self._check_termination_conflict(prop1, prop2)
+        if conflict:
+            return (i, j, conflict)
 
-                conflict = self._check_exclusivity_conflict(prop1, prop2)
-                if conflict:
-                    conflicts.append((i, j, conflict))
+        conflict = self._check_permission_prohibition_conflict(prop1, prop2)
+        if conflict:
+            return (i, j, conflict)
 
-        return conflicts
+        conflict = self._check_exclusivity_conflict(prop1, prop2)
+        if conflict:
+            return (i, j, conflict)
+
+        return None
 
     def _check_termination_conflict(self, prop1: dict, prop2: dict) -> Optional[str]:
         """Check for conflicting termination clauses."""
@@ -394,6 +457,39 @@ class ClauseGuard:
         ]
         return any(re.search(pattern, text) for pattern in operative_patterns)
 
+    def _has_unreadable_day_value(self, text: str) -> bool:
+        """True when the text holds a day-shaped digit run too long to coerce.
+
+        Mirrors the _MAX_DAY_DIGITS bound in _extract_days: such a run is
+        skipped there, so a proposition built without it may miss a real
+        comparison dimension (CodeRabbit review on PR #89). Scoped to
+        day-shaped runs — long account/contract numbers are not day values.
+        """
+        return any(
+            len(digits) > self._MAX_DAY_DIGITS
+            for _, _, digits in self._day_occurrences(text)
+        )
+
+    @staticmethod
+    def _day_occurrences(text: str) -> List[Tuple[int, int, str]]:
+        """(start, end, digits) of each day-shaped number in text.
+
+        Linear by construction (CodeRabbit review on PR #89): maximal
+        digit runs come from a single finditer pass and the day suffix is
+        checked anchored at each run end, so long runs are never rescanned
+        from successive positions (the nested-quantifier shape in day_expr
+        that backtracked). Spans cover digits through the day suffix,
+        exactly like day_expr matches, so gap math is unchanged; only the
+        search strategy differs.
+        """
+        occurrences = []
+        for run in re.finditer(r"\d+", text):
+            digits = run.group(0)
+            suffix = ClauseGuard._DAY_SUFFIX_RE.match(text, run.end())
+            if suffix is not None:
+                occurrences.append((run.start(), suffix.end(), digits))
+        return occurrences
+
     def _extract_days(self, text: str, context: str) -> Optional[int]:
         """Extract number of days from text near a context word.
 
@@ -405,6 +501,11 @@ class ClauseGuard:
         ClauseGuard is a heuristic guard — broader extraction is
         coverage, not proof (issue #41).
         """
+        # Linear fast path (Greptile P1 on PR #89): every day_expr match
+        # requires the literal "day", so its absence skips all three
+        # regex layers below instead of backtracking over digit runs.
+        if "day" not in text:
+            return None
         if context not in text:
             return None
 
@@ -414,7 +515,7 @@ class ClauseGuard:
             rf"{context}\s*{day_expr}",
         ):
             match = re.search(pattern, text)
-            if match:
+            if match and len(match.group(1)) <= self._MAX_DAY_DIGITS:
                 return int(match.group(1))
 
         # Linked: a linker word binds the duration to the context even
@@ -426,31 +527,26 @@ class ClauseGuard:
         linked_re = re.compile(
             rf"{context}\s*(?:within|of|from|after|no\s+later\s+than|following)\s*{day_expr}"
         )
-        linked_values = {int(m.group(1)) for m in linked_re.finditer(text)}
+        linked_values = {
+            int(m.group(1))
+            for m in linked_re.finditer(text)
+            if len(m.group(1)) <= self._MAX_DAY_DIGITS
+        }
         if linked_values:
             return linked_values.pop() if len(linked_values) == 1 else None
 
-        return self._nearest_days(text, context, day_expr)
+        return self._nearest_days(text, context)
 
-    def _nearest_days(self, text: str, context: str, day_expr: str) -> Optional[int]:
+    def _nearest_days(self, text: str, context: str) -> Optional[int]:
         """Proximity fallback: rank day-expression candidates by the gap
         between the context word and the expression (inclusive of
         _CONTEXT_WINDOW); a tie at the minimum gap between different
         values is ambiguous and stays unresolved."""
         context_re = re.compile(rf"\b{re.escape(context)}\b")
+        day_hits = self._day_occurrences(text)
         candidates = []
         for ctx_match in context_re.finditer(text):
-            for day_match in re.finditer(day_expr, text):
-                if ctx_match.end() <= day_match.start():
-                    gap = day_match.start() - ctx_match.end()
-                elif day_match.end() <= ctx_match.start():
-                    gap = ctx_match.start() - day_match.end()
-                else:
-                    # Overlapping spans: direct attachment already handled
-                    # by the directional patterns above.
-                    continue
-                if gap <= self._CONTEXT_WINDOW:
-                    candidates.append((gap, int(day_match.group(1))))
+            self._collect_gap_candidate(candidates, ctx_match, day_hits)
         if not candidates:
             return None
         candidates.sort(key=lambda c: c[0])
@@ -458,6 +554,26 @@ class ClauseGuard:
         if len(best_values) == 1:
             return best_values.pop()
         return None  # ambiguous association
+
+    def _collect_gap_candidate(self, candidates, ctx_match, day_hits) -> None:
+        """Append (gap, value) pairs for one context match.
+
+        Overlapping spans belong to the directional layer; over-long runs
+        are uninterpretable (fail-closed per _MAX_DAY_DIGITS).
+        """
+        ctx_start, ctx_end = ctx_match.start(), ctx_match.end()
+        for day_start, day_end, digits in day_hits:
+            if ctx_end <= day_start:
+                gap = day_start - ctx_end
+            elif day_end <= ctx_start:
+                gap = ctx_start - day_end
+            else:
+                continue
+            if gap > self._CONTEXT_WINDOW:
+                continue
+            if len(digits) > self._MAX_DAY_DIGITS:
+                continue
+            candidates.append((gap, int(digits)))
 
     def _extract_parties(self, text: str) -> set:
         """Extract party names from clause."""
