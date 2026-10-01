@@ -80,6 +80,9 @@ class ClauseGuard:
     # Max chars between a context word and its day-expression for the
     # proximity fallback in _extract_days (issue #41).
     _CONTEXT_WINDOW = 40
+    # Day suffix used by the linear _day_occurrences scan: the tail of
+    # day_expr without the leading digit run, anchored at each run end.
+    _DAY_SUFFIX_RE = re.compile(r"\s*(?:calendar\s+|business\s+)?days?")
     # Input-size bounds (issue #75): pairwise conflict work and retained
     # output both scale as n^2, so cardinality and per-item length are
     # capped before any analysis; the conflict accumulator is capped with
@@ -461,21 +464,31 @@ class ClauseGuard:
         skipped there, so a proposition built without it may miss a real
         comparison dimension (CodeRabbit review on PR #89). Scoped to
         day-shaped runs — long account/contract numbers are not day values.
-
-        The literal pre-check is load-bearing, not cosmetic: day_expr
-        nests (\d+) against optional whitespace/words, which backtracks
-        quadratically on long digit runs followed by spaces with no "days"
-        (Greptile P1 on PR #89 — 42 s for 200 such clauses). Every
-        day_expr match requires the literal "day", so its absence
-        short-circuits the whole search in linear C-speed time.
         """
-        if "day" not in text:
-            return False
-        day_expr = r"(\d+)\s*(?:calendar\s+|business\s+)?days?"
         return any(
-            len(match.group(1)) > self._MAX_DAY_DIGITS
-            for match in re.finditer(day_expr, text)
+            len(digits) > self._MAX_DAY_DIGITS
+            for _, _, digits in self._day_occurrences(text)
         )
+
+    @staticmethod
+    def _day_occurrences(text: str) -> List[Tuple[int, int, str]]:
+        """(start, end, digits) of each day-shaped number in text.
+
+        Linear by construction (CodeRabbit review on PR #89): maximal
+        digit runs come from a single finditer pass and the day suffix is
+        checked anchored at each run end, so long runs are never rescanned
+        from successive positions (the nested-quantifier shape in day_expr
+        that backtracked). Spans cover digits through the day suffix,
+        exactly like day_expr matches, so gap math is unchanged; only the
+        search strategy differs.
+        """
+        occurrences = []
+        for run in re.finditer(r"\d+", text):
+            digits = run.group(0)
+            suffix = ClauseGuard._DAY_SUFFIX_RE.match(text, run.end())
+            if suffix is not None:
+                occurrences.append((run.start(), suffix.end(), digits))
+        return occurrences
 
     def _extract_days(self, text: str, context: str) -> Optional[int]:
         """Extract number of days from text near a context word.
@@ -522,39 +535,18 @@ class ClauseGuard:
         if linked_values:
             return linked_values.pop() if len(linked_values) == 1 else None
 
-        return self._nearest_days(text, context, day_expr)
+        return self._nearest_days(text, context)
 
-    @staticmethod
-    def _span_gap(ctx_match, day_match) -> Optional[int]:
-        """Gap between a context span and a day-expression span, or None
-        when they overlap (direct attachment is handled elsewhere)."""
-        if ctx_match.end() <= day_match.start():
-            return day_match.start() - ctx_match.end()
-        if day_match.end() <= ctx_match.start():
-            return ctx_match.start() - day_match.end()
-        return None
-
-    def _nearest_days(self, text: str, context: str, day_expr: str) -> Optional[int]:
+    def _nearest_days(self, text: str, context: str) -> Optional[int]:
         """Proximity fallback: rank day-expression candidates by the gap
         between the context word and the expression (inclusive of
         _CONTEXT_WINDOW); a tie at the minimum gap between different
         values is ambiguous and stays unresolved."""
-        # Linear fast path, as in _extract_days: no "day" means the
-        # day_expr finditer below can only backtrack, never match.
-        if "day" not in text:
-            return None
         context_re = re.compile(rf"\b{re.escape(context)}\b")
+        day_hits = self._day_occurrences(text)
         candidates = []
         for ctx_match in context_re.finditer(text):
-            for day_match in re.finditer(day_expr, text):
-                gap = self._span_gap(ctx_match, day_match)
-                if gap is None:
-                    continue
-                if gap <= self._CONTEXT_WINDOW:
-                    day_digits = day_match.group(1)
-                    if len(day_digits) > self._MAX_DAY_DIGITS:
-                        continue
-                    candidates.append((gap, int(day_digits)))
+            self._collect_gap_candidate(candidates, ctx_match, day_hits)
         if not candidates:
             return None
         candidates.sort(key=lambda c: c[0])
@@ -562,6 +554,26 @@ class ClauseGuard:
         if len(best_values) == 1:
             return best_values.pop()
         return None  # ambiguous association
+
+    def _collect_gap_candidate(self, candidates, ctx_match, day_hits) -> None:
+        """Append (gap, value) pairs for one context match.
+
+        Overlapping spans belong to the directional layer; over-long runs
+        are uninterpretable (fail-closed per _MAX_DAY_DIGITS).
+        """
+        ctx_start, ctx_end = ctx_match.start(), ctx_match.end()
+        for day_start, day_end, digits in day_hits:
+            if ctx_end <= day_start:
+                gap = day_start - ctx_end
+            elif day_end <= ctx_start:
+                gap = ctx_start - day_end
+            else:
+                continue
+            if gap > self._CONTEXT_WINDOW:
+                continue
+            if len(digits) > self._MAX_DAY_DIGITS:
+                continue
+            candidates.append((gap, int(digits)))
 
     def _extract_parties(self, text: str) -> set:
         """Extract party names from clause."""
