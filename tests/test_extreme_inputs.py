@@ -411,3 +411,37 @@ class TestLongDigitRunsFailClosed:
     def test_normal_numbers_unaffected(self):
         result = DeadlineGuard().verify("2026-01-01", "30 days", "2026-01-31")
         assert result.verified is True
+
+    def test_masked_conflict_is_limited_not_consistent(self):
+        """CodeRabbit review on PR #89: an over-long day value that masks
+        a real min-term conflict must yield heuristic_pass_limited, not a
+        clean consistent — same treatment as ambiguous references."""
+        guard = ClauseGuard()
+        masked = guard.check_consistency(
+            [
+                "Seller may terminate with 30 days notice",
+                "The agreement shall continue before " + "9" * 19 + " days have passed",
+            ]
+        )
+        assert masked.consistent is False
+        assert masked.status == "heuristic_pass_limited"
+        control = guard.check_consistency(
+            [
+                "Seller may terminate with 30 days notice",
+                "The agreement shall continue before 90 days have passed",
+            ]
+        )
+        assert control.status == "contradiction"
+
+    def test_unrelated_long_runs_do_not_taint(self):
+        """Scoping control: a long digit run that is NOT day-shaped
+        (e.g. an account number) must not flip the verdict."""
+        guard = ClauseGuard()
+        result = guard.check_consistency(
+            [
+                "Seller may terminate with 30 days notice",
+                "Reference account 99999999999999999999, "
+                "the agreement shall continue before 90 days have passed",
+            ]
+        )
+        assert result.status == "contradiction"

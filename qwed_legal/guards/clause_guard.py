@@ -178,6 +178,7 @@ class ClauseGuard:
         )
         ambiguous = [p for p in propositions if p["ambiguous_termination_reference"]]
         has_ambiguous = len(ambiguous) > 0
+        has_unreadable = any(p["unreadable_day_value"] for p in propositions)
 
         rule_step = VerificationStep(
             step=STEP_RULE_IDENTIFIED,
@@ -190,7 +191,7 @@ class ClauseGuard:
         )
 
         if not conflicts:
-            if covered == 0 or has_ambiguous:
+            if covered == 0 or has_ambiguous or has_unreadable:
                 caveat = (
                     "No heuristic propositions were extracted from the provided clauses."
                     if covered == 0
@@ -198,7 +199,7 @@ class ClauseGuard:
                         "Some clauses contain recognised heuristic propositions, but "
                         "one or more clauses mention termination-related language "
                         "ambiguously rather than as an operative termination right "
-                        "or restriction."
+                        "or restriction, or hold day counts too long to interpret."
                     )
                 )
                 return ClauseResult(
@@ -217,7 +218,7 @@ class ClauseGuard:
                         VerificationStep(
                             step=STEP_AMBIGUITY_NOTED,
                             description="Coverage is limited or ambiguous — cannot confirm consistency.",
-                            inputs={"covered": covered, "has_ambiguous": has_ambiguous},
+                            inputs={"covered": covered, "has_ambiguous": has_ambiguous, "has_unreadable": has_unreadable},
                             output="UNSUPPORTED: limited heuristic coverage, not verified.",
                             evidence_type=EVIDENCE_UNSUPPORTED,
                         ),
@@ -292,6 +293,7 @@ class ClauseGuard:
                 ),
                 "termination_notice_days": self._extract_days(lower, "notice"),
                 "min_term_days": self._extract_days(lower, "before"),
+                "unreadable_day_value": self._has_unreadable_day_value(lower),
                 "is_exclusive": "exclusive" in lower or "only" in lower,
                 "is_prohibition": any(
                     w in lower for w in ["may not", "cannot", "neither", "shall not"]
@@ -451,6 +453,20 @@ class ClauseGuard:
             r"\b(?:may|can|shall|must)\s+(?:not\s+)?end\s+the\s+agreement\b",
         ]
         return any(re.search(pattern, text) for pattern in operative_patterns)
+
+    def _has_unreadable_day_value(self, text: str) -> bool:
+        """True when the text holds a day-shaped digit run too long to coerce.
+
+        Mirrors the _MAX_DAY_DIGITS bound in _extract_days: such a run is
+        skipped there, so a proposition built without it may miss a real
+        comparison dimension (CodeRabbit review on PR #89). Scoped to
+        day-shaped runs — long account/contract numbers are not day values.
+        """
+        day_expr = r"(\d+)\s*(?:calendar\s+|business\s+)?days?"
+        return any(
+            len(match.group(1)) > self._MAX_DAY_DIGITS
+            for match in re.finditer(day_expr, text)
+        )
 
     def _extract_days(self, text: str, context: str) -> Optional[int]:
         """Extract number of days from text near a context word.
