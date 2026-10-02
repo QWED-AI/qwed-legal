@@ -14,9 +14,11 @@ from dateutil.relativedelta import relativedelta
 import holidays
 
 from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
+from qwed_legal.dates import detect_order_ambiguity
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
+    STEP_AMBIGUITY_NOTED,
     STEP_FACT_DERIVED,
     STEP_CONCLUSION,
     EVIDENCE_DETERMINISTIC,
@@ -137,6 +139,61 @@ class DeadlineGuard:
                 ],
             )
         
+        # Fail-closed on order-ambiguous numeric dates (issue #55):
+        # "03/04/2026" verifies under month-first and refutes under day-first
+        # with no signal. Detect the dual reading and refuse to certify
+        # either one. Raw strings are preserved in the trace for auditability.
+        ambiguous_fields = [
+            label
+            for label, raw in (
+                ("signing_date", signing_date),
+                ("claimed_deadline", claimed_deadline),
+            )
+            if detect_order_ambiguity(raw)
+        ]
+        if ambiguous_fields:
+            return DeadlineResult(
+                verified=False,
+                signing_date=signing,
+                claimed_deadline=claimed,
+                computed_deadline=None,
+                term_parsed=term,
+                difference_days=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: {', '.join(ambiguous_fields)} "
+                    f"is order-ambiguous (reads differently month-first vs "
+                    f"day-first). Supply an ISO year-leading date "
+                    f"(YYYY-MM-DD) or an unambiguous written date."
+                ),
+                is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Checked date inputs for month/day order ambiguity.",
+                        inputs={
+                            "signing_date": signing_date,
+                            "claimed_deadline": claimed_deadline,
+                        },
+                        output=(
+                            "AMBIGUITY NOTED: order-ambiguous input(s): "
+                            + ", ".join(ambiguous_fields)
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                    VerificationStep(
+                        step=STEP_AMBIGUITY_NOTED,
+                        description="Refused to certify either reading of the ambiguous date.",
+                        inputs={
+                            "ambiguous_fields": ambiguous_fields,
+                            "signing_date": signing_date,
+                            "claimed_deadline": claimed_deadline,
+                        },
+                        output="UNSUPPORTED: order-ambiguous date — no deterministic reading.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                ],
+            )
+
         # Parse term and calculate deadline
         computed, used_business_days = self._calculate_deadline(signing, term)
         
