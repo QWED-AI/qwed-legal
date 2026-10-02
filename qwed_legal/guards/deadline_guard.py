@@ -467,9 +467,25 @@ class DeadlineGuard:
     ) -> int:
         """
         Calculate the number of business days between two dates.
-        
+
         Useful for verifying claims like "response required within 10 business days."
+
+        Raises:
+            ValueError: If either date is order-ambiguous (issue #55) —
+                a silently month-first count would be a wrong answer, so
+                the caller must disambiguate first.
         """
+        ambiguous = [
+            label
+            for label, raw in (("start_date", start_date), ("end_date", end_date))
+            if detect_order_ambiguity(raw)
+        ]
+        if ambiguous:
+            raise ValueError(
+                f"Order-ambiguous date(s): {', '.join(ambiguous)}. Supply an "
+                f"ISO year-leading date (YYYY-MM-DD) or an unambiguous "
+                f"written date."
+            )
         start = parse_date(start_date)
         end = parse_date(end_date)
         

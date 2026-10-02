@@ -73,6 +73,25 @@ class TestDeadlineOrderAmbiguity:
         assert result.verified is True
 
 
+class TestBusinessDaysCalculatorAmbiguity:
+    """CodeAnt review on #90: the calculator must not silently count."""
+
+    def setup_method(self):
+        self.guard = DeadlineGuard()
+
+    def test_ambiguous_inputs_raise(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="Order-ambiguous"):
+            self.guard.calculate_business_days_between("03/04/2026", "2026-05-01")
+        with pytest.raises(ValueError, match="Order-ambiguous"):
+            self.guard.calculate_business_days_between("2026-04-01", "04/03/2026")
+
+    def test_unambiguous_inputs_still_count(self):
+        count = self.guard.calculate_business_days_between("2026-04-01", "2026-04-08")
+        assert count == 5
+
+
 class TestStatuteOrderAmbiguity:
     """Issue #58: StatuteGuard must not certify WITHIN on ambiguity."""
 
