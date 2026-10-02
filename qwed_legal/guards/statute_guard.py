@@ -13,9 +13,11 @@ from dateutil.parser import parse as parse_date
 from dateutil.relativedelta import relativedelta
 
 from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
+from qwed_legal.dates import detect_order_ambiguity
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
+    STEP_AMBIGUITY_NOTED,
     STEP_FACT_DERIVED,
     STEP_CONCLUSION,
     EVIDENCE_DETERMINISTIC,
@@ -387,6 +389,64 @@ class StatuteOfLimitationsGuard:
                         output=f"UNSUPPORTED claim type: '{claim_type}' for '{jurisdiction}'.",
                         evidence_type=EVIDENCE_UNSUPPORTED,
                     )
+                ],
+            )
+
+        # Fail-closed on order-ambiguous numeric dates (issue #58): the
+        # same dual-parse helper as DeadlineGuard. The gate sits before any
+        # expiration computation, in computation-only mode as well — an
+        # ambiguous pair must not certify WITHIN with DETERMINISTIC labels.
+        ambiguous_fields = [
+            label
+            for label, raw in (
+                ("incident_date", incident_date),
+                ("filing_date", filing_date),
+            )
+            if detect_order_ambiguity(raw)
+        ]
+        if ambiguous_fields:
+            return StatuteResult(
+                verified=False,
+                claim_type=claim_type,
+                jurisdiction=jurisdiction,
+                incident_date=incident,
+                filing_date=filing,
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: {', '.join(ambiguous_fields)} "
+                    f"is order-ambiguous (reads differently month-first vs "
+                    f"day-first). Supply an ISO year-leading date "
+                    f"(YYYY-MM-DD) or an unambiguous written date."
+                ),
+                jurisdiction_matched=True,
+                claim_type_matched=True,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Checked date inputs for month/day order ambiguity.",
+                        inputs={
+                            "incident_date": incident_date,
+                            "filing_date": filing_date,
+                        },
+                        output=(
+                            "AMBIGUITY NOTED: order-ambiguous input(s): "
+                            + ", ".join(ambiguous_fields)
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                    VerificationStep(
+                        step=STEP_AMBIGUITY_NOTED,
+                        description="Refused to compute from either reading of the ambiguous date.",
+                        inputs={
+                            "ambiguous_fields": ambiguous_fields,
+                            "incident_date": incident_date,
+                            "filing_date": filing_date,
+                        },
+                        output="UNSUPPORTED: order-ambiguous date — no deterministic reading.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
                 ],
             )
 
