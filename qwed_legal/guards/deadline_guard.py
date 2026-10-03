@@ -14,7 +14,7 @@ from dateutil.relativedelta import relativedelta
 import holidays
 
 from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
-from qwed_legal.dates import detect_order_ambiguity
+from qwed_legal.dates import detect_order_ambiguity, detect_incomplete_date
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -189,6 +189,62 @@ class DeadlineGuard:
                             "claimed_deadline": claimed_deadline,
                         },
                         output="UNSUPPORTED: order-ambiguous date — no deterministic reading.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                ],
+            )
+
+        # Fail-closed on wall-clock-completed partial dates (issue #57):
+        # "March 2024" or "Friday" silently fill missing components from
+        # the run day, so identical inputs verify opposite verdicts on
+        # different days. Refuse partial dates outright.
+        incomplete_fields = [
+            label
+            for label, raw in (
+                ("signing_date", signing_date),
+                ("claimed_deadline", claimed_deadline),
+            )
+            if detect_incomplete_date(raw)
+        ]
+        if incomplete_fields:
+            return DeadlineResult(
+                verified=False,
+                signing_date=None,
+                claimed_deadline=None,
+                computed_deadline=None,
+                term_parsed=term,
+                difference_days=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: {', '.join(incomplete_fields)} "
+                    f"is a partial date — missing components would be "
+                    f"completed from the system clock, making the verdict "
+                    f"a function of the run day. Supply a complete date "
+                    f"(YYYY-MM-DD)."
+                ),
+                is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Checked date inputs for wall-clock completion.",
+                        inputs={
+                            "signing_date": signing_date,
+                            "claimed_deadline": claimed_deadline,
+                        },
+                        output=(
+                            "AMBIGUITY NOTED: partial date(s): "
+                            + ", ".join(incomplete_fields)
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                    VerificationStep(
+                        step=STEP_AMBIGUITY_NOTED,
+                        description="Refused to complete partial dates from the system clock.",
+                        inputs={
+                            "incomplete_fields": incomplete_fields,
+                            "signing_date": signing_date,
+                            "claimed_deadline": claimed_deadline,
+                        },
+                        output="UNSUPPORTED: partial date — components would come from the run day.",
                         evidence_type=EVIDENCE_UNSUPPORTED,
                     ),
                 ],

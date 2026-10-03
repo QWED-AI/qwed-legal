@@ -13,7 +13,7 @@ from dateutil.parser import parse as parse_date
 from dateutil.relativedelta import relativedelta
 
 from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
-from qwed_legal.dates import detect_order_ambiguity
+from qwed_legal.dates import detect_order_ambiguity, detect_incomplete_date
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -445,6 +445,65 @@ class StatuteOfLimitationsGuard:
                             "filing_date": filing_date,
                         },
                         output="UNSUPPORTED: order-ambiguous date — no deterministic reading.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                ],
+            )
+
+        # Fail-closed on wall-clock-completed partial dates (issue #59):
+        # month-only incident dates make WITHIN/EXPIRED a function of the
+        # run day. Parsed datetimes are clock-contaminated, so they are
+        # recorded as None — raw strings stay in the trace.
+        incomplete_fields = [
+            label
+            for label, raw in (
+                ("incident_date", incident_date),
+                ("filing_date", filing_date),
+            )
+            if detect_incomplete_date(raw)
+        ]
+        if incomplete_fields:
+            return StatuteResult(
+                verified=False,
+                claim_type=claim_type,
+                jurisdiction=jurisdiction,
+                incident_date=None,
+                filing_date=None,
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: {', '.join(incomplete_fields)} "
+                    f"is a partial date — missing components would be "
+                    f"completed from the system clock, making the verdict "
+                    f"a function of the run day. Supply a complete date "
+                    f"(YYYY-MM-DD)."
+                ),
+                jurisdiction_matched=True,
+                claim_type_matched=True,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Checked date inputs for wall-clock completion.",
+                        inputs={
+                            "incident_date": incident_date,
+                            "filing_date": filing_date,
+                        },
+                        output=(
+                            "AMBIGUITY NOTED: partial date(s): "
+                            + ", ".join(incomplete_fields)
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                    VerificationStep(
+                        step=STEP_AMBIGUITY_NOTED,
+                        description="Refused to complete partial dates from the system clock.",
+                        inputs={
+                            "incomplete_fields": incomplete_fields,
+                            "incident_date": incident_date,
+                            "filing_date": filing_date,
+                        },
+                        output="UNSUPPORTED: partial date — components would come from the run day.",
                         evidence_type=EVIDENCE_UNSUPPORTED,
                     ),
                 ],
