@@ -189,6 +189,30 @@ class TestLookupPathsOmitClockFilledDates:
         assert result.incident_date is not None
         assert result.filing_date is not None
 
+    def test_ambiguous_dates_omitted_on_lookup_rejection(self):
+        # Sentry review on #91: an ambiguous-but-complete date with an
+        # unknown jurisdiction must not record its month-first reading.
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="MARS",
+            incident_date="04/03/2026",
+            filing_date="2026-04-01",
+        )
+        assert result.jurisdiction_matched is False
+        assert result.incident_date is None
+        assert result.filing_date is not None
+
+    def test_ambiguous_dates_omitted_on_claim_type_rejection(self):
+        result = self.guard.verify(
+            claim_type="quantum_litigation",
+            jurisdiction="California",
+            incident_date="2024-03-15",
+            filing_date="04/03/2026",
+        )
+        assert result.claim_type_matched is False
+        assert result.incident_date is not None
+        assert result.filing_date is None
+
     def test_yearless_leap_day_never_verifies(self):
         result = self.guard.verify(
             claim_type="breach_of_contract",

@@ -13,7 +13,7 @@ from dateutil.parser import parse as parse_date
 from dateutil.relativedelta import relativedelta
 
 from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
-from qwed_legal.dates import detect_order_ambiguity, detect_incomplete_date
+from qwed_legal.dates import detect_order_ambiguity, detect_incomplete_date, recorded_date
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -658,18 +658,16 @@ class StatuteOfLimitationsGuard:
 
         # Fail-closed: exact jurisdiction match only (no partial matching)
         if jurisdiction_upper not in self.LIMITATIONS:
-            # Clock-filled values must not leak into results even on this
-            # early path: omit parsed dates when the raw input is partial.
+            # Assumed readings must not leak into results even on this
+            # early path: omit parsed dates when the raw input is partial
+            # or order-ambiguous. The date gates downstream would reject
+            # these inputs; the lookup rejection simply runs first.
             return None, StatuteResult(
                 verified=False,
                 claim_type=claim_type,
                 jurisdiction=jurisdiction,
-                incident_date=(
-                    None if detect_incomplete_date(incident_date) else incident
-                ),
-                filing_date=(
-                    None if detect_incomplete_date(filing_date) else filing
-                ),
+                incident_date=recorded_date(incident_date, incident),
+                filing_date=recorded_date(filing_date, filing),
                 limitation_period_years=None,
                 expiration_date=None,
                 days_remaining=None,
@@ -705,12 +703,8 @@ class StatuteOfLimitationsGuard:
                 verified=False,
                 claim_type=claim_type,
                 jurisdiction=jurisdiction,
-                incident_date=(
-                    None if detect_incomplete_date(incident_date) else incident
-                ),
-                filing_date=(
-                    None if detect_incomplete_date(filing_date) else filing
-                ),
+                incident_date=recorded_date(incident_date, incident),
+                filing_date=recorded_date(filing_date, filing),
                 limitation_period_years=None,
                 expiration_date=None,
                 days_remaining=None,

@@ -10,7 +10,9 @@ of certifying one reading.
 """
 
 import re
+import re
 from datetime import datetime
+from typing import Optional
 
 from dateutil.parser import parse as parse_date
 
@@ -86,3 +88,15 @@ def detect_incomplete_date(raw: str) -> bool:
         under_b.month,
         under_b.day,
     )
+
+
+def recorded_date(raw: str, parsed: Optional[datetime]) -> Optional[datetime]:
+    """Parsed value safe to expose in a result, or None.
+
+    Returns None when the raw input is partial or order-ambiguous, so
+    assumed readings (month-first) and clock-filled values never leak
+    into results on early rejection paths. Raw strings stay in the trace.
+    """
+    if detect_incomplete_date(raw) or detect_order_ambiguity(raw):
+        return None
+    return parsed
