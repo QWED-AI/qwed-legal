@@ -254,9 +254,46 @@ class DeadlineGuard:
                 ],
             )
 
+        # Fail-closed on event-anchored terms (issue #54): a term like
+        # "within 15 days after receipt of written notice" carries a valid
+        # quantity/unit pair but anchors it to an event, not the signing
+        # date. Computing from signing certifies deadlines anchored to an
+        # unknowable date (chosen-date forgery: any target is certifiable).
+        # Runs BEFORE date arithmetic so rejected business-day terms never
+        # iterate the holiday calendar.
+        anchor = self._event_anchor(term.lower())
+        if anchor:
+            return DeadlineResult(
+                verified=False,
+                signing_date=signing,
+                claimed_deadline=claimed,
+                computed_deadline=None,
+                term_parsed=term,
+                difference_days=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: Term '{term}' is anchored to an "
+                    f"event ('{anchor}'), not to the "
+                    f"signing date. The real deadline is unknowable from "
+                    f"these inputs — supply the anchor event's date."
+                ),
+                is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Checked term for event anchors before computing from signing date.",
+                        inputs={"term": term},
+                        output=(
+                            "UNSUPPORTED: event-anchored term — anchor "
+                            f"'{anchor}' has no supplied date."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
         # Parse term and calculate deadline
         computed, used_business_days = self._calculate_deadline(signing, term)
-        
+
         # Fail-closed: if the term is ambiguous, do not verify
         if computed is None:
             return DeadlineResult(
@@ -291,8 +328,44 @@ class DeadlineGuard:
                 ],
             )
 
-        # Check difference
-        diff = abs((claimed - computed).days)
+        # Fail-closed on mixed timezone-aware/naive inputs (statute
+        # parity): the frames are incomparable, so even date-granularity
+        # comparison would silently mix calendar days.
+        if (claimed.tzinfo is None) != (computed.tzinfo is None):
+            return DeadlineResult(
+                verified=False,
+                signing_date=signing,
+                claimed_deadline=claimed,
+                computed_deadline=None,
+                term_parsed=term,
+                difference_days=None,
+                message=(
+                    "⚠️ UNVERIFIABLE: Mixed timezone inputs — one date is "
+                    "timezone-aware and the other is timezone-naive. "
+                    "Supply both dates with or both without a timezone."
+                ),
+                is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Validated timezone consistency between signing and claimed dates.",
+                        inputs={
+                            "signing_date": str(signing),
+                            "claimed_deadline": str(claimed),
+                        },
+                        output=(
+                            "UNSUPPORTED: mixed timezone-aware and "
+                            "timezone-naive inputs — cannot compare."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
+        # Compare at the declared date granularity (issue #56); see
+        # _comparison_days for the timezone rules.
+        claimed_day, computed_day = self._comparison_days(claimed, computed)
+        diff = abs((claimed_day - computed_day).days)
         verified = diff <= tolerance_days
 
         # QWED: if business days were used but the requested holiday calendar
@@ -314,12 +387,7 @@ class DeadlineGuard:
         elif verified:
             message = "✅ VERIFIED: Deadline calculation is correct."
         else:
-            message = (
-                f"❌ ERROR: Deadline mismatch. "
-                f"Expected {computed.strftime('%Y-%m-%d')}, "
-                f"but LLM claimed {claimed.strftime('%Y-%m-%d')}. "
-                f"Difference: {diff} days."
-            )
+            message = self._mismatch_message(claimed, claimed_day, computed_day, diff)
 
         if calendar_unreliable:
             conclusion_output = "UNSUPPORTED: business-day calendar unavailable"
@@ -397,11 +465,105 @@ class DeadlineGuard:
     )
     # Any numeric token in the term, integer or decimal ("4.2", "1,000").
     _ANY_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+    # Event anchors that re-anchor a term away from the signing date
+    # (issue #54). Only a preposition-governed event noun counts as an
+    # anchor ("after receipt", "within 15 days of payment") — a bare
+    # mention ("30 days from signing to deliver notice") leaves the
+    # signing anchor intact. Up to two intervening words allow adjectives
+    # ("after written notice"); the "the date (the|of)" alternative covers
+    # phrasings like "after the date the notice is received" without
+    # widening the general gap (which would catch signing-anchored text).
+    # "of" only counts directly after a time unit ("30 days of payment",
+    # "within 30 days of delivery"): a bare "of" also matches descriptive
+    # phrases ("notice of termination", "provision of services") where the
+    # first noun is the obligation, not a temporal anchor. Deliberately
+    # excludes signing-adjacent nouns ("signing", "execution") and generic
+    # "event" ("in the event of" is conditional, not a temporal anchor).
+    _EVENT_ANCHOR_RE = re.compile(
+        r"\b(?:after|following|upon|from|within|(?:day|days|week|weeks|month|months|year|years)\s+of)\s+"
+        r"(?:(?:[a-z]+\s+){0,2}?|the\s+date\s+(?:the\s+|of\s+))"
+        r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
+        r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?)\b"
+    )
+    # Signing anchors ("from signing", "date of signing"): a signing anchor
+    # ahead of an event anchor keeps the signing computation only when the
+    # event is conditional wording ("conditioned upon acceptance"). A plain
+    # later event anchor ("or after delivery", "period begins upon
+    # receipt") re-anchors the period and fails closed.
+    _SIGNING_ANCHOR_RE = re.compile(
+        r"\b(?:after|following|upon|from|within|of)\s+(?:the\s+)?(?:signing|execution)\b"
+    )
+    # Conditional-event wording names an event without anchoring the
+    # period to it ("conditioned upon acceptance", "subject to approval"):
+    # such phrases are conditions on the obligation, not temporal anchors.
+    # Checked against the text preceding each event match.
+    _CONDITIONAL_EVENT_RE = re.compile(
+        r"\b(?:(?:conditioned|conditional|contingent)\s+(?:up)?on|subject\s+to)\s+(?:[a-z]+\s+){0,2}$"
+    )
+
+    @staticmethod
+    def _event_anchor(term_lower: str) -> "Optional[str]":
+        """Event noun anchoring the term's period, or None.
+
+        Scans every event match in order: a match preceded by a signing
+        anchor is skipped only when conditional wording governs it
+        ("conditioned upon acceptance" — a condition, not an anchor).
+        A plain later event anchor ("or after delivery, whichever is
+        later", "period begins upon receipt") re-anchors the period and
+        fails closed. Returns the matched event noun for messaging.
+        """
+        signing_match = DeadlineGuard._SIGNING_ANCHOR_RE.search(term_lower)
+        for event_match in DeadlineGuard._EVENT_ANCHOR_RE.finditer(term_lower):
+            prefix = term_lower[: event_match.start(1)]
+            if (
+                signing_match is not None
+                and signing_match.start() < event_match.start()
+                and DeadlineGuard._CONDITIONAL_EVENT_RE.search(prefix)
+            ):
+                continue
+            return event_match.group(1)
+        return None
 
     # No legal deadline spans this magnitude (~274 years). Bounding the
     # parsed quantity bounds both date arithmetic and the business-day
     # iteration loop (issue #42: unhandled OverflowError / unbounded loop).
     _MAX_TERM_QUANTITY = 100_000
+
+    @staticmethod
+    def _mismatch_message(claimed: datetime, claimed_day, computed_day, diff: int) -> str:
+        """Mismatch text that cannot contradict its own difference.
+
+        Reports the compared calendar days (never identical dates beside
+        a non-zero difference). When conversion moved the claim across
+        midnight, both spellings are shown so the caller's original claim
+        still matches what wrappers display beside this message.
+        """
+        claimed_raw = claimed.strftime("%Y-%m-%d")
+        claimed_shown = claimed_day.isoformat()
+        if claimed_shown != claimed_raw:
+            claimed_shown = (
+                f"{claimed_raw} (={claimed_shown} in the deadline's timezone)"
+            )
+        return (
+            f"❌ ERROR: Deadline mismatch. "
+            f"Expected {computed_day.isoformat()}, "
+            f"but LLM claimed {claimed_shown}. "
+            f"Difference: {diff} days."
+        )
+
+    @staticmethod
+    def _comparison_days(claimed: datetime, computed: datetime):
+        """Calendar days for date-granularity comparison (issue #56).
+
+        Both-aware inputs compare in the computed deadline's timezone, so
+        the same moment in different offsets is not a false mismatch while
+        the deadline's calendar-day meaning is preserved. Anything else
+        compares naive calendar dates (.date() never subtracts datetimes,
+        so mixed aware/naive inputs cannot raise here).
+        """
+        if claimed.tzinfo is not None and computed.tzinfo is not None:
+            return claimed.astimezone(computed.tzinfo).date(), computed.date()
+        return claimed.date(), computed.date()
 
     def _calculate_deadline(
         self, start_date: datetime, term: str
