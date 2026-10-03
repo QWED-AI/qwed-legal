@@ -256,6 +256,41 @@ class DeadlineGuard:
 
         # Parse term and calculate deadline
         computed, used_business_days = self._calculate_deadline(signing, term)
+
+        # Fail-closed on event-anchored terms (issue #54): a term like
+        # "within 15 days after receipt of written notice" carries a valid
+        # quantity/unit pair but anchors it to an event, not the signing
+        # date. Computing from signing certifies deadlines anchored to an
+        # unknowable date (chosen-date forgery: any target is certifiable).
+        anchor_match = self._EVENT_ANCHOR_RE.search(term.lower())
+        if anchor_match:
+            return DeadlineResult(
+                verified=False,
+                signing_date=signing,
+                claimed_deadline=claimed,
+                computed_deadline=None,
+                term_parsed=term,
+                difference_days=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: Term '{term}' is anchored to an "
+                    f"event ('{anchor_match.group(1)}'), not to the "
+                    f"signing date. The real deadline is unknowable from "
+                    f"these inputs — supply the anchor event's date."
+                ),
+                is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Checked term for event anchors before computing from signing date.",
+                        inputs={"term": term},
+                        output=(
+                            "UNSUPPORTED: event-anchored term — anchor "
+                            f"'{anchor_match.group(1)}' has no supplied date."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
         
         # Fail-closed: if the term is ambiguous, do not verify
         if computed is None:
@@ -291,8 +326,12 @@ class DeadlineGuard:
                 ],
             )
 
-        # Check difference
-        diff = abs((claimed - computed).days)
+        # Compare at the declared date granularity (issue #56): datetimes
+        # compare as dates, so a claim 23h59m late is a 1-day mismatch
+        # instead of flooring to 0 (verified exact), and sub-daily noise
+        # on the same date is not a mismatch. Timezone-aware inputs are
+        # safe here — .date() compares without subtracting datetimes.
+        diff = abs((claimed.date() - computed.date()).days)
         verified = diff <= tolerance_days
 
         # QWED: if business days were used but the requested holiday calendar
@@ -397,6 +436,16 @@ class DeadlineGuard:
     )
     # Any numeric token in the term, integer or decimal ("4.2", "1,000").
     _ANY_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+    # Event anchors that re-anchor a term away from the signing date
+    # (issue #54). A term carrying one of these nouns cannot be computed
+    # from signing — the real deadline needs the anchor event's date.
+    # Deliberately excludes signing-adjacent nouns ("signing",
+    # "execution"): those keep the signing anchor. "event" itself is
+    # excluded as too generic ("in the event of" is conditional, not a
+    # temporal anchor).
+    _EVENT_ANCHOR_RE = re.compile(
+        r"\b(receipt|notice|delivery|occurrence|demand|invoice|breach|termination)\b"
+    )
 
     # No legal deadline spans this magnitude (~274 years). Bounding the
     # parsed quantity bounds both date arithmetic and the business-day
