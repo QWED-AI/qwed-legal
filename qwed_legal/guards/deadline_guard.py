@@ -14,7 +14,7 @@ from dateutil.relativedelta import relativedelta
 import holidays
 
 from qwed_legal.diagnostics import LegalDiagnosticsMixin, LegalDiagnosticStatus
-from qwed_legal.dates import detect_order_ambiguity
+from qwed_legal.dates import detect_order_ambiguity, detect_incomplete_date
 from qwed_legal.models import (
     VerificationStep,
     STEP_RULE_IDENTIFIED,
@@ -152,10 +152,14 @@ class DeadlineGuard:
             if detect_order_ambiguity(raw)
         ]
         if ambiguous_fields:
+            # Parsed datetimes are recorded as None: a yearless input like
+            # "03/04" reaches this gate with its year from the clock, and
+            # returning it would show different dates on different runs.
+            # Raw strings stay in the trace below.
             return DeadlineResult(
                 verified=False,
-                signing_date=signing,
-                claimed_deadline=claimed,
+                signing_date=None,
+                claimed_deadline=None,
                 computed_deadline=None,
                 term_parsed=term,
                 difference_days=None,
@@ -189,6 +193,62 @@ class DeadlineGuard:
                             "claimed_deadline": claimed_deadline,
                         },
                         output="UNSUPPORTED: order-ambiguous date — no deterministic reading.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                ],
+            )
+
+        # Fail-closed on wall-clock-completed partial dates (issue #57):
+        # "March 2024" or "Friday" silently fill missing components from
+        # the run day, so identical inputs verify opposite verdicts on
+        # different days. Refuse partial dates outright.
+        incomplete_fields = [
+            label
+            for label, raw in (
+                ("signing_date", signing_date),
+                ("claimed_deadline", claimed_deadline),
+            )
+            if detect_incomplete_date(raw)
+        ]
+        if incomplete_fields:
+            return DeadlineResult(
+                verified=False,
+                signing_date=None,
+                claimed_deadline=None,
+                computed_deadline=None,
+                term_parsed=term,
+                difference_days=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: {', '.join(incomplete_fields)} "
+                    f"is a partial date — missing components would be "
+                    f"completed from the system clock, making the verdict "
+                    f"a function of the run day. Supply a complete date "
+                    f"(YYYY-MM-DD)."
+                ),
+                is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Checked date inputs for wall-clock completion.",
+                        inputs={
+                            "signing_date": signing_date,
+                            "claimed_deadline": claimed_deadline,
+                        },
+                        output=(
+                            "AMBIGUITY NOTED: partial date(s): "
+                            + ", ".join(incomplete_fields)
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    ),
+                    VerificationStep(
+                        step=STEP_AMBIGUITY_NOTED,
+                        description="Refused to complete partial dates from the system clock.",
+                        inputs={
+                            "incomplete_fields": incomplete_fields,
+                            "signing_date": signing_date,
+                            "claimed_deadline": claimed_deadline,
+                        },
+                        output="UNSUPPORTED: partial date — components would come from the run day.",
                         evidence_type=EVIDENCE_UNSUPPORTED,
                     ),
                 ],
@@ -471,9 +531,10 @@ class DeadlineGuard:
         Useful for verifying claims like "response required within 10 business days."
 
         Raises:
-            ValueError: If either date is order-ambiguous (issue #55) —
-                a silently month-first count would be a wrong answer, so
-                the caller must disambiguate first.
+            ValueError: If either date is order-ambiguous or partial
+                (issues #55, #57) — a silently month-first or
+                clock-completed count would be a wrong answer, so the
+                caller must disambiguate first.
         """
         ambiguous = [
             label
@@ -485,6 +546,16 @@ class DeadlineGuard:
                 f"Order-ambiguous date(s): {', '.join(ambiguous)}. Supply an "
                 f"ISO year-leading date (YYYY-MM-DD) or an unambiguous "
                 f"written date."
+            )
+        incomplete = [
+            label
+            for label, raw in (("start_date", start_date), ("end_date", end_date))
+            if detect_incomplete_date(raw)
+        ]
+        if incomplete:
+            raise ValueError(
+                f"Partial date(s): {', '.join(incomplete)}. Supply a "
+                f"complete date (YYYY-MM-DD)."
             )
         start = parse_date(start_date)
         end = parse_date(end_date)

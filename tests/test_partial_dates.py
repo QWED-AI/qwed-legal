@@ -1,0 +1,236 @@
+"""Partial-date fail-closed enforcement (issues #57, #59).
+
+dateutil fills missing components from the wall clock ("March 2024" takes
+today's day-of-month), so identical inputs verify opposite verdicts on
+different days. Both guards share one dual-sentinel helper
+(qwed_legal.dates.detect_incomplete_date) and refuse partial dates before
+any computation. The fail-closed path reads no clock, so nightly
+re-verification is stable by construction. Parsed datetimes on the
+rejection path are recorded as None — clock-contaminated values must not
+be laundered into the result; raw strings stay in the trace.
+"""
+
+from qwed_legal import DeadlineGuard, StatuteOfLimitationsGuard
+from qwed_legal.dates import detect_incomplete_date
+from qwed_legal.diagnostics import LegalDiagnosticStatus
+from qwed_legal.models import STEP_AMBIGUITY_NOTED
+
+
+class TestDetectIncompleteDate:
+    """Shared helper unit tests."""
+
+    def test_partial_dates_detected(self):
+        assert detect_incomplete_date("March 2024") is True
+        assert detect_incomplete_date("April") is True
+        assert detect_incomplete_date("2026") is True
+        assert detect_incomplete_date("Friday") is True
+        assert detect_incomplete_date("23:00") is True
+
+    def test_all_weekday_names_detected(self):
+        # Sentinels fall in different Mon-Sun weeks so every weekday
+        # resolves differently; same-week sentinels would miss six of seven.
+        for day in (
+            "Monday", "Tuesday", "Wednesday", "Thursday",
+            "Friday", "Saturday", "Sunday",
+        ):
+            assert detect_incomplete_date(day) is True, day
+
+    def test_complete_dates_pass(self):
+        assert detect_incomplete_date("2026-04-03") is False
+        assert detect_incomplete_date("03/04/2026") is False
+        assert detect_incomplete_date("March 4, 2026") is False
+        assert detect_incomplete_date("2026-01-15 23:00") is False
+
+    def test_unparseable_and_empty_pass_through(self):
+        # Unparseable inputs fail closed downstream at parse time, not here.
+        assert detect_incomplete_date("not a date") is False
+        assert detect_incomplete_date("") is False
+
+    def test_yearless_leap_day_is_incomplete(self):
+        # Parses under the leap sentinel (2000) but not the non-leap one
+        # (1999) — the year would come from the run-year clock.
+        assert detect_incomplete_date("February 29") is True
+        assert detect_incomplete_date("Feb 29") is True
+
+    def test_explicit_leap_dates_are_complete(self):
+        assert detect_incomplete_date("February 29, 2024") is False
+
+
+class TestDeadlinePartialDates:
+    """Issue #57 (deadline prong)."""
+
+    def setup_method(self):
+        self.guard = DeadlineGuard()
+
+    def test_month_only_signing_fails_closed(self):
+        result = self.guard.verify("March 2024", "30 days", "2026-04-15")
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.to_diagnostic().status is LegalDiagnosticStatus.UNVERIFIABLE
+
+    def test_contaminated_datetimes_not_recorded(self):
+        result = self.guard.verify("March 2024", "30 days", "2026-04-15")
+        assert result.signing_date is None
+        steps = [s.step for s in result.verification_trace]
+        assert STEP_AMBIGUITY_NOTED in steps
+
+    def test_relative_weekday_fails_closed(self):
+        result = self.guard.verify("Friday", "30 days", "2026-04-15")
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_complete_datetime_with_time_still_verifies(self):
+        result = self.guard.verify("2026-01-15 23:00", "30 days", "2026-02-14 23:00")
+        assert result.verified is True
+
+    def test_iso_dates_still_verify(self):
+        result = self.guard.verify("2026-01-01", "30 days", "2026-01-31")
+        assert result.verified is True
+
+    def test_yearless_leap_day_never_verifies(self):
+        # In a leap run-year the completeness gate fires; otherwise the
+        # parse-failure path does. Either way: never verified, never computed.
+        result = self.guard.verify("February 29", "30 days", "2026-03-30")
+        assert result.verified is False
+        assert result.is_computable is False
+
+
+class TestStatutePartialDates:
+    """Issue #59: statute-side acceptance, stable across run days."""
+
+    def setup_method(self):
+        self.guard = StatuteOfLimitationsGuard()
+
+    def test_month_only_intake_never_verifies(self):
+        # Canonical #59 case: must not be ACCEPT on some days and DECLINE
+        # on others — UNVERIFIABLE on every run day by construction.
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="March 2024",
+            filing_date="2026-04-01",
+            claimed_within_period=True,
+        )
+        assert result.verified is False
+        assert result.status == "UNVERIFIABLE"
+        assert result.to_diagnostic().status is LegalDiagnosticStatus.UNVERIFIABLE
+
+    def test_computation_only_mode_is_gated_too(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="March 2024",
+            filing_date="2026-04-01",
+        )
+        assert result.status == "UNVERIFIABLE"
+        assert result.expiration_date is None
+
+    def test_no_deterministic_labels_on_partial(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="March 2024",
+            filing_date="2026-04-01",
+            claimed_within_period=True,
+        )
+        assert all(s.evidence_type != "DETERMINISTIC" for s in result.verification_trace)
+
+    def test_iso_dates_still_verify(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="2024-01-15",
+            filing_date="2026-01-10",
+            claimed_within_period=True,
+        )
+        assert result.verified is True
+        assert result.status == "CLAIM_VERIFIED"
+
+
+class TestLookupPathsOmitClockFilledDates:
+    """CodeRabbit review on #91: lookup rejections run before the gates."""
+
+    def setup_method(self):
+        self.guard = StatuteOfLimitationsGuard()
+
+    def test_unknown_jurisdiction_omits_partial_dates(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="MARS",
+            incident_date="March 2024",
+            filing_date="2026-04-01",
+        )
+        assert result.jurisdiction_matched is False
+        assert result.incident_date is None
+        assert result.filing_date is not None
+        trace_inputs = result.verification_trace[0].inputs
+        assert trace_inputs["incident_date"] == "March 2024"
+        assert trace_inputs["filing_date"] == "2026-04-01"
+
+    def test_unknown_claim_type_omits_partial_dates(self):
+        result = self.guard.verify(
+            claim_type="quantum_litigation",
+            jurisdiction="California",
+            incident_date="March 2024",
+            filing_date="2026-04-01",
+        )
+        assert result.claim_type_matched is False
+        assert result.incident_date is None
+        assert result.filing_date is not None
+
+    def test_complete_dates_still_recorded_on_lookup_rejection(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="MARS",
+            incident_date="2024-03-15",
+            filing_date="2026-04-01",
+        )
+        assert result.jurisdiction_matched is False
+        assert result.incident_date is not None
+        assert result.filing_date is not None
+
+    def test_ambiguous_dates_omitted_on_lookup_rejection(self):
+        # Sentry review on #91: an ambiguous-but-complete date with an
+        # unknown jurisdiction must not record its month-first reading.
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="MARS",
+            incident_date="04/03/2026",
+            filing_date="2026-04-01",
+        )
+        assert result.jurisdiction_matched is False
+        assert result.incident_date is None
+        assert result.filing_date is not None
+
+    def test_ambiguous_dates_omitted_on_claim_type_rejection(self):
+        result = self.guard.verify(
+            claim_type="quantum_litigation",
+            jurisdiction="California",
+            incident_date="2024-03-15",
+            filing_date="04/03/2026",
+        )
+        assert result.claim_type_matched is False
+        assert result.incident_date is not None
+        assert result.filing_date is None
+
+    def test_yearless_leap_day_never_verifies(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="February 29",
+            filing_date="2026-04-01",
+            claimed_within_period=True,
+        )
+        assert result.verified is False
+        assert result.status == "UNVERIFIABLE"
+
+    def test_weekday_intake_never_verifies(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="Saturday",
+            filing_date="2026-04-01",
+            claimed_within_period=True,
+        )
+        assert result.verified is False
+        assert result.status == "UNVERIFIABLE"
