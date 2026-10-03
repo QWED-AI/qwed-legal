@@ -332,7 +332,7 @@ class StatuteOfLimitationsGuard:
             return lookup_rejection
 
         date_rejection = self._reject_invalid_dates(
-            claim_type, jurisdiction, incident_date, filing_date, incident, filing
+            claim_type, jurisdiction, incident_date, filing_date
         )
         if date_rejection is not None:
             return date_rejection
@@ -416,8 +416,6 @@ class StatuteOfLimitationsGuard:
         jurisdiction: str,
         incident_date: str,
         filing_date: str,
-        incident: datetime,
-        filing: datetime,
     ) -> "Optional[StatuteResult]":
         """Order-ambiguity and wall-clock-completeness gates (issues #58, #59).
 

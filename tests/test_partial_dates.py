@@ -26,6 +26,15 @@ class TestDetectIncompleteDate:
         assert detect_incomplete_date("Friday") is True
         assert detect_incomplete_date("23:00") is True
 
+    def test_all_weekday_names_detected(self):
+        # Sentinels fall in different Mon-Sun weeks so every weekday
+        # resolves differently; same-week sentinels would miss six of seven.
+        for day in (
+            "Monday", "Tuesday", "Wednesday", "Thursday",
+            "Friday", "Saturday", "Sunday",
+        ):
+            assert detect_incomplete_date(day) is True, day
+
     def test_complete_dates_pass(self):
         assert detect_incomplete_date("2026-04-03") is False
         assert detect_incomplete_date("03/04/2026") is False
@@ -185,6 +194,17 @@ class TestLookupPathsOmitClockFilledDates:
             claim_type="breach_of_contract",
             jurisdiction="California",
             incident_date="February 29",
+            filing_date="2026-04-01",
+            claimed_within_period=True,
+        )
+        assert result.verified is False
+        assert result.status == "UNVERIFIABLE"
+
+    def test_weekday_intake_never_verifies(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="Saturday",
             filing_date="2026-04-01",
             claimed_within_period=True,
         )

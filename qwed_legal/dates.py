@@ -20,10 +20,13 @@ _YEAR_LEADING_RE = re.compile(r"^\s*\d{4}\s*[-/]")
 
 # Dual-sentinel defaults for completeness checks (issues #57, #59): the two
 # defaults differ in every date component, so any component dateutil fills
-# from the wall clock surfaces as a divergence. Time-of-day is excluded
-# from the comparison — a supplied time ("2026-01-15 23:00") is complete.
-_SENTINEL_A = datetime(2000, 1, 1)
-_SENTINEL_B = datetime(1999, 12, 31)
+# from the wall clock surfaces as a divergence. They must also fall in
+# different Mon-Sun weeks — weekday names resolve into the default's own
+# week, so same-week sentinels would agree on six days out of seven.
+# Time-of-day is excluded from the comparison — a supplied time
+# ("2026-01-15 23:00") is complete.
+_SENTINEL_A = datetime(2000, 1, 1)  # Saturday
+_SENTINEL_B = datetime(1999, 12, 20)  # Monday, different week
 
 
 def detect_order_ambiguity(raw: str) -> bool:
