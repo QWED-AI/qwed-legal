@@ -64,6 +64,23 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_date_of_receipt_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days from the date of receipt", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_conditioned_clause_keeps_signing_anchor(self):
+        # The first temporal anchor ("from signing") starts the period;
+        # "conditioned upon acceptance" is a condition, not an anchor.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, conditioned upon acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
     def test_service_of_process_fails_closed(self):
         result = self.guard.verify(
             "2026-01-01", "30 days after service of process", "2026-01-31"

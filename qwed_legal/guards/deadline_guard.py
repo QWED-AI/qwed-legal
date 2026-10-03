@@ -261,8 +261,8 @@ class DeadlineGuard:
         # unknowable date (chosen-date forgery: any target is certifiable).
         # Runs BEFORE date arithmetic so rejected business-day terms never
         # iterate the holiday calendar.
-        anchor_match = self._EVENT_ANCHOR_RE.search(term.lower())
-        if anchor_match:
+        anchor = self._event_anchor(term.lower())
+        if anchor:
             return DeadlineResult(
                 verified=False,
                 signing_date=signing,
@@ -272,7 +272,7 @@ class DeadlineGuard:
                 difference_days=None,
                 message=(
                     f"⚠️ UNVERIFIABLE: Term '{term}' is anchored to an "
-                    f"event ('{anchor_match.group(1)}'), not to the "
+                    f"event ('{anchor}'), not to the "
                     f"signing date. The real deadline is unknowable from "
                     f"these inputs — supply the anchor event's date."
                 ),
@@ -284,7 +284,7 @@ class DeadlineGuard:
                         inputs={"term": term},
                         output=(
                             "UNSUPPORTED: event-anchored term — anchor "
-                            f"'{anchor_match.group(1)}' has no supplied date."
+                            f"'{anchor}' has no supplied date."
                         ),
                         evidence_type=EVIDENCE_UNSUPPORTED,
                     )
@@ -438,7 +438,7 @@ class DeadlineGuard:
     # anchor ("after receipt", "within 15 days of payment") — a bare
     # mention ("30 days from signing to deliver notice") leaves the
     # signing anchor intact. Up to two intervening words allow adjectives
-    # ("after written notice"); the "the date the" alternative covers
+    # ("after written notice"); the "the date (the|of)" alternative covers
     # phrasings like "after the date the notice is received" without
     # widening the general gap (which would catch signing-anchored text).
     # "of" only counts directly after a time unit ("30 days of payment",
@@ -449,10 +449,33 @@ class DeadlineGuard:
     # "event" ("in the event of" is conditional, not a temporal anchor).
     _EVENT_ANCHOR_RE = re.compile(
         r"\b(?:after|following|upon|from|within|(?:day|days|week|weeks|month|months|year|years)\s+of)\s+"
-        r"(?:(?:[a-z]+\s+){0,2}?|the\s+date\s+the\s+)"
+        r"(?:(?:[a-z]+\s+){0,2}?|the\s+date\s+(?:the\s+|of\s+))"
         r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
         r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?)\b"
     )
+    # Signing anchors ("from signing", "date of signing"): when the first
+    # temporal anchor in the term is signing-anchored, the period starts at
+    # signing even if a later conditioned clause names an event
+    # ("conditioned upon acceptance"). First anchor wins.
+    _SIGNING_ANCHOR_RE = re.compile(
+        r"\b(?:after|following|upon|from|within|of)\s+(?:the\s+)?(?:signing|execution)\b"
+    )
+
+    @staticmethod
+    def _event_anchor(term_lower: str) -> "Optional[str]":
+        """Event noun anchoring the term's period, or None.
+
+        The first temporal anchor wins: a signing anchor ahead of any
+        event anchor keeps the signing computation. Returns the matched
+        event noun for messaging.
+        """
+        event_match = DeadlineGuard._EVENT_ANCHOR_RE.search(term_lower)
+        if event_match is None:
+            return None
+        signing_match = DeadlineGuard._SIGNING_ANCHOR_RE.search(term_lower)
+        if signing_match is not None and signing_match.start() < event_match.start():
+            return None
+        return event_match.group(1)
 
     # No legal deadline spans this magnitude (~274 years). Bounding the
     # parsed quantity bounds both date arithmetic and the business-day
