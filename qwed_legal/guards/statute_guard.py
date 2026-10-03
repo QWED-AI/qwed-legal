@@ -323,92 +323,108 @@ class StatuteOfLimitationsGuard:
                 ],
             )
 
-        # Get limitation period
         claim_type_lower = claim_type.lower().replace(" ", "_")
         jurisdiction_upper = jurisdiction.upper().strip()
+        limits, lookup_rejection = self._lookup_limitation(
+            claim_type, jurisdiction, incident_date, filing_date, incident, filing
+        )
+        if lookup_rejection is not None:
+            return lookup_rejection
 
-        # Fail-closed: exact jurisdiction match only (no partial matching)
-        if jurisdiction_upper not in self.LIMITATIONS:
-            # Clock-filled values must not leak into results even on this
-            # early path: omit parsed dates when the raw input is partial.
-            return StatuteResult(
-                verified=False,
-                claim_type=claim_type,
-                jurisdiction=jurisdiction,
-                incident_date=(
-                    None if detect_incomplete_date(incident_date) else incident
-                ),
-                filing_date=(
-                    None if detect_incomplete_date(filing_date) else filing
-                ),
-                limitation_period_years=None,
-                expiration_date=None,
-                days_remaining=None,
-                message=(
-                    f"⚠️ UNVERIFIABLE: Jurisdiction '{jurisdiction}' is not "
-                    f"in the supported jurisdiction list. Cannot determine "
-                    f"applicable statute of limitations. Supported: "
-                    f"{', '.join(sorted(self.LIMITATIONS.keys()))}."
-                ),
-                jurisdiction_matched=False,
-                claim_type_matched=False,
-                verification_trace=[
-                    VerificationStep(
-                        step=STEP_RULE_IDENTIFIED,
-                        description="Jurisdiction not found in lookup table.",
-                        inputs={
-                            "jurisdiction": jurisdiction,
-                            "claim_type": claim_type,
-                            "incident_date": incident_date,
-                            "filing_date": filing_date,
-                        },
-                        output=f"UNSUPPORTED jurisdiction: '{jurisdiction}'. No limitation period available.",
-                        evidence_type=EVIDENCE_UNSUPPORTED,
-                    )
-                ],
+        date_rejection = self._reject_invalid_dates(
+            claim_type, jurisdiction, incident_date, filing_date, incident, filing
+        )
+        if date_rejection is not None:
+            return date_rejection
+
+        timeline_rejection = self._reject_bad_timeline(
+            claim_type, jurisdiction, incident, filing
+        )
+        if timeline_rejection is not None:
+            return timeline_rejection
+
+        period_years = limits[claim_type_lower]
+
+        # Calculate expiration date
+        expiration = incident + relativedelta(years=int(period_years))
+        if period_years % 1 != 0:
+            # Handle fractional years (e.g., 2.5 years)
+            extra_months = int((period_years % 1) * 12)
+            expiration = expiration + relativedelta(months=extra_months)
+
+        # Calculate days remaining
+        days_remaining = (expiration - filing).days
+        within_period = days_remaining >= 0
+
+        # Verify against LLM claim if provided. 'verified' is reserved
+        # for claim comparison: in computation-only mode there is no
+        # claim to verify, so it is False by contract and 'status'
+        # carries the distinction (issue #42).
+        if claimed_within_period is not None:
+            verified = claimed_within_period == within_period
+            status = STATUS_CLAIM_VERIFIED if verified else STATUS_CLAIM_INCORRECT
+        else:
+            verified = False
+            status = STATUS_COMPUTED_ONLY
+
+        if within_period:
+            message = (
+                f"✅ WITHIN STATUTE: Claim can be filed. "
+                f"{days_remaining} days remaining until expiration on {expiration.strftime('%Y-%m-%d')}."
+            )
+        else:
+            message = (
+                f"❌ EXPIRED: Statute of limitations expired on {expiration.strftime('%Y-%m-%d')}. "
+                f"Filing date is {abs(days_remaining)} days past expiration."
             )
 
-        limits = self.LIMITATIONS[jurisdiction_upper]
-
-        # Fail-closed: exact claim type match only (no default fallback)
-        if claim_type_lower not in limits:
-            return StatuteResult(
-                verified=False,
-                claim_type=claim_type,
-                jurisdiction=jurisdiction,
-                incident_date=(
-                    None if detect_incomplete_date(incident_date) else incident
-                ),
-                filing_date=(
-                    None if detect_incomplete_date(filing_date) else filing
-                ),
-                limitation_period_years=None,
-                expiration_date=None,
-                days_remaining=None,
-                message=(
-                    f"⚠️ UNVERIFIABLE: Claim type '{claim_type}' is not "
-                    f"recognized for jurisdiction '{jurisdiction}'. Cannot "
-                    f"determine limitation period. Supported claim types: "
-                    f"{', '.join(sorted(limits.keys()))}."
-                ),
-                jurisdiction_matched=True,
-                claim_type_matched=False,
-                verification_trace=[
-                    VerificationStep(
-                        step=STEP_RULE_IDENTIFIED,
-                        description="Jurisdiction matched but claim type not found in lookup table.",
-                        inputs={
-                            "jurisdiction": jurisdiction_upper,
-                            "claim_type": claim_type,
-                            "incident_date": incident_date,
-                            "filing_date": filing_date,
-                        },
-                        output=f"UNSUPPORTED claim type: '{claim_type}' for '{jurisdiction}'.",
-                        evidence_type=EVIDENCE_UNSUPPORTED,
-                    )
-                ],
+        if status == STATUS_COMPUTED_ONLY:
+            message += (
+                " Computation-only mode: no claimed_within_period was "
+                "supplied, so 'verified' is False by contract; use "
+                "'status' and 'days_remaining' for the computation."
             )
 
+        trace = self._build_verification_trace(
+            jurisdiction_upper=jurisdiction_upper,
+            claim_type_lower=claim_type_lower,
+            period_years=period_years,
+            incident=incident,
+            filing=filing,
+            expiration=expiration,
+            days_remaining=days_remaining,
+            within_period=within_period,
+            claimed_within_period=claimed_within_period,
+        )
+        return StatuteResult(
+            verified=verified,
+            claim_type=claim_type,
+            jurisdiction=jurisdiction,
+            incident_date=incident,
+            filing_date=filing,
+            limitation_period_years=period_years,
+            expiration_date=expiration,
+            days_remaining=days_remaining,
+            message=message,
+            status=status,
+            verification_trace=trace,
+        )
+
+    def _reject_invalid_dates(
+        self,
+        claim_type: str,
+        jurisdiction: str,
+        incident_date: str,
+        filing_date: str,
+        incident: datetime,
+        filing: datetime,
+    ) -> "Optional[StatuteResult]":
+        """Order-ambiguity and wall-clock-completeness gates (issues #58, #59).
+
+        Returns a UNVERIFIABLE rejection when either date input is
+        order-ambiguous or partial, else None. Extracted from verify() to
+        keep the orchestration readable (Sonar cognitive complexity).
+        """
         # Fail-closed on order-ambiguous numeric dates (issue #58): the
         # same dual-parse helper as DeadlineGuard. The gate sits before any
         # expiration computation, in computation-only mode as well — an
@@ -528,7 +544,22 @@ class StatuteOfLimitationsGuard:
                     ),
                 ],
             )
+        return None
 
+    def _reject_bad_timeline(
+        self,
+        claim_type: str,
+        jurisdiction: str,
+        incident: datetime,
+        filing: datetime,
+    ) -> "Optional[StatuteResult]":
+        """Timezone-consistency and date-order gates.
+
+        Returns a UNVERIFIABLE rejection for mixed timezone-aware/naive
+        inputs or impossible (filing-before-incident) timelines, else None.
+        Extracted from verify() to keep the orchestration readable
+        (Sonar cognitive complexity).
+        """
         # Fail-closed: timezone-aware and timezone-naive datetimes cannot
         # be compared (TypeError) — reject the mixed input rather than
         # crash, so callers always get an unverified result.
@@ -607,73 +638,108 @@ class StatuteOfLimitationsGuard:
                     )
                 ],
             )
+        return None
 
-        period_years = limits[claim_type_lower]
+    def _lookup_limitation(
+        self,
+        claim_type: str,
+        jurisdiction: str,
+        incident_date: str,
+        filing_date: str,
+        incident: datetime,
+        filing: datetime,
+    ) -> "tuple[Optional[Dict[str, float]], Optional[StatuteResult]]":
+        """Match jurisdiction and claim type to a limitation table entry.
 
-        # Calculate expiration date
-        expiration = incident + relativedelta(years=int(period_years))
-        if period_years % 1 != 0:
-            # Handle fractional years (e.g., 2.5 years)
-            extra_months = int((period_years % 1) * 12)
-            expiration = expiration + relativedelta(months=extra_months)
+        Returns (limits, None) on a full match, or (None, rejection) for
+        unknown jurisdictions / claim types. Extracted from verify() to
+        keep the orchestration readable (Sonar cognitive complexity).
+        """
+        claim_type_lower = claim_type.lower().replace(" ", "_")
+        jurisdiction_upper = jurisdiction.upper().strip()
 
-        # Calculate days remaining
-        days_remaining = (expiration - filing).days
-        within_period = days_remaining >= 0
-
-        # Verify against LLM claim if provided. 'verified' is reserved
-        # for claim comparison: in computation-only mode there is no
-        # claim to verify, so it is False by contract and 'status'
-        # carries the distinction (issue #42).
-        if claimed_within_period is not None:
-            verified = claimed_within_period == within_period
-            status = STATUS_CLAIM_VERIFIED if verified else STATUS_CLAIM_INCORRECT
-        else:
-            verified = False
-            status = STATUS_COMPUTED_ONLY
-
-        if within_period:
-            message = (
-                f"✅ WITHIN STATUTE: Claim can be filed. "
-                f"{days_remaining} days remaining until expiration on {expiration.strftime('%Y-%m-%d')}."
+        # Fail-closed: exact jurisdiction match only (no partial matching)
+        if jurisdiction_upper not in self.LIMITATIONS:
+            # Clock-filled values must not leak into results even on this
+            # early path: omit parsed dates when the raw input is partial.
+            return None, StatuteResult(
+                verified=False,
+                claim_type=claim_type,
+                jurisdiction=jurisdiction,
+                incident_date=(
+                    None if detect_incomplete_date(incident_date) else incident
+                ),
+                filing_date=(
+                    None if detect_incomplete_date(filing_date) else filing
+                ),
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: Jurisdiction '{jurisdiction}' is not "
+                    f"in the supported jurisdiction list. Cannot determine "
+                    f"applicable statute of limitations. Supported: "
+                    f"{', '.join(sorted(self.LIMITATIONS.keys()))}."
+                ),
+                jurisdiction_matched=False,
+                claim_type_matched=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Jurisdiction not found in lookup table.",
+                        inputs={
+                            "jurisdiction": jurisdiction,
+                            "claim_type": claim_type,
+                            "incident_date": incident_date,
+                            "filing_date": filing_date,
+                        },
+                        output=f"UNSUPPORTED jurisdiction: '{jurisdiction}'. No limitation period available.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
             )
-        else:
-            message = (
-                f"❌ EXPIRED: Statute of limitations expired on {expiration.strftime('%Y-%m-%d')}. "
-                f"Filing date is {abs(days_remaining)} days past expiration."
-            )
 
-        if status == STATUS_COMPUTED_ONLY:
-            message += (
-                " Computation-only mode: no claimed_within_period was "
-                "supplied, so 'verified' is False by contract; use "
-                "'status' and 'days_remaining' for the computation."
-            )
+        limits = self.LIMITATIONS[jurisdiction_upper]
 
-        trace = self._build_verification_trace(
-            jurisdiction_upper=jurisdiction_upper,
-            claim_type_lower=claim_type_lower,
-            period_years=period_years,
-            incident=incident,
-            filing=filing,
-            expiration=expiration,
-            days_remaining=days_remaining,
-            within_period=within_period,
-            claimed_within_period=claimed_within_period,
-        )
-        return StatuteResult(
-            verified=verified,
-            claim_type=claim_type,
-            jurisdiction=jurisdiction,
-            incident_date=incident,
-            filing_date=filing,
-            limitation_period_years=period_years,
-            expiration_date=expiration,
-            days_remaining=days_remaining,
-            message=message,
-            status=status,
-            verification_trace=trace,
-        )
+        # Fail-closed: exact claim type match only (no default fallback)
+        if claim_type_lower not in limits:
+            return None, StatuteResult(
+                verified=False,
+                claim_type=claim_type,
+                jurisdiction=jurisdiction,
+                incident_date=(
+                    None if detect_incomplete_date(incident_date) else incident
+                ),
+                filing_date=(
+                    None if detect_incomplete_date(filing_date) else filing
+                ),
+                limitation_period_years=None,
+                expiration_date=None,
+                days_remaining=None,
+                message=(
+                    f"⚠️ UNVERIFIABLE: Claim type '{claim_type}' is not "
+                    f"recognized for jurisdiction '{jurisdiction}'. Cannot "
+                    f"determine limitation period. Supported claim types: "
+                    f"{', '.join(sorted(limits.keys()))}."
+                ),
+                jurisdiction_matched=True,
+                claim_type_matched=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Jurisdiction matched but claim type not found in lookup table.",
+                        inputs={
+                            "jurisdiction": jurisdiction_upper,
+                            "claim_type": claim_type,
+                            "incident_date": incident_date,
+                            "filing_date": filing_date,
+                        },
+                        output=f"UNSUPPORTED claim type: '{claim_type}' for '{jurisdiction}'.",
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+        return limits, None
 
     def _build_verification_trace(
         self,
