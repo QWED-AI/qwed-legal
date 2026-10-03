@@ -227,3 +227,26 @@ class TestDateGranularityComparison:
         assert "Expected 2026-02-14" in result.message
         assert "claimed 2026-02-14 (=2026-02-15 in the deadline's timezone)" in result.message
         assert "Difference: 1 days." in result.message
+
+    def test_mixed_timezone_inputs_fail_closed(self):
+        # Statute parity: aware/naive frames are incomparable, so even
+        # date-granularity comparison would silently mix calendar days.
+        for signing, claimed in (
+            ("2026-01-15", "2026-02-14 22:00-08:00"),
+            ("2026-01-15 23:00+05:00", "2026-02-14"),
+        ):
+            result = self.guard.verify(signing, "30 days", claimed)
+            assert result.verified is False, (signing, claimed)
+            assert result.is_computable is False, (signing, claimed)
+
+    def test_signing_or_event_disjunction_fails_closed(self):
+        # Competing anchors with no provable reading: the delivery date
+        # is unknown, so signing+30 proves nothing.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing or after delivery, whichever is later",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None

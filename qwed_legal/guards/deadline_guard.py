@@ -328,10 +328,42 @@ class DeadlineGuard:
                 ],
             )
 
-        # Compare at the declared date granularity (issue #56): datetimes
-        # compare as dates, so a claim 23h59m late is a 1-day mismatch
-        # instead of flooring to 0 (verified exact), and sub-daily noise
-        # on the same date is not a mismatch.
+        # Fail-closed on mixed timezone-aware/naive inputs (statute
+        # parity): the frames are incomparable, so even date-granularity
+        # comparison would silently mix calendar days.
+        if (claimed.tzinfo is None) != (computed.tzinfo is None):
+            return DeadlineResult(
+                verified=False,
+                signing_date=signing,
+                claimed_deadline=claimed,
+                computed_deadline=None,
+                term_parsed=term,
+                difference_days=None,
+                message=(
+                    "⚠️ UNVERIFIABLE: Mixed timezone inputs — one date is "
+                    "timezone-aware and the other is timezone-naive. "
+                    "Supply both dates with or both without a timezone."
+                ),
+                is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Validated timezone consistency between signing and claimed dates.",
+                        inputs={
+                            "signing_date": str(signing),
+                            "claimed_deadline": str(claimed),
+                        },
+                        output=(
+                            "UNSUPPORTED: mixed timezone-aware and "
+                            "timezone-naive inputs — cannot compare."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
+        # Compare at the declared date granularity (issue #56); see
+        # _comparison_days for the timezone rules.
         claimed_day, computed_day = self._comparison_days(claimed, computed)
         diff = abs((claimed_day - computed_day).days)
         verified = diff <= tolerance_days
