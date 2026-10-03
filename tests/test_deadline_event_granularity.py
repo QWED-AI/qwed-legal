@@ -64,6 +64,33 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_service_of_process_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days after service of process", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.to_diagnostic().status is LegalDiagnosticStatus.UNVERIFIABLE
+
+    def test_notice_of_termination_still_verifies(self):
+        # "notice" is the obligation document here, "termination" its
+        # subject — the period still starts at signing.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing to deliver notice of termination",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_of_payment_still_fails_closed(self):
+        # The "of" governor exclusion is narrow: genuine "of <event>"
+        # anchors still fail closed.
+        result = self.guard.verify(
+            "2026-01-01", "within 30 days of payment", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_signing_mentions_do_not_trigger_event_gate(self):
         # "notice" here is the obligation, not the anchor: the period
         # starts at signing, which the guard can compute.
