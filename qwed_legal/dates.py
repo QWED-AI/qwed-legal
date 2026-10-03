@@ -10,7 +10,6 @@ of certifying one reading.
 """
 
 import re
-import re
 from datetime import datetime
 from typing import Optional
 
