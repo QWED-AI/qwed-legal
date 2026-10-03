@@ -453,29 +453,44 @@ class DeadlineGuard:
         r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
         r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?)\b"
     )
-    # Signing anchors ("from signing", "date of signing"): when the first
-    # temporal anchor in the term is signing-anchored, the period starts at
-    # signing even if a later conditioned clause names an event
-    # ("conditioned upon acceptance"). First anchor wins.
+    # Signing anchors ("from signing", "date of signing"): a signing anchor
+    # ahead of an event anchor keeps the signing computation only when the
+    # event is conditional wording ("conditioned upon acceptance"). A plain
+    # later event anchor ("or after delivery", "period begins upon
+    # receipt") re-anchors the period and fails closed.
     _SIGNING_ANCHOR_RE = re.compile(
         r"\b(?:after|following|upon|from|within|of)\s+(?:the\s+)?(?:signing|execution)\b"
+    )
+    # Conditional-event wording names an event without anchoring the
+    # period to it ("conditioned upon acceptance", "subject to approval"):
+    # such phrases are conditions on the obligation, not temporal anchors.
+    # Checked against the text preceding each event match.
+    _CONDITIONAL_EVENT_RE = re.compile(
+        r"\b(?:(?:conditioned|conditional|contingent)\s+(?:up)?on|subject\s+to)\s+(?:[a-z]+\s+){0,2}?$"
     )
 
     @staticmethod
     def _event_anchor(term_lower: str) -> "Optional[str]":
         """Event noun anchoring the term's period, or None.
 
-        The first temporal anchor wins: a signing anchor ahead of any
-        event anchor keeps the signing computation. Returns the matched
-        event noun for messaging.
+        Scans every event match in order: a match preceded by a signing
+        anchor is skipped only when conditional wording governs it
+        ("conditioned upon acceptance" — a condition, not an anchor).
+        A plain later event anchor ("or after delivery, whichever is
+        later", "period begins upon receipt") re-anchors the period and
+        fails closed. Returns the matched event noun for messaging.
         """
-        event_match = DeadlineGuard._EVENT_ANCHOR_RE.search(term_lower)
-        if event_match is None:
-            return None
         signing_match = DeadlineGuard._SIGNING_ANCHOR_RE.search(term_lower)
-        if signing_match is not None and signing_match.start() < event_match.start():
-            return None
-        return event_match.group(1)
+        for event_match in DeadlineGuard._EVENT_ANCHOR_RE.finditer(term_lower):
+            prefix = term_lower[: event_match.start(1)]
+            if (
+                signing_match is not None
+                and signing_match.start() < event_match.start()
+                and DeadlineGuard._CONDITIONAL_EVENT_RE.search(prefix)
+            ):
+                continue
+            return event_match.group(1)
+        return None
 
     # No legal deadline spans this magnitude (~274 years). Bounding the
     # parsed quantity bounds both date arithmetic and the business-day

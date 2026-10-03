@@ -81,6 +81,34 @@ class TestEventAnchoredTerms:
         )
         assert result.verified is True
 
+    def test_mixed_signing_and_event_anchors_fail_closed(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing or after delivery, whichever is later",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None
+
+    def test_later_reanchoring_clause_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, provided that the period begins upon receipt of notice",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_event_first_term_fails_closed(self):
+        # Genuinely ambiguous about what starts the period (acceptance
+        # gating vs signing anchor): fail closed, not signing-wins.
+        result = self.guard.verify(
+            "2026-01-01", "upon acceptance, 30 days from signing", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_service_of_process_fails_closed(self):
         result = self.guard.verify(
             "2026-01-01", "30 days after service of process", "2026-01-31"
