@@ -137,6 +137,49 @@ class TestStatutePartialDates:
         assert result.verified is True
         assert result.status == "CLAIM_VERIFIED"
 
+
+class TestLookupPathsOmitClockFilledDates:
+    """CodeRabbit review on #91: lookup rejections run before the gates."""
+
+    def setup_method(self):
+        self.guard = StatuteOfLimitationsGuard()
+
+    def test_unknown_jurisdiction_omits_partial_dates(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="MARS",
+            incident_date="March 2024",
+            filing_date="2026-04-01",
+        )
+        assert result.jurisdiction_matched is False
+        assert result.incident_date is None
+        assert result.filing_date is not None
+        trace_inputs = result.verification_trace[0].inputs
+        assert trace_inputs["incident_date"] == "March 2024"
+        assert trace_inputs["filing_date"] == "2026-04-01"
+
+    def test_unknown_claim_type_omits_partial_dates(self):
+        result = self.guard.verify(
+            claim_type="quantum_litigation",
+            jurisdiction="California",
+            incident_date="March 2024",
+            filing_date="2026-04-01",
+        )
+        assert result.claim_type_matched is False
+        assert result.incident_date is None
+        assert result.filing_date is not None
+
+    def test_complete_dates_still_recorded_on_lookup_rejection(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="MARS",
+            incident_date="2024-03-15",
+            filing_date="2026-04-01",
+        )
+        assert result.jurisdiction_matched is False
+        assert result.incident_date is not None
+        assert result.filing_date is not None
+
     def test_yearless_leap_day_never_verifies(self):
         result = self.guard.verify(
             claim_type="breach_of_contract",

@@ -329,12 +329,18 @@ class StatuteOfLimitationsGuard:
 
         # Fail-closed: exact jurisdiction match only (no partial matching)
         if jurisdiction_upper not in self.LIMITATIONS:
+            # Clock-filled values must not leak into results even on this
+            # early path: omit parsed dates when the raw input is partial.
             return StatuteResult(
                 verified=False,
                 claim_type=claim_type,
                 jurisdiction=jurisdiction,
-                incident_date=incident,
-                filing_date=filing,
+                incident_date=(
+                    None if detect_incomplete_date(incident_date) else incident
+                ),
+                filing_date=(
+                    None if detect_incomplete_date(filing_date) else filing
+                ),
                 limitation_period_years=None,
                 expiration_date=None,
                 days_remaining=None,
@@ -350,7 +356,12 @@ class StatuteOfLimitationsGuard:
                     VerificationStep(
                         step=STEP_RULE_IDENTIFIED,
                         description="Jurisdiction not found in lookup table.",
-                        inputs={"jurisdiction": jurisdiction, "claim_type": claim_type},
+                        inputs={
+                            "jurisdiction": jurisdiction,
+                            "claim_type": claim_type,
+                            "incident_date": incident_date,
+                            "filing_date": filing_date,
+                        },
                         output=f"UNSUPPORTED jurisdiction: '{jurisdiction}'. No limitation period available.",
                         evidence_type=EVIDENCE_UNSUPPORTED,
                     )
@@ -365,8 +376,12 @@ class StatuteOfLimitationsGuard:
                 verified=False,
                 claim_type=claim_type,
                 jurisdiction=jurisdiction,
-                incident_date=incident,
-                filing_date=filing,
+                incident_date=(
+                    None if detect_incomplete_date(incident_date) else incident
+                ),
+                filing_date=(
+                    None if detect_incomplete_date(filing_date) else filing
+                ),
                 limitation_period_years=None,
                 expiration_date=None,
                 days_remaining=None,
@@ -385,6 +400,8 @@ class StatuteOfLimitationsGuard:
                         inputs={
                             "jurisdiction": jurisdiction_upper,
                             "claim_type": claim_type,
+                            "incident_date": incident_date,
+                            "filing_date": filing_date,
                         },
                         output=f"UNSUPPORTED claim type: '{claim_type}' for '{jurisdiction}'.",
                         evidence_type=EVIDENCE_UNSUPPORTED,
