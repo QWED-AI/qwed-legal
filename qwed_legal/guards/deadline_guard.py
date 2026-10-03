@@ -355,15 +355,7 @@ class DeadlineGuard:
         elif verified:
             message = "✅ VERIFIED: Deadline calculation is correct."
         else:
-            # The message reports the compared calendar days (not the raw
-            # local dates), so it can never show identical dates alongside
-            # a non-zero difference.
-            message = (
-                f"❌ ERROR: Deadline mismatch. "
-                f"Expected {computed_day.isoformat()}, "
-                f"but LLM claimed {claimed_day.isoformat()}. "
-                f"Difference: {diff} days."
-            )
+            message = self._mismatch_message(claimed, claimed_day, computed_day, diff)
 
         if calendar_unreliable:
             conclusion_output = "UNSUPPORTED: business-day calendar unavailable"
@@ -446,12 +438,15 @@ class DeadlineGuard:
     # anchor ("after receipt", "within 15 days of payment") — a bare
     # mention ("30 days from signing to deliver notice") leaves the
     # signing anchor intact. Up to two intervening words allow adjectives
-    # ("after written notice"). Plurals included ("receipts",
-    # "deliveries"). Deliberately excludes signing-adjacent nouns
+    # ("after written notice"); the "the date the" alternative covers
+    # phrasings like "after the date the notice is received" without
+    # widening the general gap (which would catch signing-anchored text).
+    # Plurals included ("receipts", "deliveries"). Deliberately excludes signing-adjacent nouns
     # ("signing", "execution") and generic "event" ("in the event of" is
     # conditional, not a temporal anchor).
     _EVENT_ANCHOR_RE = re.compile(
-        r"\b(?:after|following|upon|from|within|of)\s+(?:[a-z]+\s+){0,2}?"
+        r"\b(?:after|following|upon|from|within|of)\s+"
+        r"(?:(?:[a-z]+\s+){0,2}?|the\s+date\s+the\s+)"
         r"(receipts?|notices?|deliver(?:y|ies)|occurrences?|demands?|"
         r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?)\b"
     )
@@ -460,6 +455,28 @@ class DeadlineGuard:
     # parsed quantity bounds both date arithmetic and the business-day
     # iteration loop (issue #42: unhandled OverflowError / unbounded loop).
     _MAX_TERM_QUANTITY = 100_000
+
+    @staticmethod
+    def _mismatch_message(claimed: datetime, claimed_day, computed_day, diff: int) -> str:
+        """Mismatch text that cannot contradict its own difference.
+
+        Reports the compared calendar days (never identical dates beside
+        a non-zero difference). When conversion moved the claim across
+        midnight, both spellings are shown so the caller's original claim
+        still matches what wrappers display beside this message.
+        """
+        claimed_raw = claimed.strftime("%Y-%m-%d")
+        claimed_shown = claimed_day.isoformat()
+        if claimed_shown != claimed_raw:
+            claimed_shown = (
+                f"{claimed_raw} (={claimed_shown} in the deadline's timezone)"
+            )
+        return (
+            f"❌ ERROR: Deadline mismatch. "
+            f"Expected {computed_day.isoformat()}, "
+            f"but LLM claimed {claimed_shown}. "
+            f"Difference: {diff} days."
+        )
 
     @staticmethod
     def _comparison_days(claimed: datetime, computed: datetime):

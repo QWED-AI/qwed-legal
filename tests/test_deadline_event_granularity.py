@@ -53,6 +53,17 @@ class TestEventAnchoredTerms:
             assert result.verified is False, term
             assert result.is_computable is False, term
 
+    def test_notice_date_phrase_fails_closed(self):
+        # Three words precede the noun — covered by the targeted "the
+        # date the" alternative, not the general two-word gap.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days after the date the notice is received",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_signing_mentions_do_not_trigger_event_gate(self):
         # "notice" here is the obligation, not the anchor: the period
         # starts at signing, which the guard can compute.
@@ -123,11 +134,13 @@ class TestDateGranularityComparison:
 
     def test_mismatch_message_reports_compared_days(self):
         # The message must never show identical dates with a non-zero
-        # difference: it reports the normalized comparison days.
+        # difference. The caller's original spelling is kept first, with
+        # the converted comparison day labelled, so wrappers displaying
+        # the raw claim beside this message stay consistent.
         result = self.guard.verify(
             "2026-01-15 23:00+05:00", "30 days", "2026-02-14 22:00-08:00"
         )
         assert result.verified is False
         assert "Expected 2026-02-14" in result.message
-        assert "claimed 2026-02-15" in result.message
+        assert "claimed 2026-02-14 (=2026-02-15 in the deadline's timezone)" in result.message
         assert "Difference: 1 days." in result.message
