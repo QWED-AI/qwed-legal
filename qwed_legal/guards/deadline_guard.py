@@ -441,14 +441,14 @@ class DeadlineGuard:
     # ("after written notice"); the "the date the" alternative covers
     # phrasings like "after the date the notice is received" without
     # widening the general gap (which would catch signing-anchored text).
-    # Plurals included ("receipts", "deliveries"). "of" does not count
-    # after "notice"/"notices": in "notice of termination" the notice is
-    # the obligation document and termination its subject, not a temporal
-    # anchor. Deliberately excludes signing-adjacent nouns
-    # ("signing", "execution") and generic "event" ("in the event of" is
-    # conditional, not a temporal anchor).
+    # "of" only counts directly after a time unit ("30 days of payment",
+    # "within 30 days of delivery"): a bare "of" also matches descriptive
+    # phrases ("notice of termination", "provision of services") where the
+    # first noun is the obligation, not a temporal anchor. Deliberately
+    # excludes signing-adjacent nouns ("signing", "execution") and generic
+    # "event" ("in the event of" is conditional, not a temporal anchor).
     _EVENT_ANCHOR_RE = re.compile(
-        r"\b(?:after|following|upon|from|within|(?<!notice\s)(?<!notices\s)of)\s+"
+        r"\b(?:after|following|upon|from|within|(?:day|days|week|weeks|month|months|year|years)\s+of)\s+"
         r"(?:(?:[a-z]+\s+){0,2}?|the\s+date\s+the\s+)"
         r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
         r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?)\b"

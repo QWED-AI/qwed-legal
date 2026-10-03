@@ -91,6 +91,17 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_provision_of_services_still_verifies(self):
+        # "of" after a non-unit noun is descriptive ("provision OF
+        # services" = what is provided), not a temporal anchor: the
+        # period still starts at signing.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing for the provision of services",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
     def test_signing_mentions_do_not_trigger_event_gate(self):
         # "notice" here is the obligation, not the anchor: the period
         # starts at signing, which the guard can compute.
