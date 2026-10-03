@@ -5,7 +5,7 @@ Handles business days, calendar days, leap years, and holiday exclusions.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import re
 
@@ -254,14 +254,13 @@ class DeadlineGuard:
                 ],
             )
 
-        # Parse term and calculate deadline
-        computed, used_business_days = self._calculate_deadline(signing, term)
-
         # Fail-closed on event-anchored terms (issue #54): a term like
         # "within 15 days after receipt of written notice" carries a valid
         # quantity/unit pair but anchors it to an event, not the signing
         # date. Computing from signing certifies deadlines anchored to an
         # unknowable date (chosen-date forgery: any target is certifiable).
+        # Runs BEFORE date arithmetic so rejected business-day terms never
+        # iterate the holiday calendar.
         anchor_match = self._EVENT_ANCHOR_RE.search(term.lower())
         if anchor_match:
             return DeadlineResult(
@@ -291,7 +290,10 @@ class DeadlineGuard:
                     )
                 ],
             )
-        
+
+        # Parse term and calculate deadline
+        computed, used_business_days = self._calculate_deadline(signing, term)
+
         # Fail-closed: if the term is ambiguous, do not verify
         if computed is None:
             return DeadlineResult(
@@ -329,9 +331,16 @@ class DeadlineGuard:
         # Compare at the declared date granularity (issue #56): datetimes
         # compare as dates, so a claim 23h59m late is a 1-day mismatch
         # instead of flooring to 0 (verified exact), and sub-daily noise
-        # on the same date is not a mismatch. Timezone-aware inputs are
-        # safe here — .date() compares without subtracting datetimes.
-        diff = abs((claimed.date() - computed.date()).days)
+        # on the same date is not a mismatch. When both sides are
+        # timezone-aware they are compared in UTC first, so the same
+        # moment in different offsets is not a false mismatch.
+        if claimed.tzinfo is not None and computed.tzinfo is not None:
+            claimed_day = claimed.astimezone(timezone.utc).date()
+            computed_day = computed.astimezone(timezone.utc).date()
+        else:
+            claimed_day = claimed.date()
+            computed_day = computed.date()
+        diff = abs((claimed_day - computed_day).days)
         verified = diff <= tolerance_days
 
         # QWED: if business days were used but the requested holiday calendar
@@ -437,14 +446,18 @@ class DeadlineGuard:
     # Any numeric token in the term, integer or decimal ("4.2", "1,000").
     _ANY_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
     # Event anchors that re-anchor a term away from the signing date
-    # (issue #54). A term carrying one of these nouns cannot be computed
-    # from signing — the real deadline needs the anchor event's date.
-    # Deliberately excludes signing-adjacent nouns ("signing",
-    # "execution"): those keep the signing anchor. "event" itself is
-    # excluded as too generic ("in the event of" is conditional, not a
-    # temporal anchor).
+    # (issue #54). Only a preposition-governed event noun counts as an
+    # anchor ("after receipt", "within 15 days of payment") — a bare
+    # mention ("30 days from signing to deliver notice") leaves the
+    # signing anchor intact. Up to two intervening words allow adjectives
+    # ("after written notice"). Plurals included ("receipts",
+    # "deliveries"). Deliberately excludes signing-adjacent nouns
+    # ("signing", "execution") and generic "event" ("in the event of" is
+    # conditional, not a temporal anchor).
     _EVENT_ANCHOR_RE = re.compile(
-        r"\b(receipt|notice|delivery|occurrence|demand|invoice|breach|termination)\b"
+        r"\b(?:after|following|upon|from|within|of)\s+(?:[a-z]+\s+){0,2}?"
+        r"(receipts?|notices?|deliver(?:y|ies)|occurrences?|demands?|"
+        r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?)\b"
     )
 
     # No legal deadline spans this magnitude (~274 years). Bounding the

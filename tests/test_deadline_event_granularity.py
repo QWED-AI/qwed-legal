@@ -43,10 +43,23 @@ class TestEventAnchoredTerms:
             "45 days after invoice",
             "10 days after occurrence",
             "WITHIN 15 DAYS AFTER RECEIPT",
+            "30 days after acceptance",
+            "15 days after payment",
+            "15 days after receipts",
+            "15 days after deliveries",
+            "10 days after written notice",
         ):
             result = self.guard.verify("2026-01-01", term, "2026-02-01")
             assert result.verified is False, term
             assert result.is_computable is False, term
+
+    def test_signing_mentions_do_not_trigger_event_gate(self):
+        # "notice" here is the obligation, not the anchor: the period
+        # starts at signing, which the guard can compute.
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing to deliver notice", "2026-01-31"
+        )
+        assert result.verified is True
 
     def test_signing_anchored_terms_still_verify(self):
         assert self.guard.verify("2026-01-01", "30 days", "2026-01-31").verified is True
@@ -89,3 +102,12 @@ class TestDateGranularityComparison:
         result = self.guard.verify("2026-01-15", "30 days", "2026-02-15", tolerance_days=1)
         assert result.verified is True
         assert result.difference_days == 1
+
+    def test_same_moment_different_offsets_verifies(self):
+        # 2026-02-14 20:00-05:00 == 2026-02-15 01:00+00:00: UTC-normalized
+        # comparison must not report a one-day mismatch.
+        result = self.guard.verify(
+            "2026-01-15 20:00-05:00", "30 days", "2026-02-15 01:00+00:00"
+        )
+        assert result.verified is True
+        assert result.difference_days == 0
