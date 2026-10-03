@@ -104,10 +104,30 @@ class TestDateGranularityComparison:
         assert result.difference_days == 1
 
     def test_same_moment_different_offsets_verifies(self):
-        # 2026-02-14 20:00-05:00 == 2026-02-15 01:00+00:00: UTC-normalized
-        # comparison must not report a one-day mismatch.
+        # 2026-02-14 20:00-05:00 == 2026-02-15 01:00+00:00: compared in the
+        # deadline's frame, not UTC, so no false mismatch.
         result = self.guard.verify(
             "2026-01-15 20:00-05:00", "30 days", "2026-02-15 01:00+00:00"
         )
         assert result.verified is True
         assert result.difference_days == 0
+
+    def test_next_day_in_deadline_frame_is_mismatch(self):
+        # Same region, next local day: Feb 15 00:00+05:00 is not Feb 14,
+        # even though both fall on Feb 14 in UTC.
+        result = self.guard.verify(
+            "2026-01-15 23:00+05:00", "30 days", "2026-02-15 00:00+05:00"
+        )
+        assert result.verified is False
+        assert result.difference_days == 1
+
+    def test_mismatch_message_reports_compared_days(self):
+        # The message must never show identical dates with a non-zero
+        # difference: it reports the normalized comparison days.
+        result = self.guard.verify(
+            "2026-01-15 23:00+05:00", "30 days", "2026-02-14 22:00-08:00"
+        )
+        assert result.verified is False
+        assert "Expected 2026-02-14" in result.message
+        assert "claimed 2026-02-15" in result.message
+        assert "Difference: 1 days." in result.message

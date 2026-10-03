@@ -5,7 +5,7 @@ Handles business days, calendar days, leap years, and holiday exclusions.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 import re
 
@@ -331,15 +331,8 @@ class DeadlineGuard:
         # Compare at the declared date granularity (issue #56): datetimes
         # compare as dates, so a claim 23h59m late is a 1-day mismatch
         # instead of flooring to 0 (verified exact), and sub-daily noise
-        # on the same date is not a mismatch. When both sides are
-        # timezone-aware they are compared in UTC first, so the same
-        # moment in different offsets is not a false mismatch.
-        if claimed.tzinfo is not None and computed.tzinfo is not None:
-            claimed_day = claimed.astimezone(timezone.utc).date()
-            computed_day = computed.astimezone(timezone.utc).date()
-        else:
-            claimed_day = claimed.date()
-            computed_day = computed.date()
+        # on the same date is not a mismatch.
+        claimed_day, computed_day = self._comparison_days(claimed, computed)
         diff = abs((claimed_day - computed_day).days)
         verified = diff <= tolerance_days
 
@@ -362,10 +355,13 @@ class DeadlineGuard:
         elif verified:
             message = "✅ VERIFIED: Deadline calculation is correct."
         else:
+            # The message reports the compared calendar days (not the raw
+            # local dates), so it can never show identical dates alongside
+            # a non-zero difference.
             message = (
                 f"❌ ERROR: Deadline mismatch. "
-                f"Expected {computed.strftime('%Y-%m-%d')}, "
-                f"but LLM claimed {claimed.strftime('%Y-%m-%d')}. "
+                f"Expected {computed_day.isoformat()}, "
+                f"but LLM claimed {claimed_day.isoformat()}. "
                 f"Difference: {diff} days."
             )
 
@@ -464,6 +460,20 @@ class DeadlineGuard:
     # parsed quantity bounds both date arithmetic and the business-day
     # iteration loop (issue #42: unhandled OverflowError / unbounded loop).
     _MAX_TERM_QUANTITY = 100_000
+
+    @staticmethod
+    def _comparison_days(claimed: datetime, computed: datetime):
+        """Calendar days for date-granularity comparison (issue #56).
+
+        Both-aware inputs compare in the computed deadline's timezone, so
+        the same moment in different offsets is not a false mismatch while
+        the deadline's calendar-day meaning is preserved. Anything else
+        compares naive calendar dates (.date() never subtracts datetimes,
+        so mixed aware/naive inputs cannot raise here).
+        """
+        if claimed.tzinfo is not None and computed.tzinfo is not None:
+            return claimed.astimezone(computed.tzinfo).date(), computed.date()
+        return claimed.date(), computed.date()
 
     def _calculate_deadline(
         self, start_date: datetime, term: str
