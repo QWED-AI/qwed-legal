@@ -152,10 +152,14 @@ class DeadlineGuard:
             if detect_order_ambiguity(raw)
         ]
         if ambiguous_fields:
+            # Parsed datetimes are recorded as None: a yearless input like
+            # "03/04" reaches this gate with its year from the clock, and
+            # returning it would show different dates on different runs.
+            # Raw strings stay in the trace below.
             return DeadlineResult(
                 verified=False,
-                signing_date=signing,
-                claimed_deadline=claimed,
+                signing_date=None,
+                claimed_deadline=None,
                 computed_deadline=None,
                 term_parsed=term,
                 difference_days=None,
@@ -527,9 +531,10 @@ class DeadlineGuard:
         Useful for verifying claims like "response required within 10 business days."
 
         Raises:
-            ValueError: If either date is order-ambiguous (issue #55) —
-                a silently month-first count would be a wrong answer, so
-                the caller must disambiguate first.
+            ValueError: If either date is order-ambiguous or partial
+                (issues #55, #57) — a silently month-first or
+                clock-completed count would be a wrong answer, so the
+                caller must disambiguate first.
         """
         ambiguous = [
             label
@@ -541,6 +546,16 @@ class DeadlineGuard:
                 f"Order-ambiguous date(s): {', '.join(ambiguous)}. Supply an "
                 f"ISO year-leading date (YYYY-MM-DD) or an unambiguous "
                 f"written date."
+            )
+        incomplete = [
+            label
+            for label, raw in (("start_date", start_date), ("end_date", end_date))
+            if detect_incomplete_date(raw)
+        ]
+        if incomplete:
+            raise ValueError(
+                f"Partial date(s): {', '.join(incomplete)}. Supply a "
+                f"complete date (YYYY-MM-DD)."
             )
         start = parse_date(start_date)
         end = parse_date(end_date)

@@ -37,6 +37,15 @@ class TestDetectIncompleteDate:
         assert detect_incomplete_date("not a date") is False
         assert detect_incomplete_date("") is False
 
+    def test_yearless_leap_day_is_incomplete(self):
+        # Parses under the leap sentinel (2000) but not the non-leap one
+        # (1999) — the year would come from the run-year clock.
+        assert detect_incomplete_date("February 29") is True
+        assert detect_incomplete_date("Feb 29") is True
+
+    def test_explicit_leap_dates_are_complete(self):
+        assert detect_incomplete_date("February 29, 2024") is False
+
 
 class TestDeadlinePartialDates:
     """Issue #57 (deadline prong)."""
@@ -68,6 +77,13 @@ class TestDeadlinePartialDates:
     def test_iso_dates_still_verify(self):
         result = self.guard.verify("2026-01-01", "30 days", "2026-01-31")
         assert result.verified is True
+
+    def test_yearless_leap_day_never_verifies(self):
+        # In a leap run-year the completeness gate fires; otherwise the
+        # parse-failure path does. Either way: never verified, never computed.
+        result = self.guard.verify("February 29", "30 days", "2026-03-30")
+        assert result.verified is False
+        assert result.is_computable is False
 
 
 class TestStatutePartialDates:
@@ -120,3 +136,14 @@ class TestStatutePartialDates:
         )
         assert result.verified is True
         assert result.status == "CLAIM_VERIFIED"
+
+    def test_yearless_leap_day_never_verifies(self):
+        result = self.guard.verify(
+            claim_type="breach_of_contract",
+            jurisdiction="California",
+            incident_date="February 29",
+            filing_date="2026-04-01",
+            claimed_within_period=True,
+        )
+        assert result.verified is False
+        assert result.status == "UNVERIFIABLE"

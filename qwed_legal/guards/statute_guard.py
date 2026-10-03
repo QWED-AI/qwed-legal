@@ -405,12 +405,15 @@ class StatuteOfLimitationsGuard:
             if detect_order_ambiguity(raw)
         ]
         if ambiguous_fields:
+            # Parsed datetimes are recorded as None for the same reason as
+            # the completeness gate: clock-filled values must not leak into
+            # results. Raw strings stay in the trace below.
             return StatuteResult(
                 verified=False,
                 claim_type=claim_type,
                 jurisdiction=jurisdiction,
-                incident_date=incident,
-                filing_date=filing,
+                incident_date=None,
+                filing_date=None,
                 limitation_period_years=None,
                 expiration_date=None,
                 days_remaining=None,

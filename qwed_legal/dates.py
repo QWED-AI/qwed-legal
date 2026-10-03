@@ -56,9 +56,12 @@ def detect_incomplete_date(raw: str) -> bool:
 
     Parses under two sentinel defaults differing in year, month, and day;
     divergence means the input left a component unspecified ("March 2024",
-    "Friday", "23:00"). Comparison is date-only so supplied times of day
-    do not count as incomplete. Returns False for unparseable inputs —
-    those fail closed downstream at parse time, not here.
+    "Friday", "23:00"). A date that parses under only one sentinel is also
+    incomplete — e.g. yearless "February 29" parses under the leap default
+    but not the non-leap one, and would otherwise take its year from the
+    run-year clock. Comparison is date-only so supplied times of day do
+    not count as incomplete. Returns False for unparseable inputs — those
+    fail closed downstream at parse time, not here.
     """
     text = (raw or "").strip()
     if not text:
@@ -66,10 +69,14 @@ def detect_incomplete_date(raw: str) -> bool:
     try:
         under_a = parse_date(text, default=_SENTINEL_A)
     except Exception:
-        return False
+        under_a = None
     try:
         under_b = parse_date(text, default=_SENTINEL_B)
     except Exception:
+        under_b = None
+    if (under_a is None) != (under_b is None):
+        return True
+    if under_a is None:
         return False
     return (under_a.year, under_a.month, under_a.day) != (
         under_b.year,

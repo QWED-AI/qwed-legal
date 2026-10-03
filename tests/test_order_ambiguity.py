@@ -91,6 +91,20 @@ class TestBusinessDaysCalculatorAmbiguity:
         count = self.guard.calculate_business_days_between("2026-04-01", "2026-04-08")
         assert count == 5
 
+    def test_partial_inputs_raise(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="Partial date"):
+            self.guard.calculate_business_days_between("March 2024", "2026-05-01")
+
+    def test_yearless_ambiguous_inputs_expose_no_clock_dates(self):
+        # "03/04" is both ambiguous and yearless: the rejection must not
+        # record clock-filled datetimes in the result fields.
+        result = DeadlineGuard().verify("03/04", "30 days", "2026-04-03")
+        assert result.verified is False
+        assert result.signing_date is None
+        assert result.claimed_deadline is None
+
 
 class TestStatuteOrderAmbiguity:
     """Issue #58: StatuteGuard must not certify WITHIN on ambiguity."""
