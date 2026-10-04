@@ -480,8 +480,11 @@ class DeadlineGuard:
     # excludes signing-adjacent nouns ("signing", "execution") and generic
     # "event" ("in the event of" is conditional, not a temporal anchor).
     _EVENT_ANCHOR_RE = re.compile(
-        r"\b(?:after|following|upon|on|from|within|(?:day|days|week|weeks|month|months|year|years)\s+of)\s+"
-        r"(?:(?:[a-z]+\s+){0,2}?|the\s+date\s+(?:the\s+|of\s+))"
+        r"\b(?:after|following|upon|from|within|"
+        r"(?:conditioned|conditional|contingent|dependent)\s+(?:up\s+)?on|"
+        r"subject\s+to|"
+        r"(?:day|days|week|weeks|month|months|year|years)\s+(?:of|on))\s+"
+        r"(?:(?:[a-z'’]+\s+){0,2}?|the\s+date\s+(?:the\s+|of\s+))"
         r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
         r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?|approval(?:s)?)\b"
     )
@@ -498,7 +501,7 @@ class DeadlineGuard:
     # such phrases are conditions on the obligation, not temporal anchors.
     # Checked against the text preceding each event match.
     _CONDITIONAL_EVENT_RE = re.compile(
-        r"\b(?:(?:conditioned|conditional|contingent|dependent)\s+(?:up)?on|subject\s+to)\s+(?:[a-z]+\s+){0,2}$"
+        r"\b(?:(?:conditioned|conditional|contingent|dependent)\s+(?:up)?on|subject\s+to)\s+(?:[a-z'’]+\s+){0,2}$"
     )
     # Nouns that can name a condition rather than a temporal anchor:
     # agentive acts ("acceptance", "approval", "payment") are things a
@@ -553,7 +556,7 @@ class DeadlineGuard:
         link_re = re.compile(
             r"\b(?:start|commencement|effective)(?:\s+date)?\s+"
             r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
-            r"depend(?:ent|s|ed|ing)?\s+on\s+(?:[a-z]+\s+){0,2}?"
+            r"depend(?:ent|s|ed|ing)?\s+on\s+(?:[a-z'’]+\s+){0,2}?"
             + re.escape(event_noun)
             + r"\b"
         )
