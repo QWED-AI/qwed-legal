@@ -498,7 +498,7 @@ class DeadlineGuard:
     # such phrases are conditions on the obligation, not temporal anchors.
     # Checked against the text preceding each event match.
     _CONDITIONAL_EVENT_RE = re.compile(
-        r"\b(?:(?:conditioned|conditional|contingent)\s+(?:up)?on|subject\s+to)\s+(?:[a-z]+\s+){0,2}$"
+        r"\b(?:(?:conditioned|conditional|contingent|dependent)\s+(?:up)?on|subject\s+to)\s+(?:[a-z]+\s+){0,2}$"
     )
 
     @staticmethod

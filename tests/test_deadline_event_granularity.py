@@ -87,6 +87,16 @@ class TestEventAnchoredTerms:
         )
         assert result.verified is True
 
+    def test_dependent_clause_keeps_signing_anchor(self):
+        # Same conditional family as "conditioned upon": "dependent on
+        # acceptance" conditions the obligation without re-anchoring it.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, dependent on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
     def test_mixed_signing_and_event_anchors_fail_closed(self):
         result = self.guard.verify(
             "2026-01-01",
