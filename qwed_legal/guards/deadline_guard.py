@@ -45,6 +45,27 @@ def _start_date_link_re(event_noun: str) -> "re.Pattern[str]":
     )
 
 
+def _segment_bounds(term_lower: str) -> list:
+    """Top-level comma/semicolon boundaries for clause scoping.
+
+    Commas nested in parentheses do not split: "(a, b)" stays one
+    segment, so wording inside parens cannot be cut away from the clause
+    it belongs to. Computed once per call and shared by the anchor and
+    start-date checks (a per-candidate rescan would be quadratic).
+    """
+    bounds = [0]
+    depth = 0
+    for i, ch in enumerate(term_lower):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch in ",;" and depth == 0:
+            bounds.append(i + 1)
+    bounds.append(len(term_lower))
+    return bounds
+
+
 @dataclass(frozen=True)
 class DeadlineResult(LegalDiagnosticsMixin):
     """Result of deadline verification."""
@@ -278,36 +299,14 @@ class DeadlineGuard:
         # date. Computing from signing certifies deadlines anchored to an
         # unknowable date (chosen-date forgery: any target is certifiable).
         # Runs BEFORE date arithmetic so rejected business-day terms never
-        # iterate the holiday calendar.
-        anchor = self._event_anchor(term.lower())
-        if anchor:
-            return DeadlineResult(
-                verified=False,
-                signing_date=signing,
-                claimed_deadline=claimed,
-                computed_deadline=None,
-                term_parsed=term,
-                difference_days=None,
-                message=(
-                    f"⚠️ UNVERIFIABLE: Term '{term}' is anchored to an "
-                    f"event ('{anchor}'), not to the "
-                    f"signing date. The real deadline is unknowable from "
-                    f"these inputs — supply the anchor event's date."
-                ),
-                is_computable=False,
-                verification_trace=[
-                    VerificationStep(
-                        step=STEP_RULE_IDENTIFIED,
-                        description="Checked term for event anchors before computing from signing date.",
-                        inputs={"term": term},
-                        output=(
-                            "UNSUPPORTED: event-anchored term — anchor "
-                            f"'{anchor}' has no supplied date."
-                        ),
-                        evidence_type=EVIDENCE_UNSUPPORTED,
-                    )
-                ],
-            )
+        # iterate the holiday calendar. A negated signing anchor with no
+        # valid replacement fails closed the same way.
+        anchor, negated_only = self._event_anchor(term.lower())
+        anchor_rejection = self._reject_bad_anchor(
+            term, signing, claimed, anchor, negated_only
+        )
+        if anchor_rejection is not None:
+            return anchor_rejection
 
         # Parse term and calculate deadline
         computed, used_business_days = self._calculate_deadline(signing, term)
@@ -558,20 +557,12 @@ class DeadlineGuard:
         governance ("(start date dependent on acceptance)"). A sealed
         clarification ("(start date is signing)") matches neither form.
         """
-        # Segments split on top-level commas/semicolons only: a comma
+        # Segments split on top-level commas/semicolons only (shared
+        # helper — a per-call rescan here would be quadratic): a comma
         # nested in parens must not move the boundary, or governance like
         # "(start date dependent, they agree, on acceptance)" would be cut
         # away from its event.
-        bounds = [0]
-        depth = 0
-        for i, ch in enumerate(term_lower):
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth = max(0, depth - 1)
-            elif ch in ",;" and depth == 0:
-                bounds.append(i + 1)
-        bounds.append(len(term_lower))
+        bounds = _segment_bounds(term_lower)
         seg_start = max(b for b in bounds if b <= pos)
         seg_end = min(b for b in bounds if b > pos)
         # Match against both forms: stripping parentheticals keeps an
@@ -588,8 +579,8 @@ class DeadlineGuard:
         )
 
     @staticmethod
-    def _event_anchor(term_lower: str) -> "Optional[str]":
-        """Event noun anchoring the term's period, or None.
+    def _event_anchor(term_lower: str) -> "tuple[Optional[str], bool]":
+        """Event noun anchoring the term's period, plus negated-only flag.
 
         Scans every event match in order: a match preceded by a signing
         anchor is skipped only when conditional wording governs a
@@ -599,21 +590,18 @@ class DeadlineGuard:
         receipt"), conditional wording around a temporal noun ("dependent
         on receipt"), or an explicit start-date event ("start date
         dependent on acceptance") re-anchors the period and fails closed.
-        Returns the matched event noun for messaging.
+        Returns (event noun or None, True when a signing anchor was seen
+        only in negated form with no valid replacement).
         """
         signing_match = None
+        negated_signing = False
+        bounds = _segment_bounds(term_lower)
         for candidate in DeadlineGuard._SIGNING_ANCHOR_RE.finditer(term_lower):
-            seg_start = max(
-                [0]
-                + [
-                    m.end()
-                    for m in re.finditer(r"[,;]", term_lower)
-                    if m.end() <= candidate.start()
-                ]
-            )
+            seg_start = max(b for b in bounds if b <= candidate.start())
             if DeadlineGuard._SIGNING_NEGATION_RE.search(
                 term_lower[seg_start : candidate.start()]
             ):
+                negated_signing = True
                 continue
             signing_match = candidate
             break
@@ -629,8 +617,59 @@ class DeadlineGuard:
                 )
             ):
                 continue
-            return event_match.group(1)
-        return None
+            return event_match.group(1), False
+        return None, negated_signing and signing_match is None
+
+    def _reject_bad_anchor(
+        self,
+        term: str,
+        signing: datetime,
+        claimed: datetime,
+        anchor: Optional[str],
+        negated_only: bool,
+    ) -> "Optional[DeadlineResult]":
+        """UNVERIFIABLE rejection for unanchored terms, else None."""
+        if anchor is None and not negated_only:
+            return None
+        if negated_only:
+            message = (
+                f"⚠️ UNVERIFIABLE: Term '{term}' negates the signing date "
+                f"and supplies no supported replacement anchor."
+            )
+            output = (
+                "UNSUPPORTED: signing date is negated with no "
+                "supported replacement anchor."
+            )
+        else:
+            message = (
+                f"⚠️ UNVERIFIABLE: Term '{term}' is anchored to an "
+                f"event ('{anchor}'), not to the "
+                f"signing date. The real deadline is unknowable from "
+                f"these inputs — supply the anchor event's date."
+            )
+            output = (
+                "UNSUPPORTED: event-anchored term — anchor "
+                f"'{anchor}' has no supplied date."
+            )
+        return DeadlineResult(
+            verified=False,
+            signing_date=signing,
+            claimed_deadline=claimed,
+            computed_deadline=None,
+            term_parsed=term,
+            difference_days=None,
+            message=message,
+            is_computable=False,
+            verification_trace=[
+                VerificationStep(
+                    step=STEP_RULE_IDENTIFIED,
+                    description="Checked term for unsupported anchors before computing from signing date.",
+                    inputs={"term": term},
+                    output=output,
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                )
+            ],
+        )
 
     # No legal deadline spans this magnitude (~274 years). Bounding the
     # parsed quantity bounds both date arithmetic and the business-day

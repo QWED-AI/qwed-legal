@@ -89,6 +89,25 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_negated_only_signing_fails_closed(self):
+        # No event anchor at all — but the only signing anchor is negated,
+        # so there is nothing to compute from.
+        result = self.guard.verify("2026-01-01", "30 days, not from signing", "2026-01-31")
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None
+
+    def test_paren_comma_negation_fails_closed(self):
+        # The comma lives inside parens: depth-aware splitting keeps the
+        # negation in the anchor's segment.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not, however, from signing) but dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_later_valid_signing_anchor_computes(self):
         # The negated "from execution" is dropped, but the later valid
         # "from signing" still anchors with the conditional approval.
