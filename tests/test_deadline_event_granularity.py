@@ -53,6 +53,12 @@ class TestEventAnchoredTerms:
             assert result.verified is False, term
             assert result.is_computable is False, term
 
+    def test_on_preposition_anchors_fail_closed(self):
+        for term in ("30 days on receipt", "30 days on delivery"):
+            result = self.guard.verify("2026-01-01", term, "2026-01-31")
+            assert result.verified is False, term
+            assert result.is_computable is False, term
+
     def test_notice_date_phrase_fails_closed(self):
         # Three words precede the noun — covered by the targeted "the
         # date the" alternative, not the general two-word gap.

@@ -480,7 +480,7 @@ class DeadlineGuard:
     # excludes signing-adjacent nouns ("signing", "execution") and generic
     # "event" ("in the event of" is conditional, not a temporal anchor).
     _EVENT_ANCHOR_RE = re.compile(
-        r"\b(?:after|following|upon|from|within|(?:day|days|week|weeks|month|months|year|years)\s+of)\s+"
+        r"\b(?:after|following|upon|on|from|within|(?:day|days|week|weeks|month|months|year|years)\s+of)\s+"
         r"(?:(?:[a-z]+\s+){0,2}?|the\s+date\s+(?:the\s+|of\s+))"
         r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
         r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?)\b"
