@@ -71,10 +71,32 @@ class TestEventAnchoredTerms:
         for term in (
             "30 days commencing on receipt",
             "the period shall commence on delivery, 30 days to pay",
+            "the period commences on delivery, 30 days to pay",
+            "the period commenced on delivery, 30 days to pay",
         ):
             result = self.guard.verify("2026-01-01", term, "2026-01-31")
             assert result.verified is False, term
             assert result.is_computable is False, term
+
+    def test_negated_signing_does_not_anchor(self):
+        # "not from signing" rules the signing date out: without a usable
+        # anchor the unknown payment date decides.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days not from the date of signing, but dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_subject_to_start_date_link_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, the start date is subject to approval",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
 
     def test_date_of_signing_keeps_computation(self):
         result = self.guard.verify(

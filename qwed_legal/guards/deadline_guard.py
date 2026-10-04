@@ -6,6 +6,7 @@ Handles business days, calendar days, leap years, and holiday exclusions.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Optional
 import re
 
@@ -25,6 +26,23 @@ from qwed_legal.models import (
     EVIDENCE_PARSED,
     EVIDENCE_UNSUPPORTED,
 )
+
+
+@lru_cache(maxsize=None)
+def _start_date_link_re(event_noun: str) -> "re.Pattern[str]":
+    """Start-date link terminating at the given event noun.
+
+    Cached: the noun comes from a regex match over caller input, so the
+    pattern is compiled once per noun (re.escape neutralizes metacharacters;
+    caching also avoids recompiling on every call).
+    """
+    return re.compile(
+        r"\b(?:start|commencement|effective)(?:\s+date)?\s+"
+        r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
+        r"(?:depend(?:ent|s|ed|ing)?\s+on|subject\s+to)\s+(?:[a-z'’]+\s+){0,2}?"
+        + re.escape(event_noun)
+        + r"\b"
+    )
 
 
 @dataclass(frozen=True)
@@ -483,7 +501,7 @@ class DeadlineGuard:
         r"\b(?:after|following|upon|from|within|"
         r"(?:conditioned|conditional|contingent|dependent)\s+(?:up\s+)?on|"
         r"subject\s+to|"
-        r"(?:commenc(?:e|ing)\s+on)|"
+        r"(?:commenc(?:e|ing|es|ed)\s+on)|"
         r"(?:day|days|week|weeks|month|months|year|years)\s+(?:of|on))\s+"
         r"(?:(?:[a-z'’]+\s+){0,2}?|the\s+date\s+(?:the\s+|of\s+))"
         r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
@@ -497,6 +515,10 @@ class DeadlineGuard:
     _SIGNING_ANCHOR_RE = re.compile(
         r"\b(?:after|following|upon|from|within|of)\s+(?:the\s+(?:date\s+of\s+)?)?(?:signing|execution)\b"
     )
+    # A negated signing anchor ("not from signing", "never from the date
+    # of signing") is not an anchor at all — the term rules the signing
+    # date out. Checked in the few words before the match.
+    _SIGNING_NEGATION_RE = re.compile(r"\b(?:not|never|neither|nor|n't)\b")
     # Conditional-event wording names an event without anchoring the
     # period to it ("conditioned upon acceptance", "subject to approval"):
     # such phrases are conditions on the obligation, not temporal anchors.
@@ -554,13 +576,7 @@ class DeadlineGuard:
         # on ...") intact, while the raw segment keeps sealed governance
         # ("(start date dependent on acceptance)"). A sealed
         # clarification ("(start date is signing)") matches neither form.
-        link_re = re.compile(
-            r"\b(?:start|commencement|effective)(?:\s+date)?\s+"
-            r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
-            r"depend(?:ent|s|ed|ing)?\s+on\s+(?:[a-z'’]+\s+){0,2}?"
-            + re.escape(event_noun)
-            + r"\b"
-        )
+        link_re = _start_date_link_re(event_noun)
         seg_text = term_lower[seg_start:seg_end]
         seg_stripped = re.sub(r"\([^)]*\)", " ", seg_text)
         return (
@@ -583,6 +599,12 @@ class DeadlineGuard:
         Returns the matched event noun for messaging.
         """
         signing_match = DeadlineGuard._SIGNING_ANCHOR_RE.search(term_lower)
+        if signing_match is not None:
+            # A negated signing anchor rules the signing date out instead
+            # of establishing it — drop it so the event anchor decides.
+            before = " ".join(term_lower[: signing_match.start()].split()[-4:])
+            if DeadlineGuard._SIGNING_NEGATION_RE.search(before):
+                signing_match = None
         for event_match in DeadlineGuard._EVENT_ANCHOR_RE.finditer(term_lower):
             prefix = term_lower[: event_match.start(1)]
             if (
