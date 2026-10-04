@@ -4,6 +4,7 @@ DeadlineGuard: Verify date calculations in legal contracts.
 Handles business days, calendar days, leap years, and holiday exclusions.
 """
 
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -538,8 +539,12 @@ class DeadlineGuard:
     # date out. Negation is read from the anchor's own comma/semicolon
     # segment (a fixed word window misses distant negations like "not
     # under any circumstances measured from signing"), and later anchors
-    # are still considered ("not from execution, but from signing").
-    _SIGNING_NEGATION_RE = re.compile(r"\b(?:not|never|neither|nor|n't)\b")
+    # are still considered ("not from execution, but from signing"). A
+    # negation directly supported by do/does/did ("does not object")
+    # belongs to another verb, not the anchor.
+    _SIGNING_NEGATION_RE = re.compile(
+        r"(?<!\bdo\s)(?<!\bdoes\s)(?<!\bdid\s)\b(?:not|never|neither|nor|n't)\b"
+    )
     # Conditional-event wording names an event without anchoring the
     # period to it ("conditioned upon acceptance", "subject to approval"):
     # such phrases are conditions on the obligation, not temporal anchors.
@@ -567,16 +572,19 @@ class DeadlineGuard:
     # commencement shall be dependent on staffing") leaves the
     # conditional skip intact.
     @staticmethod
-    def _signing_negated(term_lower: str, seg_start: int, pos: int) -> bool:
+    def _signing_negated(term_lower: str, window_start: int, pos: int) -> bool:
         """Negation governing the anchor at pos, paren-aware.
 
-        Inert parentheticals are stripped first so a sealed "not" ("(not
+        Searches only back to window_start (segment start or previous
+        anchor end), so one negation cannot govern two anchors: each
+        "not" is consumed by the first anchor after it. Inert
+        parentheticals are stripped first so a sealed "not" ("(not
         subject to change, as agreed)") cannot negate an outside anchor —
         but bare "(not)" stays, and an anchor inside parens ("(not,
         however, from signing)") keeps its negation because truncation at
         pos leaves that paren unclosed and therefore unstrippable.
         """
-        seg_text = term_lower[seg_start:pos]
+        seg_text = term_lower[window_start:pos]
         return (
             DeadlineGuard._SIGNING_NEGATION_RE.search(
                 _strip_inert_parens(seg_text)
@@ -600,8 +608,8 @@ class DeadlineGuard:
         # "(start date dependent, they agree, on acceptance)" would be cut
         # away from its event.
         bounds = _segment_bounds(term_lower)
-        seg_start = max(b for b in bounds if b <= pos)
-        seg_end = min(b for b in bounds if b > pos)
+        seg_start = bounds[bisect_right(bounds, pos) - 1]
+        seg_end = bounds[bisect_right(bounds, pos)]
         # Match against both forms: stripping parentheticals keeps an
         # interrupted link ("the start date (as defined herein) dependent
         # on ...") intact, while the raw segment keeps sealed governance
@@ -633,12 +641,14 @@ class DeadlineGuard:
         signing_match = None
         negated_signing = False
         bounds = _segment_bounds(term_lower)
+        prev_end = 0
         for candidate in DeadlineGuard._SIGNING_ANCHOR_RE.finditer(term_lower):
-            seg_start = max(b for b in bounds if b <= candidate.start())
+            seg_start = bounds[bisect_right(bounds, candidate.start()) - 1]
             if DeadlineGuard._signing_negated(
-                term_lower, seg_start, candidate.start()
+                term_lower, max(seg_start, prev_end), candidate.start()
             ):
                 negated_signing = True
+                prev_end = candidate.end()
                 continue
             signing_match = candidate
             break

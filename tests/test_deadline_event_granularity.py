@@ -118,6 +118,25 @@ class TestEventAnchoredTerms:
         )
         assert result.verified is True
 
+    def test_negation_consumed_by_first_anchor(self):
+        # "(not)" negates "from execution"; the later "from signing" is
+        # governed by nothing and anchors with the conditional approval.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not) from execution but from signing, subject to approval",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_does_not_object_keeps_signing_anchor(self):
+        # Do-supported "not" belongs to another verb, not the anchor.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days for any party that does not object from signing",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
     def test_bare_not_paren_negates_following_anchor(self):
         # A bare "(not)" is an interjected negation of what follows.
         result = self.guard.verify(
