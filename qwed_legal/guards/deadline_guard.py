@@ -514,21 +514,28 @@ class DeadlineGuard:
         }
     )
     # Explicit start-date language defeats any conditional reading — but
-    # only inside the event's own comma/paren segment, so a parenthetical
-    # clarification ("(start date is signing)") cannot re-anchor a
-    # distant event.
-    _START_DATE_RE = re.compile(r"\b(?:start|commencement|effective)\s+date\b")
+    # only inside the event's own comma/semicolon segment, so a
+    # parenthetical clarification ("(start date is signing)") cannot
+    # re-anchor a distant event. Parentheses do NOT split: wording like
+    # "the start date (as defined herein) dependent on acceptance" still
+    # governs its event. Bare "commencement" counts ("the period's
+    # commencement is dependent on payment") — unlike "start", it has no
+    # non-temporal use in this position.
+    _START_DATE_RE = re.compile(
+        r"\b(?:commencement|(?:start|effective)\s+date)\b"
+    )
 
     @staticmethod
     def _start_date_governs(term_lower: str, pos: int) -> bool:
-        """Start-date language inside the event's own comma/paren segment.
+        """Start-date language inside the event's own comma/semicolon segment.
 
-        A parenthetical clarification ("(start date is signing)") lives in
-        its own segment and cannot re-anchor a distant event; only
-        same-segment wording ("with the start date dependent on
-        acceptance") defeats a conditional reading.
+        A parenthetical clarification ("(start date is signing)") is split
+        off by its comma, so it cannot re-anchor a distant event — but
+        wording interrupted only by parens ("the start date (as defined
+        herein) dependent on acceptance") still governs. Parentheses do
+        not split segments.
         """
-        bounds = [0] + [m.end() for m in re.finditer(r"[,;()]", term_lower)]
+        bounds = [0] + [m.end() for m in re.finditer(r"[,;]", term_lower)]
         bounds.append(len(term_lower))
         seg_start = max(b for b in bounds if b <= pos)
         seg_end = min(b for b in bounds if b > pos)

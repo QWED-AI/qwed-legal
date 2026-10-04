@@ -127,6 +127,27 @@ class TestEventAnchoredTerms:
         )
         assert result.verified is True
 
+    def test_bare_commencement_reanchors(self):
+        # Unlike "start", bare "commencement" has no non-temporal use
+        # here: the period's commencement depending on payment means
+        # payment starts the clock.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, the period's commencement is dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_paren_interrupted_start_date_reanchors(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, with the start date (as defined herein) dependent on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_plain_approval_anchor_fails_closed(self):
         result = self.guard.verify(
             "2026-01-01", "30 days after approval", "2026-01-31"
