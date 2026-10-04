@@ -529,7 +529,19 @@ class DeadlineGuard:
         governance ("(start date dependent on acceptance)"). A sealed
         clarification ("(start date is signing)") matches neither form.
         """
-        bounds = [0] + [m.end() for m in re.finditer(r"[,;]", term_lower)]
+        # Segments split on top-level commas/semicolons only: a comma
+        # nested in parens must not move the boundary, or governance like
+        # "(start date dependent, they agree, on acceptance)" would be cut
+        # away from its event.
+        bounds = [0]
+        depth = 0
+        for i, ch in enumerate(term_lower):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth = max(0, depth - 1)
+            elif ch in ",;" and depth == 0:
+                bounds.append(i + 1)
         bounds.append(len(term_lower))
         seg_start = max(b for b in bounds if b <= pos)
         seg_end = min(b for b in bounds if b > pos)
@@ -541,7 +553,9 @@ class DeadlineGuard:
         link_re = re.compile(
             r"\b(?:start|commencement|effective)(?:\s+date)?\s+"
             r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
-            r"depend(?:ent|s|ed|ing)?\s+on\s+" + re.escape(event_noun) + r"\b"
+            r"depend(?:ent|s|ed|ing)?\s+on\s+(?:[a-z]+\s+){0,2}?"
+            + re.escape(event_noun)
+            + r"\b"
         )
         seg_text = term_lower[seg_start:seg_end]
         seg_stripped = re.sub(r"\([^)]*\)", " ", seg_text)

@@ -168,6 +168,26 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_determiner_between_on_and_event_reanchors(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, with the start date dependent on the acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_paren_comma_does_not_hide_governance(self):
+        # The comma lives inside parens, so depth-aware splitting keeps
+        # the link whole; the stripped form would lose it.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, conditioned upon acceptance (start date dependent on acceptance, as defined)",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_sealed_governance_paren_reanchors(self):
         result = self.guard.verify(
             "2026-01-01",
