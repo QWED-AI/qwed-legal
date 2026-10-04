@@ -139,6 +139,17 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_descriptive_commencement_verifies(self):
+        # "commencement of services" describes what commences, with no
+        # dependent-link to the event: the conditional payment still
+        # computes from signing.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing to deliver notice, commencement of services conditioned upon payment",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
     def test_paren_interrupted_start_date_reanchors(self):
         result = self.guard.verify(
             "2026-01-01",

@@ -514,35 +514,39 @@ class DeadlineGuard:
         }
     )
     # Explicit start-date language defeats any conditional reading — but
-    # only inside the event's own comma/semicolon segment, so a
-    # parenthetical clarification ("(start date is signing)") cannot
-    # re-anchor a distant event. Parentheses do NOT split: wording like
-    # "the start date (as defined herein) dependent on acceptance" still
-    # governs its event. Bare "commencement" counts ("the period's
-    # commencement is dependent on payment") — unlike "start", it has no
-    # non-temporal use in this position.
+    # only inside the event's own comma/semicolon segment, and only when
+    # linked to the event by a dependent-phrase ("start date dependent on
+    # acceptance", "commencement is dependent on payment"). A bare
+    # "commencement of services" describes what commences, not when the
+    # stated period starts. Parentheses do not split: wording like "the
+    # start date (as defined herein) dependent on acceptance" still
+    # governs its event, while a parenthetical clarification ("(start
+    # date is signing)") is split off by its comma.
     _START_DATE_RE = re.compile(
-        r"\b(?:commencement|(?:start|effective)\s+date)\b"
+        r"\b(?:start|commencement|effective)(?:\s+date)?\s+"
+        r"(?:is\s+|are\s+|was\s+|were\s+)?depend(?:ent|s|ed|ing)?\s+on\b"
     )
 
     @staticmethod
     def _start_date_governs(term_lower: str, pos: int) -> bool:
         """Start-date language inside the event's own comma/semicolon segment.
 
-        A parenthetical clarification ("(start date is signing)") is split
-        off by its comma, so it cannot re-anchor a distant event — but
-        wording interrupted only by parens ("the start date (as defined
-        herein) dependent on acceptance") still governs. Parentheses do
-        not split segments.
+        Parentheticals are stripped before matching: an interruption
+        ("the start date (as defined herein) dependent on acceptance")
+        still governs, while a sealed clarification ("(start date is
+        signing)") vanishes with its parens. Segments split on commas
+        and semicolons only.
         """
         bounds = [0] + [m.end() for m in re.finditer(r"[,;]", term_lower)]
         bounds.append(len(term_lower))
         seg_start = max(b for b in bounds if b <= pos)
         seg_end = min(b for b in bounds if b > pos)
-        return (
-            DeadlineGuard._START_DATE_RE.search(term_lower, seg_start, seg_end)
-            is not None
-        )
+        # Strip parentheticals first: an interruption ("the start date (as
+        # defined herein) dependent on ...") must not break the link, while
+        # a clarification sealed in parens ("(start date is signing)")
+        # vanishes with them.
+        seg_text = re.sub(r"\([^)]*\)", " ", term_lower[seg_start:seg_end])
+        return DeadlineGuard._START_DATE_RE.search(seg_text) is not None
 
     @staticmethod
     def _event_anchor(term_lower: str) -> "Optional[str]":
