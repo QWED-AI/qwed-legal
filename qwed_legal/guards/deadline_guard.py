@@ -483,7 +483,7 @@ class DeadlineGuard:
         r"\b(?:after|following|upon|on|from|within|(?:day|days|week|weeks|month|months|year|years)\s+of)\s+"
         r"(?:(?:[a-z]+\s+){0,2}?|the\s+date\s+(?:the\s+|of\s+))"
         r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
-        r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?)\b"
+        r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?|approval(?:s)?)\b"
     )
     # Signing anchors ("from signing", "date of signing"): a signing anchor
     # ahead of an event anchor keeps the signing computation only when the
@@ -500,16 +500,42 @@ class DeadlineGuard:
     _CONDITIONAL_EVENT_RE = re.compile(
         r"\b(?:(?:conditioned|conditional|contingent|dependent)\s+(?:up)?on|subject\s+to)\s+(?:[a-z]+\s+){0,2}$"
     )
-    # Nouns that can name a condition rather than a temporal anchor. Other
-    # event nouns ("receipt", "delivery", ...) always anchor — conditional
-    # wording around them does not waive the unknown date. Intentionally
-    # narrow: fail-closed default.
+    # Nouns that can name a condition rather than a temporal anchor:
+    # agentive acts ("acceptance", "approval", "payment") are things a
+    # party does, so conditional wording around them reads as conditionality.
+    # Temporal occurrences ("receipt", "delivery", "breach", ...) always
+    # anchor — conditional wording around them does not waive the unknown
+    # date. Intentionally narrow: fail-closed default.
     _CONDITIONABLE_NOUNS = frozenset(
-        {"acceptance", "acceptances", "approval", "approvals"}
+        {
+            "acceptance", "acceptances",
+            "approval", "approvals",
+            "payment", "payments",
+        }
     )
-    # Explicit start-date language defeats any conditional reading: when
-    # the term says the event starts the period, the date is required.
+    # Explicit start-date language defeats any conditional reading — but
+    # only inside the event's own comma/paren segment, so a parenthetical
+    # clarification ("(start date is signing)") cannot re-anchor a
+    # distant event.
     _START_DATE_RE = re.compile(r"\b(?:start|commencement|effective)\s+date\b")
+
+    @staticmethod
+    def _start_date_governs(term_lower: str, pos: int) -> bool:
+        """Start-date language inside the event's own comma/paren segment.
+
+        A parenthetical clarification ("(start date is signing)") lives in
+        its own segment and cannot re-anchor a distant event; only
+        same-segment wording ("with the start date dependent on
+        acceptance") defeats a conditional reading.
+        """
+        bounds = [0] + [m.end() for m in re.finditer(r"[,;()]", term_lower)]
+        bounds.append(len(term_lower))
+        seg_start = max(b for b in bounds if b <= pos)
+        seg_end = min(b for b in bounds if b > pos)
+        return (
+            DeadlineGuard._START_DATE_RE.search(term_lower, seg_start, seg_end)
+            is not None
+        )
 
     @staticmethod
     def _event_anchor(term_lower: str) -> "Optional[str]":
@@ -518,15 +544,14 @@ class DeadlineGuard:
         Scans every event match in order: a match preceded by a signing
         anchor is skipped only when conditional wording governs a
         conditionable noun ("conditioned upon acceptance") and no
-        start-date language re-anchors the period. A plain later event
-        anchor ("or after delivery", "period begins upon receipt"),
-        conditional wording around a temporal noun ("dependent on
-        receipt"), or an explicit start-date event ("start date dependent
-        on acceptance") re-anchors the period and fails closed. Returns
-        the matched event noun for messaging.
+        same-segment start-date language re-anchors the period. A plain
+        later event anchor ("or after delivery", "period begins upon
+        receipt"), conditional wording around a temporal noun ("dependent
+        on receipt"), or an explicit start-date event ("start date
+        dependent on acceptance") re-anchors the period and fails closed.
+        Returns the matched event noun for messaging.
         """
         signing_match = DeadlineGuard._SIGNING_ANCHOR_RE.search(term_lower)
-        start_date_named = DeadlineGuard._START_DATE_RE.search(term_lower) is not None
         for event_match in DeadlineGuard._EVENT_ANCHOR_RE.finditer(term_lower):
             prefix = term_lower[: event_match.start(1)]
             if (
@@ -534,7 +559,9 @@ class DeadlineGuard:
                 and signing_match.start() < event_match.start()
                 and DeadlineGuard._CONDITIONAL_EVENT_RE.search(prefix)
                 and event_match.group(1).lower() in DeadlineGuard._CONDITIONABLE_NOUNS
-                and not start_date_named
+                and not DeadlineGuard._start_date_governs(
+                    term_lower, event_match.start(1)
+                )
             ):
                 continue
             return event_match.group(1)

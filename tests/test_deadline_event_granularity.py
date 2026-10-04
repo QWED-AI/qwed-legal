@@ -117,6 +117,31 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_parenthetical_start_date_clarification_verifies(self):
+        # "(start date is signing)" lives in its own segment: a
+        # clarification, not a re-anchor of the distant event.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing (start date is signing), conditioned upon acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_plain_approval_anchor_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days after approval", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_conditioned_payment_keeps_signing_anchor(self):
+        # Payment is an agentive act like acceptance: conditional wording
+        # around it reads as conditionality, unlike temporal occurrences.
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing, conditioned upon payment", "2026-01-31"
+        )
+        assert result.verified is True
+
     def test_subject_to_approval_keeps_signing_anchor(self):
         result = self.guard.verify(
             "2026-01-01", "30 days from signing, subject to approval", "2026-01-31"
