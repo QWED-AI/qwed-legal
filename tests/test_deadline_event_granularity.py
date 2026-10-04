@@ -97,6 +97,32 @@ class TestEventAnchoredTerms:
         )
         assert result.verified is True
 
+    def test_conditional_receipt_still_fails_closed(self):
+        # "receipt" always anchors: conditional wording around a temporal
+        # noun does not waive its unknown date.
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing, dependent on receipt", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_start_date_language_fails_closed(self):
+        # Explicit statement that the event starts the period defeats any
+        # conditional reading.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, with the start date dependent on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_subject_to_approval_keeps_signing_anchor(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing, subject to approval", "2026-01-31"
+        )
+        assert result.verified is True
+
     def test_mixed_signing_and_event_anchors_fail_closed(self):
         result = self.guard.verify(
             "2026-01-01",

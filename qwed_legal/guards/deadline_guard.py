@@ -500,25 +500,41 @@ class DeadlineGuard:
     _CONDITIONAL_EVENT_RE = re.compile(
         r"\b(?:(?:conditioned|conditional|contingent|dependent)\s+(?:up)?on|subject\s+to)\s+(?:[a-z]+\s+){0,2}$"
     )
+    # Nouns that can name a condition rather than a temporal anchor. Other
+    # event nouns ("receipt", "delivery", ...) always anchor — conditional
+    # wording around them does not waive the unknown date. Intentionally
+    # narrow: fail-closed default.
+    _CONDITIONABLE_NOUNS = frozenset(
+        {"acceptance", "acceptances", "approval", "approvals"}
+    )
+    # Explicit start-date language defeats any conditional reading: when
+    # the term says the event starts the period, the date is required.
+    _START_DATE_RE = re.compile(r"\b(?:start|commencement|effective)\s+date\b")
 
     @staticmethod
     def _event_anchor(term_lower: str) -> "Optional[str]":
         """Event noun anchoring the term's period, or None.
 
         Scans every event match in order: a match preceded by a signing
-        anchor is skipped only when conditional wording governs it
-        ("conditioned upon acceptance" — a condition, not an anchor).
-        A plain later event anchor ("or after delivery, whichever is
-        later", "period begins upon receipt") re-anchors the period and
-        fails closed. Returns the matched event noun for messaging.
+        anchor is skipped only when conditional wording governs a
+        conditionable noun ("conditioned upon acceptance") and no
+        start-date language re-anchors the period. A plain later event
+        anchor ("or after delivery", "period begins upon receipt"),
+        conditional wording around a temporal noun ("dependent on
+        receipt"), or an explicit start-date event ("start date dependent
+        on acceptance") re-anchors the period and fails closed. Returns
+        the matched event noun for messaging.
         """
         signing_match = DeadlineGuard._SIGNING_ANCHOR_RE.search(term_lower)
+        start_date_named = DeadlineGuard._START_DATE_RE.search(term_lower) is not None
         for event_match in DeadlineGuard._EVENT_ANCHOR_RE.finditer(term_lower):
             prefix = term_lower[: event_match.start(1)]
             if (
                 signing_match is not None
                 and signing_match.start() < event_match.start()
                 and DeadlineGuard._CONDITIONAL_EVENT_RE.search(prefix)
+                and event_match.group(1).lower() in DeadlineGuard._CONDITIONABLE_NOUNS
+                and not start_date_named
             ):
                 continue
             return event_match.group(1)
