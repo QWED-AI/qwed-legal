@@ -515,22 +515,13 @@ class DeadlineGuard:
     )
     # Explicit start-date language defeats any conditional reading — but
     # only inside the event's own comma/semicolon segment, and only when
-    # linked to the event by a dependent-phrase ("start date dependent on
-    # acceptance", "commencement is dependent on payment"). A bare
-    # "commencement of services" describes what commences, not when the
-    # stated period starts. Parentheses do not split: wording like "the
-    # start date (as defined herein) dependent on acceptance" still
-    # governs its event, while a parenthetical clarification ("(start
-    # date is signing)") is split off by its comma.
-    _START_DATE_RE = re.compile(
-        r"\b(?:start|commencement|effective)(?:\s+date)?\s+"
-        r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
-        r"depend(?:ent|s|ed|ing)?\s+on\b"
-    )
-
+    # linked to the skipped event itself ("start date dependent on
+    # acceptance"). Start language about another event ("service
+    # commencement shall be dependent on staffing") leaves the
+    # conditional skip intact.
     @staticmethod
-    def _start_date_governs(term_lower: str, pos: int) -> bool:
-        """Start-date language inside the event's own comma/semicolon segment.
+    def _start_date_governs(term_lower: str, pos: int, event_noun: str) -> bool:
+        """Start-date link terminating at the skipped event.
 
         Matches against both the parenthesis-stripped and raw segment:
         stripping keeps an interrupted link ("the start date (as defined
@@ -547,11 +538,16 @@ class DeadlineGuard:
         # on ...") intact, while the raw segment keeps sealed governance
         # ("(start date dependent on acceptance)"). A sealed
         # clarification ("(start date is signing)") matches neither form.
+        link_re = re.compile(
+            r"\b(?:start|commencement|effective)(?:\s+date)?\s+"
+            r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
+            r"depend(?:ent|s|ed|ing)?\s+on\s+" + re.escape(event_noun) + r"\b"
+        )
         seg_text = term_lower[seg_start:seg_end]
         seg_stripped = re.sub(r"\([^)]*\)", " ", seg_text)
         return (
-            DeadlineGuard._START_DATE_RE.search(seg_stripped) is not None
-            or DeadlineGuard._START_DATE_RE.search(seg_text) is not None
+            link_re.search(seg_stripped) is not None
+            or link_re.search(seg_text) is not None
         )
 
     @staticmethod
@@ -577,7 +573,7 @@ class DeadlineGuard:
                 and DeadlineGuard._CONDITIONAL_EVENT_RE.search(prefix)
                 and event_match.group(1).lower() in DeadlineGuard._CONDITIONABLE_NOUNS
                 and not DeadlineGuard._start_date_governs(
-                    term_lower, event_match.start(1)
+                    term_lower, event_match.start(1), event_match.group(1)
                 )
             ):
                 continue

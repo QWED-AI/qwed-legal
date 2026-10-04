@@ -177,6 +177,16 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_other_event_start_language_keeps_skip(self):
+        # The start-date link names staffing, not the skipped acceptance:
+        # the conditional skip stands and the notice deadline computes.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing to deliver notice, conditioned upon acceptance (service commencement shall be dependent on staffing)",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
     def test_plain_approval_anchor_fails_closed(self):
         result = self.guard.verify(
             "2026-01-01", "30 days after approval", "2026-01-31"
