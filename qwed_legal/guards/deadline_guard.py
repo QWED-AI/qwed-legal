@@ -524,29 +524,35 @@ class DeadlineGuard:
     # date is signing)") is split off by its comma.
     _START_DATE_RE = re.compile(
         r"\b(?:start|commencement|effective)(?:\s+date)?\s+"
-        r"(?:is\s+|are\s+|was\s+|were\s+)?depend(?:ent|s|ed|ing)?\s+on\b"
+        r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
+        r"depend(?:ent|s|ed|ing)?\s+on\b"
     )
 
     @staticmethod
     def _start_date_governs(term_lower: str, pos: int) -> bool:
         """Start-date language inside the event's own comma/semicolon segment.
 
-        Parentheticals are stripped before matching: an interruption
-        ("the start date (as defined herein) dependent on acceptance")
-        still governs, while a sealed clarification ("(start date is
-        signing)") vanishes with its parens. Segments split on commas
-        and semicolons only.
+        Matches against both the parenthesis-stripped and raw segment:
+        stripping keeps an interrupted link ("the start date (as defined
+        herein) dependent on ...") intact, while the raw form keeps sealed
+        governance ("(start date dependent on acceptance)"). A sealed
+        clarification ("(start date is signing)") matches neither form.
         """
         bounds = [0] + [m.end() for m in re.finditer(r"[,;]", term_lower)]
         bounds.append(len(term_lower))
         seg_start = max(b for b in bounds if b <= pos)
         seg_end = min(b for b in bounds if b > pos)
-        # Strip parentheticals first: an interruption ("the start date (as
-        # defined herein) dependent on ...") must not break the link, while
-        # a clarification sealed in parens ("(start date is signing)")
-        # vanishes with them.
-        seg_text = re.sub(r"\([^)]*\)", " ", term_lower[seg_start:seg_end])
-        return DeadlineGuard._START_DATE_RE.search(seg_text) is not None
+        # Match against both forms: stripping parentheticals keeps an
+        # interrupted link ("the start date (as defined herein) dependent
+        # on ...") intact, while the raw segment keeps sealed governance
+        # ("(start date dependent on acceptance)"). A sealed
+        # clarification ("(start date is signing)") matches neither form.
+        seg_text = term_lower[seg_start:seg_end]
+        seg_stripped = re.sub(r"\([^)]*\)", " ", seg_text)
+        return (
+            DeadlineGuard._START_DATE_RE.search(seg_stripped) is not None
+            or DeadlineGuard._START_DATE_RE.search(seg_text) is not None
+        )
 
     @staticmethod
     def _event_anchor(term_lower: str) -> "Optional[str]":

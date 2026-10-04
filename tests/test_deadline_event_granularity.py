@@ -159,6 +159,24 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_shall_be_start_date_reanchors(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, with the start date shall be dependent on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_sealed_governance_paren_reanchors(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, conditioned upon acceptance (start date dependent on acceptance)",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_plain_approval_anchor_fails_closed(self):
         result = self.guard.verify(
             "2026-01-01", "30 days after approval", "2026-01-31"
