@@ -89,6 +89,27 @@ class TestEventAnchoredTerms:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_later_valid_signing_anchor_computes(self):
+        # The negated "from execution" is dropped, but the later valid
+        # "from signing" still anchors with the conditional approval.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days not from execution, but from signing, subject to approval",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_distant_negation_fails_closed(self):
+        # "not" sits five words before the anchor — beyond any fixed
+        # window — so the segment, not a word count, decides.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days not under any circumstances measured from signing, but dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_subject_to_start_date_link_fails_closed(self):
         result = self.guard.verify(
             "2026-01-01",

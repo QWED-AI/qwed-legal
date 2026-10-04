@@ -517,7 +517,10 @@ class DeadlineGuard:
     )
     # A negated signing anchor ("not from signing", "never from the date
     # of signing") is not an anchor at all — the term rules the signing
-    # date out. Checked in the few words before the match.
+    # date out. Negation is read from the anchor's own comma/semicolon
+    # segment (a fixed word window misses distant negations like "not
+    # under any circumstances measured from signing"), and later anchors
+    # are still considered ("not from execution, but from signing").
     _SIGNING_NEGATION_RE = re.compile(r"\b(?:not|never|neither|nor|n't)\b")
     # Conditional-event wording names an event without anchoring the
     # period to it ("conditioned upon acceptance", "subject to approval"):
@@ -598,13 +601,22 @@ class DeadlineGuard:
         dependent on acceptance") re-anchors the period and fails closed.
         Returns the matched event noun for messaging.
         """
-        signing_match = DeadlineGuard._SIGNING_ANCHOR_RE.search(term_lower)
-        if signing_match is not None:
-            # A negated signing anchor rules the signing date out instead
-            # of establishing it — drop it so the event anchor decides.
-            before = " ".join(term_lower[: signing_match.start()].split()[-4:])
-            if DeadlineGuard._SIGNING_NEGATION_RE.search(before):
-                signing_match = None
+        signing_match = None
+        for candidate in DeadlineGuard._SIGNING_ANCHOR_RE.finditer(term_lower):
+            seg_start = max(
+                [0]
+                + [
+                    m.end()
+                    for m in re.finditer(r"[,;]", term_lower)
+                    if m.end() <= candidate.start()
+                ]
+            )
+            if DeadlineGuard._SIGNING_NEGATION_RE.search(
+                term_lower[seg_start : candidate.start()]
+            ):
+                continue
+            signing_match = candidate
+            break
         for event_match in DeadlineGuard._EVENT_ANCHOR_RE.finditer(term_lower):
             prefix = term_lower[: event_match.start(1)]
             if (
