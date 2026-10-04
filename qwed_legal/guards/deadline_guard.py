@@ -483,6 +483,7 @@ class DeadlineGuard:
         r"\b(?:after|following|upon|from|within|"
         r"(?:conditioned|conditional|contingent|dependent)\s+(?:up\s+)?on|"
         r"subject\s+to|"
+        r"(?:commenc(?:e|ing)\s+on)|"
         r"(?:day|days|week|weeks|month|months|year|years)\s+(?:of|on))\s+"
         r"(?:(?:[a-z'’]+\s+){0,2}?|the\s+date\s+(?:the\s+|of\s+))"
         r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
@@ -494,7 +495,7 @@ class DeadlineGuard:
     # later event anchor ("or after delivery", "period begins upon
     # receipt") re-anchors the period and fails closed.
     _SIGNING_ANCHOR_RE = re.compile(
-        r"\b(?:after|following|upon|from|within|of)\s+(?:the\s+)?(?:signing|execution)\b"
+        r"\b(?:after|following|upon|from|within|of)\s+(?:the\s+(?:date\s+of\s+)?)?(?:signing|execution)\b"
     )
     # Conditional-event wording names an event without anchoring the
     # period to it ("conditioned upon acceptance", "subject to approval"):

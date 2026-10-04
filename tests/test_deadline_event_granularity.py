@@ -59,16 +59,27 @@ class TestEventAnchoredTerms:
             assert result.verified is False, term
             assert result.is_computable is False, term
 
-    def test_on_preposition_anchors_fail_closed(self):
-        for term in ("30 days on receipt", "30 days on delivery"):
-            result = self.guard.verify("2026-01-01", term, "2026-01-31")
-            assert result.verified is False, term
-            assert result.is_computable is False, term
-
     def test_descriptive_on_phrase_keeps_signing_anchor(self):
         result = self.guard.verify(
             "2026-01-01",
             "30 days from signing to deliver notice based on invoice",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_commencing_on_receipt_fails_closed(self):
+        for term in (
+            "30 days commencing on receipt",
+            "the period shall commence on delivery, 30 days to pay",
+        ):
+            result = self.guard.verify("2026-01-01", term, "2026-01-31")
+            assert result.verified is False, term
+            assert result.is_computable is False, term
+
+    def test_date_of_signing_keeps_computation(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from the date of signing, subject to approval",
             "2026-01-31",
         )
         assert result.verified is True
