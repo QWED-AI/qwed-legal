@@ -118,6 +118,16 @@ class TestEventAnchoredTerms:
         )
         assert result.verified is True
 
+    def test_bare_not_paren_negates_following_anchor(self):
+        # A bare "(not)" is an interjected negation of what follows.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not) from signing, dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_later_valid_signing_anchor_computes(self):
         # The negated "from execution" is dropped, but the later valid
         # "from signing" still anchors with the conditional approval.

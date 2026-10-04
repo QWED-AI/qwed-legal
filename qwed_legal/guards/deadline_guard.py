@@ -66,6 +66,25 @@ def _segment_bounds(term_lower: str) -> list:
     return bounds
 
 
+_PAREN_GROUP_RE = re.compile(r"\([^)]*\)")
+
+
+def _strip_inert_parens(text: str) -> str:
+    """Remove paren groups except bare negations ("(not)").
+
+    A sealed "not" ("(not subject to change)") governs only paren content
+    and must not leak out — but a bare "(not)" negates what follows, so it
+    stays. Shared by the negation and start-date checks (one definition
+    for the paren pattern).
+    """
+    return _PAREN_GROUP_RE.sub(
+        lambda m: m.group(0)
+        if re.fullmatch(r"\(\s*(?:not|never|neither|nor|n't)\s*\)", m.group(0))
+        else " ",
+        text,
+    )
+
+
 @dataclass(frozen=True)
 class DeadlineResult(LegalDiagnosticsMixin):
     """Result of deadline verification."""
@@ -551,23 +570,19 @@ class DeadlineGuard:
     def _signing_negated(term_lower: str, seg_start: int, pos: int) -> bool:
         """Negation governing the anchor at pos, paren-aware.
 
-        Parentheticals are stripped first so a sealed "not" ("(not
+        Inert parentheticals are stripped first so a sealed "not" ("(not
         subject to change, as agreed)") cannot negate an outside anchor —
-        but the paren group containing the anchor itself still counts
-        ("(not, however, from signing)").
+        but bare "(not)" stays, and an anchor inside parens ("(not,
+        however, from signing)") keeps its negation because truncation at
+        pos leaves that paren unclosed and therefore unstrippable.
         """
         seg_text = term_lower[seg_start:pos]
-        if DeadlineGuard._SIGNING_NEGATION_RE.search(
-            re.sub(r"\([^)]*\)", " ", seg_text)
-        ):
-            return True
-        for m in re.finditer(r"\([^)]*\)", seg_text):
-            s = seg_start + m.start()
-            if s <= pos < seg_start + m.end() and DeadlineGuard._SIGNING_NEGATION_RE.search(
-                m.group(0)
-            ):
-                return True
-        return False
+        return (
+            DeadlineGuard._SIGNING_NEGATION_RE.search(
+                _strip_inert_parens(seg_text)
+            )
+            is not None
+        )
 
     @staticmethod
     def _start_date_governs(term_lower: str, pos: int, event_noun: str) -> bool:
@@ -594,7 +609,7 @@ class DeadlineGuard:
         # clarification ("(start date is signing)") matches neither form.
         link_re = _start_date_link_re(event_noun)
         seg_text = term_lower[seg_start:seg_end]
-        seg_stripped = re.sub(r"\([^)]*\)", " ", seg_text)
+        seg_stripped = _strip_inert_parens(seg_text)
         return (
             link_re.search(seg_stripped) is not None
             or link_re.search(seg_text) is not None
