@@ -98,8 +98,8 @@ class TestEventAnchoredTerms:
         assert result.computed_deadline is None
 
     def test_paren_comma_negation_fails_closed(self):
-        # The comma lives inside parens: depth-aware splitting keeps the
-        # negation in the anchor's segment.
+        # The comma lives inside parens, so depth-aware splitting keeps
+        # the negation in the anchor's segment.
         result = self.guard.verify(
             "2026-01-01",
             "30 days (not, however, from signing) but dependent on payment",
@@ -107,6 +107,16 @@ class TestEventAnchoredTerms:
         )
         assert result.verified is False
         assert result.is_computable is False
+
+    def test_sealed_not_does_not_negate_outside_anchor(self):
+        # "not" sealed in parens governs only paren content: the outside
+        # signing anchor stands and the deadline computes.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not subject to change, as agreed) from signing",
+            "2026-01-31",
+        )
+        assert result.verified is True
 
     def test_later_valid_signing_anchor_computes(self):
         # The negated "from execution" is dropped, but the later valid

@@ -548,6 +548,28 @@ class DeadlineGuard:
     # commencement shall be dependent on staffing") leaves the
     # conditional skip intact.
     @staticmethod
+    def _signing_negated(term_lower: str, seg_start: int, pos: int) -> bool:
+        """Negation governing the anchor at pos, paren-aware.
+
+        Parentheticals are stripped first so a sealed "not" ("(not
+        subject to change, as agreed)") cannot negate an outside anchor —
+        but the paren group containing the anchor itself still counts
+        ("(not, however, from signing)").
+        """
+        seg_text = term_lower[seg_start:pos]
+        if DeadlineGuard._SIGNING_NEGATION_RE.search(
+            re.sub(r"\([^)]*\)", " ", seg_text)
+        ):
+            return True
+        for m in re.finditer(r"\([^)]*\)", seg_text):
+            s = seg_start + m.start()
+            if s <= pos < seg_start + m.end() and DeadlineGuard._SIGNING_NEGATION_RE.search(
+                m.group(0)
+            ):
+                return True
+        return False
+
+    @staticmethod
     def _start_date_governs(term_lower: str, pos: int, event_noun: str) -> bool:
         """Start-date link terminating at the skipped event.
 
@@ -598,8 +620,8 @@ class DeadlineGuard:
         bounds = _segment_bounds(term_lower)
         for candidate in DeadlineGuard._SIGNING_ANCHOR_RE.finditer(term_lower):
             seg_start = max(b for b in bounds if b <= candidate.start())
-            if DeadlineGuard._SIGNING_NEGATION_RE.search(
-                term_lower[seg_start : candidate.start()]
+            if DeadlineGuard._signing_negated(
+                term_lower, seg_start, candidate.start()
             ):
                 negated_signing = True
                 continue
