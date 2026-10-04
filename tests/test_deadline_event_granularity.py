@@ -338,3 +338,14 @@ class TestDateGranularityComparison:
         assert result.verified is False
         assert result.is_computable is False
         assert result.computed_deadline is None
+
+    def test_signing_the_invoice_fails_closed(self):
+        # "signing the invoice" shares one preposition for both anchors,
+        # so both matches start together — and the invoice signing is a
+        # different event from the contract signing with its own unknown
+        # date. Fail closed either way the tie breaks.
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing the invoice", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
