@@ -137,6 +137,50 @@ class TestEventAnchoredTerms:
         )
         assert result.verified is True
 
+    def test_do_not_run_negates_anchor(self):
+        # ...unless that verb is temporal: "run from signing" IS the anchor.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days do not run from signing, but are dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_shared_negation_consumed_once(self):
+        # One "(not)" governs the first anchor after it; the later valid
+        # anchor still computes with its conditional.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not) from execution but from signing, subject to approval",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_depends_on_receipt_anchors(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days depends on receipt, pay then", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_depends_on_acceptance_matches_dependent_twin(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing, depends on acceptance", "2026-01-31"
+        )
+        assert result.verified is True
+
+    def test_cross_segment_governance_fails_closed(self):
+        # Conditional event in one segment, start-date link in another:
+        # the link still defeats the skip.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, conditioned upon acceptance, with the start date dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_bare_not_paren_negates_following_anchor(self):
         # A bare "(not)" is an interjected negation of what follows.
         result = self.guard.verify(

@@ -46,6 +46,44 @@ def _start_date_link_re(event_noun: str) -> "re.Pattern[str]":
     )
 
 
+# Temporal verbs: a do-supported negation over one of these still rules
+# the anchor out ("do not run from signing"). Over any other verb ("does
+# not object") the "not" belongs to that verb, not the anchor. Narrow by
+# design — novel verbs fail closed elsewhere, never here.
+_TEMPORAL_VERBS = frozenset(
+    {
+        "run", "runs", "running",
+        "accrue", "accrues", "accrued", "accruing",
+        "begin", "begins", "beginning", "begun",
+        "commence", "commences", "commenced", "commencing",
+        "start", "starts", "started", "starting",
+        "toll", "tolls", "tolled", "tolling",
+        "trigger", "triggers", "triggered", "triggering",
+        "vest", "vests", "vested", "vesting",
+        "mature", "matures", "matured", "maturing",
+        "expire", "expires", "expired", "expiring",
+    }
+)
+
+
+def _effective_negation(window_text: str) -> bool:
+    """A negation token that actually governs its anchor.
+
+    Contractions are normalized first ("doesn't" behaves as "does not").
+    A do/does/did-supported "not" belongs to its verb unless that verb is
+    temporal — "does not object" is about objecting, "do not run" is about
+    running from the anchor. All other negations govern unconditionally.
+    """
+    text = re.sub(r"n['’]t\b", " not", window_text)
+    for m in DeadlineGuard._SIGNING_NEGATION_RE.finditer(text):
+        if re.search(r"\bdo(?:es|d)?\s*$", text[: m.start()]):
+            verb = re.match(r"\s*([a-z']+)", text[m.end() :])
+            if verb is not None and verb.group(1) not in _TEMPORAL_VERBS:
+                continue
+        return True
+    return False
+
+
 def _segment_bounds(term_lower: str) -> list:
     """Top-level comma/semicolon boundaries for clause scoping.
 
@@ -518,7 +556,7 @@ class DeadlineGuard:
     # "event" ("in the event of" is conditional, not a temporal anchor).
     _EVENT_ANCHOR_RE = re.compile(
         r"\b(?:after|following|upon|from|within|"
-        r"(?:conditioned|conditional|contingent|dependent)\s+(?:up\s+)?on|"
+        r"(?:conditioned|conditional|contingent|dependent|depends)\s+(?:up\s+)?on|"
         r"subject\s+to|"
         r"(?:commenc(?:e|ing|es|ed)\s+on)|"
         r"(?:day|days|week|weeks|month|months|year|years)\s+(?:of|on))\s+"
@@ -539,18 +577,15 @@ class DeadlineGuard:
     # date out. Negation is read from the anchor's own comma/semicolon
     # segment (a fixed word window misses distant negations like "not
     # under any circumstances measured from signing"), and later anchors
-    # are still considered ("not from execution, but from signing"). A
-    # negation directly supported by do/does/did ("does not object")
-    # belongs to another verb, not the anchor.
-    _SIGNING_NEGATION_RE = re.compile(
-        r"(?<!\bdo\s)(?<!\bdoes\s)(?<!\bdid\s)\b(?:not|never|neither|nor|n't)\b"
-    )
+    # are still considered ("not from execution, but from signing").
+    # Do-support ("does not object") is resolved in _effective_negation.
+    _SIGNING_NEGATION_RE = re.compile(r"\b(?:not|never|neither|nor|n't)\b")
     # Conditional-event wording names an event without anchoring the
     # period to it ("conditioned upon acceptance", "subject to approval"):
     # such phrases are conditions on the obligation, not temporal anchors.
     # Checked against the text preceding each event match.
     _CONDITIONAL_EVENT_RE = re.compile(
-        r"\b(?:(?:conditioned|conditional|contingent|dependent)\s+(?:up)?on|subject\s+to)\s+(?:[a-z'’]+\s+){0,2}$"
+        r"\b(?:(?:conditioned|conditional|contingent|dependent|depends)\s+(?:up)?on|subject\s+to)\s+(?:[a-z'’]+\s+){0,2}$"
     )
     # Nouns that can name a condition rather than a temporal anchor:
     # agentive acts ("acceptance", "approval", "payment") are things a
@@ -585,12 +620,7 @@ class DeadlineGuard:
         pos leaves that paren unclosed and therefore unstrippable.
         """
         seg_text = term_lower[window_start:pos]
-        return (
-            DeadlineGuard._SIGNING_NEGATION_RE.search(
-                _strip_inert_parens(seg_text)
-            )
-            is not None
-        )
+        return _effective_negation(_strip_inert_parens(seg_text))
 
     @staticmethod
     def _start_date_governs(term_lower: str, pos: int, event_noun: str) -> bool:
