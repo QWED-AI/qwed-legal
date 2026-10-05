@@ -38,7 +38,8 @@ def _start_date_link_re(event_noun: str) -> "re.Pattern[str]":
     caching also avoids recompiling on every call).
     """
     return re.compile(
-        r"\b(?:start|commencement|effective)(?:\s+date)?\s+"
+        r"\b(?:start|commencement|effective)(?:\s+date)?"
+        r"(?:\s+of\s+(?:the\s+)?[a-z]+)?\s+"
         r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
         r"(?:depend(?:ent|s|ed|ing)?\s+on|subject\s+to)\s+(?:[a-z'’]+\s+){0,2}?"
         + re.escape(event_noun)
@@ -672,10 +673,21 @@ class DeadlineGuard:
         negated_signing = False
         bounds = _segment_bounds(term_lower)
         prev_end = 0
+        prev_window_start = 0
         for candidate in DeadlineGuard._SIGNING_ANCHOR_RE.finditer(term_lower):
             seg_start = bounds[bisect_right(bounds, candidate.start()) - 1]
+            # "or"/"nor"-joined anchors share one negation scope ("not A
+            # or B" rules out both); anything else starts a fresh scope.
+            if prev_end and re.fullmatch(
+                r"\s*,?\s*(?:or|nor)\s*,?\s*",
+                term_lower[prev_end : candidate.start()],
+            ):
+                window_start = prev_window_start
+            else:
+                window_start = max(seg_start, prev_end)
+                prev_window_start = window_start
             if DeadlineGuard._signing_negated(
-                term_lower, max(seg_start, prev_end), candidate.start()
+                term_lower, window_start, candidate.start()
             ):
                 negated_signing = True
                 prev_end = candidate.end()
