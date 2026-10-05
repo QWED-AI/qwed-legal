@@ -678,9 +678,13 @@ class DeadlineGuard:
             seg_start = bounds[bisect_right(bounds, candidate.start()) - 1]
             # "or"/"nor"-joined anchors share one negation scope ("not A
             # or B" rules out both); anything else starts a fresh scope.
-            if prev_end and re.fullmatch(
-                r"\s*,?\s*(?:or|nor)\s*,?\s*",
-                term_lower[prev_end : candidate.start()],
+            # Plain string comparison — a regex here backtracks
+            # super-linearly on whitespace/comma runs.
+            if prev_end and term_lower[prev_end : candidate.start()].strip(
+                " ,;"
+            ) in (
+                "or",
+                "nor",
             ):
                 window_start = prev_window_start
             else:
