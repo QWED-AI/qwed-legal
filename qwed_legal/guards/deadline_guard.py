@@ -4,8 +4,10 @@ DeadlineGuard: Verify date calculations in legal contracts.
 Handles business days, calendar days, leap years, and holiday exclusions.
 """
 
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Optional
 import re
 
@@ -25,6 +27,102 @@ from qwed_legal.models import (
     EVIDENCE_PARSED,
     EVIDENCE_UNSUPPORTED,
 )
+
+
+@lru_cache(maxsize=None)
+def _start_date_link_re(event_noun: str) -> "re.Pattern[str]":
+    """Start-date link terminating at the given event noun.
+
+    Cached: the noun comes from a regex match over caller input, so the
+    pattern is compiled once per noun (re.escape neutralizes metacharacters;
+    caching also avoids recompiling on every call).
+    """
+    return re.compile(
+        r"\b(?:start|commencement|effective)(?:\s+date)?"
+        r"(?:\s+of\s+(?:the\s+)?(?:[a-z]+\s+)?(?:term|period|deadline)s?)?\s+"
+        r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
+        r"(?:depend(?:ent|s|ed|ing)?\s+on|subject\s+to)\s+(?:[a-z'’]+\s+){0,2}?"
+        + re.escape(event_noun)
+        + r"\b"
+    )
+
+
+# Temporal verbs: a do-supported negation over one of these still rules
+# the anchor out ("do not run from signing"). Over any other verb ("does
+# not object") the "not" belongs to that verb, not the anchor. Narrow by
+# design — novel verbs fail closed elsewhere, never here.
+_TEMPORAL_VERBS = frozenset(
+    {
+        "run", "runs", "running",
+        "accrue", "accrues", "accrued", "accruing",
+        "begin", "begins", "beginning", "begun",
+        "commence", "commences", "commenced", "commencing",
+        "start", "starts", "started", "starting",
+        "toll", "tolls", "tolled", "tolling",
+        "trigger", "triggers", "triggered", "triggering",
+        "vest", "vests", "vested", "vesting",
+        "mature", "matures", "matured", "maturing",
+        "expire", "expires", "expired", "expiring",
+    }
+)
+
+
+def _effective_negation(window_text: str) -> bool:
+    """A negation token that actually governs its anchor.
+
+    Contractions are normalized first ("doesn't" behaves as "does not").
+    A do/does/did-supported "not" belongs to its verb unless that verb is
+    temporal — "does not object" is about objecting, "do not run" is about
+    running from the anchor. All other negations govern unconditionally.
+    """
+    text = re.sub(r"n['’]t\b", " not", window_text)
+    for m in DeadlineGuard._SIGNING_NEGATION_RE.finditer(text):
+        if re.search(r"\bdo(?:es|d)?\s*$", text[: m.start()]):
+            verb = re.match(r"\s*([a-z']+)", text[m.end() :])
+            if verb is not None and verb.group(1) not in _TEMPORAL_VERBS:
+                continue
+        return True
+    return False
+
+
+def _segment_bounds(term_lower: str) -> list:
+    """Top-level comma/semicolon boundaries for clause scoping.
+
+    Commas nested in parentheses do not split: "(a, b)" stays one
+    segment, so wording inside parens cannot be cut away from the clause
+    it belongs to. Computed once per call and shared by the anchor and
+    start-date checks (a per-candidate rescan would be quadratic).
+    """
+    bounds = [0]
+    depth = 0
+    for i, ch in enumerate(term_lower):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch in ",;" and depth == 0:
+            bounds.append(i + 1)
+    bounds.append(len(term_lower))
+    return bounds
+
+
+_PAREN_GROUP_RE = re.compile(r"\([^)]*\)")
+
+
+def _strip_inert_parens(text: str) -> str:
+    """Remove paren groups except bare negations ("(not)").
+
+    A sealed "not" ("(not subject to change)") governs only paren content
+    and must not leak out — but a bare "(not)" negates what follows, so it
+    stays. Shared by the negation and start-date checks (one definition
+    for the paren pattern).
+    """
+    return _PAREN_GROUP_RE.sub(
+        lambda m: m.group(0)
+        if re.fullmatch(r"\(\s*(?:not|never|neither|nor|n't)\s*\)", m.group(0))
+        else " ",
+        text,
+    )
 
 
 @dataclass(frozen=True)
@@ -254,9 +352,24 @@ class DeadlineGuard:
                 ],
             )
 
+        # Fail-closed on event-anchored terms (issue #54): a term like
+        # "within 15 days after receipt of written notice" carries a valid
+        # quantity/unit pair but anchors it to an event, not the signing
+        # date. Computing from signing certifies deadlines anchored to an
+        # unknowable date (chosen-date forgery: any target is certifiable).
+        # Runs BEFORE date arithmetic so rejected business-day terms never
+        # iterate the holiday calendar. A negated signing anchor with no
+        # valid replacement fails closed the same way.
+        anchor, negated_only = self._event_anchor(term.lower())
+        anchor_rejection = self._reject_bad_anchor(
+            term, signing, claimed, anchor, negated_only
+        )
+        if anchor_rejection is not None:
+            return anchor_rejection
+
         # Parse term and calculate deadline
         computed, used_business_days = self._calculate_deadline(signing, term)
-        
+
         # Fail-closed: if the term is ambiguous, do not verify
         if computed is None:
             return DeadlineResult(
@@ -291,8 +404,44 @@ class DeadlineGuard:
                 ],
             )
 
-        # Check difference
-        diff = abs((claimed - computed).days)
+        # Fail-closed on mixed timezone-aware/naive inputs (statute
+        # parity): the frames are incomparable, so even date-granularity
+        # comparison would silently mix calendar days.
+        if (claimed.tzinfo is None) != (computed.tzinfo is None):
+            return DeadlineResult(
+                verified=False,
+                signing_date=signing,
+                claimed_deadline=claimed,
+                computed_deadline=None,
+                term_parsed=term,
+                difference_days=None,
+                message=(
+                    "⚠️ UNVERIFIABLE: Mixed timezone inputs — one date is "
+                    "timezone-aware and the other is timezone-naive. "
+                    "Supply both dates with or both without a timezone."
+                ),
+                is_computable=False,
+                verification_trace=[
+                    VerificationStep(
+                        step=STEP_RULE_IDENTIFIED,
+                        description="Validated timezone consistency between signing and claimed dates.",
+                        inputs={
+                            "signing_date": str(signing),
+                            "claimed_deadline": str(claimed),
+                        },
+                        output=(
+                            "UNSUPPORTED: mixed timezone-aware and "
+                            "timezone-naive inputs — cannot compare."
+                        ),
+                        evidence_type=EVIDENCE_UNSUPPORTED,
+                    )
+                ],
+            )
+
+        # Compare at the declared date granularity (issue #56); see
+        # _comparison_days for the timezone rules.
+        claimed_day, computed_day = self._comparison_days(claimed, computed)
+        diff = abs((claimed_day - computed_day).days)
         verified = diff <= tolerance_days
 
         # QWED: if business days were used but the requested holiday calendar
@@ -314,12 +463,7 @@ class DeadlineGuard:
         elif verified:
             message = "✅ VERIFIED: Deadline calculation is correct."
         else:
-            message = (
-                f"❌ ERROR: Deadline mismatch. "
-                f"Expected {computed.strftime('%Y-%m-%d')}, "
-                f"but LLM claimed {claimed.strftime('%Y-%m-%d')}. "
-                f"Difference: {diff} days."
-            )
+            message = self._mismatch_message(claimed, claimed_day, computed_day, diff)
 
         if calendar_unreliable:
             conclusion_output = "UNSUPPORTED: business-day calendar unavailable"
@@ -397,11 +541,269 @@ class DeadlineGuard:
     )
     # Any numeric token in the term, integer or decimal ("4.2", "1,000").
     _ANY_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+    # Event anchors that re-anchor a term away from the signing date
+    # (issue #54). Only a preposition-governed event noun counts as an
+    # anchor ("after receipt", "within 15 days of payment") — a bare
+    # mention ("30 days from signing to deliver notice") leaves the
+    # signing anchor intact. Up to two intervening words allow adjectives
+    # ("after written notice"); the "the date (the|of)" alternative covers
+    # phrasings like "after the date the notice is received" without
+    # widening the general gap (which would catch signing-anchored text).
+    # "of" only counts directly after a time unit ("30 days of payment",
+    # "within 30 days of delivery"): a bare "of" also matches descriptive
+    # phrases ("notice of termination", "provision of services") where the
+    # first noun is the obligation, not a temporal anchor. Deliberately
+    # excludes signing-adjacent nouns ("signing", "execution") and generic
+    # "event" ("in the event of" is conditional, not a temporal anchor).
+    _EVENT_ANCHOR_RE = re.compile(
+        r"\b(?:after|following|upon|from|within|"
+        r"(?:conditioned|conditional|contingent|dependent|depends)\s+(?:up)?on|"
+        r"subject\s+to|"
+        r"(?:commenc(?:e|ing|es|ed)\s+on)|"
+        r"(?:day|days|week|weeks|month|months|year|years)\s+(?:of|on))\s+"
+        r"(?:(?:[a-z'’]+\s+){0,2}?|the\s+date\s+(?:the\s+|of\s+))"
+        r"(receipts?|notices?|services?|deliver(?:y|ies)|occurrences?|demands?|"
+        r"invoices?|breach(?:es)?|terminations?|payments?|acceptances?|approval(?:s)?)\b"
+    )
+    # Signing anchors ("from signing", "date of signing"): a signing anchor
+    # ahead of an event anchor keeps the signing computation only when the
+    # event is conditional wording ("conditioned upon acceptance"). A plain
+    # later event anchor ("or after delivery", "period begins upon
+    # receipt") re-anchors the period and fails closed.
+    _SIGNING_ANCHOR_RE = re.compile(
+        r"\b(?:after|following|upon|from|within|of)\s+(?:the\s+(?:date\s+of\s+)?)?(?:signing|execution)\b"
+    )
+    # A negated signing anchor ("not from signing", "never from the date
+    # of signing") is not an anchor at all — the term rules the signing
+    # date out. Negation is read from the anchor's own comma/semicolon
+    # segment (a fixed word window misses distant negations like "not
+    # under any circumstances measured from signing"), and later anchors
+    # are still considered ("not from execution, but from signing").
+    # Do-support ("does not object") is resolved in _effective_negation.
+    _SIGNING_NEGATION_RE = re.compile(r"\b(?:not|never|neither|nor|n't)\b")
+    # Conditional-event wording names an event without anchoring the
+    # period to it ("conditioned upon acceptance", "subject to approval"):
+    # such phrases are conditions on the obligation, not temporal anchors.
+    # Checked against the text preceding each event match.
+    _CONDITIONAL_EVENT_RE = re.compile(
+        r"\b(?:(?:conditioned|conditional|contingent|dependent|depends)\s+(?:up)?on|subject\s+to)\s+(?:[a-z'’]+\s+){0,2}$"
+    )
+    # Nouns that can name a condition rather than a temporal anchor:
+    # agentive acts ("acceptance", "approval", "payment") are things a
+    # party does, so conditional wording around them reads as conditionality.
+    # Temporal occurrences ("receipt", "delivery", "breach", ...) always
+    # anchor — conditional wording around them does not waive the unknown
+    # date. Intentionally narrow: fail-closed default.
+    _CONDITIONABLE_NOUNS = frozenset(
+        {
+            "acceptance", "acceptances",
+            "approval", "approvals",
+            "payment", "payments",
+        }
+    )
+    # Explicit start-date language defeats any conditional reading — but
+    # only inside the event's own comma/semicolon segment, and only when
+    # linked to the skipped event itself ("start date dependent on
+    # acceptance"). Start language about another event ("service
+    # commencement shall be dependent on staffing") leaves the
+    # conditional skip intact.
+    @staticmethod
+    def _signing_negated(term_lower: str, window_start: int, pos: int) -> bool:
+        """Negation governing the anchor at pos, paren-aware.
+
+        Searches only back to window_start (segment start or previous
+        anchor end), so one negation cannot govern two anchors: each
+        "not" is consumed by the first anchor after it. Inert
+        parentheticals are stripped first so a sealed "not" ("(not
+        subject to change, as agreed)") cannot negate an outside anchor —
+        but bare "(not)" stays, and an anchor inside parens ("(not,
+        however, from signing)") keeps its negation because truncation at
+        pos leaves that paren unclosed and therefore unstrippable.
+        """
+        seg_text = term_lower[window_start:pos]
+        return _effective_negation(_strip_inert_parens(seg_text))
+
+    @staticmethod
+    def _start_date_governs(term_lower: str, pos: int, event_noun: str) -> bool:
+        """Start-date link terminating at the skipped event.
+
+        Matches against both the parenthesis-stripped and raw segment:
+        stripping keeps an interrupted link ("the start date (as defined
+        herein) dependent on ...") intact, while the raw form keeps sealed
+        governance ("(start date dependent on acceptance)"). A sealed
+        clarification ("(start date is signing)") matches neither form.
+        """
+        # Segments split on top-level commas/semicolons only (shared
+        # helper — a per-call rescan here would be quadratic): a comma
+        # nested in parens must not move the boundary, or governance like
+        # "(start date dependent, they agree, on acceptance)" would be cut
+        # away from its event.
+        bounds = _segment_bounds(term_lower)
+        seg_start = bounds[bisect_right(bounds, pos) - 1]
+        seg_end = bounds[bisect_right(bounds, pos)]
+        # Match against both forms: stripping parentheticals keeps an
+        # interrupted link ("the start date (as defined herein) dependent
+        # on ...") intact, while the raw segment keeps sealed governance
+        # ("(start date dependent on acceptance)"). A sealed
+        # clarification ("(start date is signing)") matches neither form.
+        link_re = _start_date_link_re(event_noun)
+        seg_text = term_lower[seg_start:seg_end]
+        seg_stripped = _strip_inert_parens(seg_text)
+        return (
+            link_re.search(seg_stripped) is not None
+            or link_re.search(seg_text) is not None
+        )
+
+    @staticmethod
+    def _event_anchor(term_lower: str) -> "tuple[Optional[str], bool]":
+        """Event noun anchoring the term's period, plus negated-only flag.
+
+        Scans every event match in order: a match preceded by a signing
+        anchor is skipped only when conditional wording governs a
+        conditionable noun ("conditioned upon acceptance") and no
+        same-segment start-date language re-anchors the period. A plain
+        later event anchor ("or after delivery", "period begins upon
+        receipt"), conditional wording around a temporal noun ("dependent
+        on receipt"), or an explicit start-date event ("start date
+        dependent on acceptance") re-anchors the period and fails closed.
+        Returns (event noun or None, True when a signing anchor was seen
+        only in negated form with no valid replacement).
+        """
+        signing_match = None
+        negated_signing = False
+        bounds = _segment_bounds(term_lower)
+        prev_end = 0
+        prev_window_start = 0
+        for candidate in DeadlineGuard._SIGNING_ANCHOR_RE.finditer(term_lower):
+            seg_start = bounds[bisect_right(bounds, candidate.start()) - 1]
+            # "or"/"nor"-joined anchors share one negation scope ("not A
+            # or B" rules out both); anything else starts a fresh scope.
+            # Plain string comparison — a regex here backtracks
+            # super-linearly on whitespace/comma runs.
+            if prev_end and term_lower[prev_end : candidate.start()].strip(
+                " ,;"
+            ) in (
+                "or",
+                "nor",
+            ):
+                window_start = prev_window_start
+            else:
+                window_start = max(seg_start, prev_end)
+                prev_window_start = window_start
+            if DeadlineGuard._signing_negated(
+                term_lower, window_start, candidate.start()
+            ):
+                negated_signing = True
+                prev_end = candidate.end()
+                continue
+            signing_match = candidate
+            break
+        for event_match in DeadlineGuard._EVENT_ANCHOR_RE.finditer(term_lower):
+            prefix = term_lower[: event_match.start(1)]
+            if (
+                signing_match is not None
+                and signing_match.start() < event_match.start()
+                and DeadlineGuard._CONDITIONAL_EVENT_RE.search(prefix)
+                and event_match.group(1).lower() in DeadlineGuard._CONDITIONABLE_NOUNS
+                and not DeadlineGuard._start_date_governs(
+                    term_lower, event_match.start(1), event_match.group(1)
+                )
+            ):
+                continue
+            return event_match.group(1), False
+        return None, negated_signing and signing_match is None
+
+    def _reject_bad_anchor(
+        self,
+        term: str,
+        signing: datetime,
+        claimed: datetime,
+        anchor: Optional[str],
+        negated_only: bool,
+    ) -> "Optional[DeadlineResult]":
+        """UNVERIFIABLE rejection for unanchored terms, else None."""
+        if anchor is None and not negated_only:
+            return None
+        if negated_only:
+            message = (
+                f"⚠️ UNVERIFIABLE: Term '{term}' negates the signing date "
+                f"and supplies no supported replacement anchor."
+            )
+            output = (
+                "UNSUPPORTED: signing date is negated with no "
+                "supported replacement anchor."
+            )
+        else:
+            message = (
+                f"⚠️ UNVERIFIABLE: Term '{term}' is anchored to an "
+                f"event ('{anchor}'), not to the "
+                f"signing date. The real deadline is unknowable from "
+                f"these inputs — supply the anchor event's date."
+            )
+            output = (
+                "UNSUPPORTED: event-anchored term — anchor "
+                f"'{anchor}' has no supplied date."
+            )
+        return DeadlineResult(
+            verified=False,
+            signing_date=signing,
+            claimed_deadline=claimed,
+            computed_deadline=None,
+            term_parsed=term,
+            difference_days=None,
+            message=message,
+            is_computable=False,
+            verification_trace=[
+                VerificationStep(
+                    step=STEP_RULE_IDENTIFIED,
+                    description="Checked term for unsupported anchors before computing from signing date.",
+                    inputs={"term": term},
+                    output=output,
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                )
+            ],
+        )
 
     # No legal deadline spans this magnitude (~274 years). Bounding the
     # parsed quantity bounds both date arithmetic and the business-day
     # iteration loop (issue #42: unhandled OverflowError / unbounded loop).
     _MAX_TERM_QUANTITY = 100_000
+
+    @staticmethod
+    def _mismatch_message(claimed: datetime, claimed_day, computed_day, diff: int) -> str:
+        """Mismatch text that cannot contradict its own difference.
+
+        Reports the compared calendar days (never identical dates beside
+        a non-zero difference). When conversion moved the claim across
+        midnight, both spellings are shown so the caller's original claim
+        still matches what wrappers display beside this message.
+        """
+        claimed_raw = claimed.strftime("%Y-%m-%d")
+        claimed_shown = claimed_day.isoformat()
+        if claimed_shown != claimed_raw:
+            claimed_shown = (
+                f"{claimed_raw} (={claimed_shown} in the deadline's timezone)"
+            )
+        return (
+            f"❌ ERROR: Deadline mismatch. "
+            f"Expected {computed_day.isoformat()}, "
+            f"but LLM claimed {claimed_shown}. "
+            f"Difference: {diff} days."
+        )
+
+    @staticmethod
+    def _comparison_days(claimed: datetime, computed: datetime):
+        """Calendar days for date-granularity comparison (issue #56).
+
+        Both-aware inputs compare in the computed deadline's timezone, so
+        the same moment in different offsets is not a false mismatch while
+        the deadline's calendar-day meaning is preserved. Anything else
+        compares naive calendar dates (.date() never subtracts datetimes,
+        so mixed aware/naive inputs cannot raise here).
+        """
+        if claimed.tzinfo is not None and computed.tzinfo is not None:
+            return claimed.astimezone(computed.tzinfo).date(), computed.date()
+        return claimed.date(), computed.date()
 
     def _calculate_deadline(
         self, start_date: datetime, term: str

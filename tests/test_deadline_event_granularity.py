@@ -1,0 +1,620 @@
+"""Deadline comparison-layer fixes (issues #54, #56).
+
+#54: event-anchored terms ("within 15 days after receipt of written
+notice") must fail closed instead of computing from the signing date.
+#56: claimed-vs-computed comparison runs at date granularity so sub-daily
+offsets cannot floor to a false exact match.
+"""
+
+from qwed_legal import DeadlineGuard
+from qwed_legal.diagnostics import LegalDiagnosticStatus
+
+
+class TestEventAnchoredTerms:
+    """Issue #54."""
+
+    def setup_method(self):
+        self.guard = DeadlineGuard()
+
+    def test_issue_repro_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "within 15 days after receipt of written notice",
+            "2026-01-16",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None
+        assert result.to_diagnostic().status is LegalDiagnosticStatus.UNVERIFIABLE
+
+    def test_anchor_word_named_in_message(self):
+        result = self.guard.verify(
+            "2026-01-01", "within 15 days after receipt of written notice", "2026-01-16"
+        )
+        assert "receipt" in result.message
+        assert "Expected" not in result.message
+
+    def test_anchor_variants_fails_closed(self):
+        for term in (
+            "30 days after delivery",
+            "15 days following termination",
+            "30 days after demand",
+            "60 days after breach",
+            "45 days after invoice",
+            "10 days after occurrence",
+            "WITHIN 15 DAYS AFTER RECEIPT",
+            "30 days after acceptance",
+            "15 days after payment",
+            "15 days after receipts",
+            "15 days after deliveries",
+            "10 days after written notice",
+        ):
+            result = self.guard.verify("2026-01-01", term, "2026-02-01")
+            assert result.verified is False, term
+            assert result.is_computable is False, term
+
+    def test_on_preposition_anchors_fail_closed(self):
+        for term in ("30 days on receipt", "30 days on delivery"):
+            result = self.guard.verify("2026-01-01", term, "2026-01-31")
+            assert result.verified is False, term
+            assert result.is_computable is False, term
+
+    def test_descriptive_on_phrase_keeps_signing_anchor(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing to deliver notice based on invoice",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_commencing_on_receipt_fails_closed(self):
+        for term in (
+            "30 days commencing on receipt",
+            "the period shall commence on delivery, 30 days to pay",
+            "the period commences on delivery, 30 days to pay",
+            "the period commenced on delivery, 30 days to pay",
+        ):
+            result = self.guard.verify("2026-01-01", term, "2026-01-31")
+            assert result.verified is False, term
+            assert result.is_computable is False, term
+
+    def test_negated_signing_does_not_anchor(self):
+        # "not from signing" rules the signing date out: without a usable
+        # anchor the unknown payment date decides.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days not from the date of signing, but dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_negated_only_signing_fails_closed(self):
+        # No event anchor at all — but the only signing anchor is negated,
+        # so there is nothing to compute from.
+        result = self.guard.verify("2026-01-01", "30 days, not from signing", "2026-01-31")
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None
+
+    def test_paren_comma_negation_fails_closed(self):
+        # The comma lives inside parens, so depth-aware splitting keeps
+        # the negation in the anchor's segment.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not, however, from signing) but dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_sealed_not_does_not_negate_outside_anchor(self):
+        # "not" sealed in parens governs only paren content: the outside
+        # signing anchor stands and the deadline computes.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not subject to change, as agreed) from signing",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_negation_consumed_by_first_anchor(self):
+        # "(not)" negates "from execution"; the later "from signing" is
+        # governed by nothing and anchors with the conditional approval.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not) from execution but from signing, subject to approval",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_does_not_object_keeps_signing_anchor(self):
+        # Do-supported "not" belongs to another verb, not the anchor.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days for any party that does not object from signing",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_do_not_run_negates_anchor(self):
+        # ...unless that verb is temporal: "run from signing" IS the anchor.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days do not run from signing, but are dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_shared_negation_consumed_once(self):
+        # One "(not)" governs the first anchor after it; the later valid
+        # anchor still computes with its conditional.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not) from execution but from signing, subject to approval",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_depends_on_receipt_anchors(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days depends on receipt, pay then", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_depends_on_acceptance_matches_dependent_twin(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing, depends on acceptance", "2026-01-31"
+        )
+        assert result.verified is True
+
+    def test_cross_segment_governance_fails_closed(self):
+        # Conditional event in one segment, start-date link in another:
+        # the link still defeats the skip.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, conditioned upon acceptance, with the start date dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_bare_not_paren_negates_following_anchor(self):
+        # A bare "(not)" is an interjected negation of what follows.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days (not) from signing, dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_later_valid_signing_anchor_computes(self):
+        # The negated "from execution" is dropped, but the later valid
+        # "from signing" still anchors with the conditional approval.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days not from execution, but from signing, subject to approval",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_distant_negation_fails_closed(self):
+        # "not" sits five words before the anchor — beyond any fixed
+        # window — so the segment, not a word count, decides.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days not under any circumstances measured from signing, but dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_subject_to_start_date_link_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, the start date is subject to approval",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_date_of_signing_keeps_computation(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from the date of signing, subject to approval",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_possessive_gap_anchors_fail_closed(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days after the board's approval", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_notice_date_phrase_fails_closed(self):
+        # Three words precede the noun — covered by the targeted "the
+        # date the" alternative, not the general two-word gap.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days after the date the notice is received",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_date_of_receipt_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days from the date of receipt", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_conditioned_clause_keeps_signing_anchor(self):
+        # The first temporal anchor ("from signing") starts the period;
+        # "conditioned upon acceptance" is a condition, not an anchor.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, conditioned upon acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_dependent_clause_keeps_signing_anchor(self):
+        # Same conditional family as "conditioned upon": "dependent on
+        # acceptance" conditions the obligation without re-anchoring it.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, dependent on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_conditional_receipt_still_fails_closed(self):
+        # "receipt" always anchors: conditional wording around a temporal
+        # noun does not waive its unknown date.
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing, dependent on receipt", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_start_date_language_fails_closed(self):
+        # Explicit statement that the event starts the period defeats any
+        # conditional reading.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, with the start date dependent on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_parenthetical_start_date_clarification_verifies(self):
+        # "(start date is signing)" lives in its own segment: a
+        # clarification, not a re-anchor of the distant event.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing (start date is signing), conditioned upon acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_bare_commencement_reanchors(self):
+        # Unlike "start", bare "commencement" has no non-temporal use
+        # here: the period's commencement depending on payment means
+        # payment starts the clock.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, the period's commencement is dependent on payment",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_descriptive_commencement_verifies(self):
+        # "commencement of services" describes what commences, with no
+        # dependent-link to the event: the conditional payment still
+        # computes from signing.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing to deliver notice, commencement of services conditioned upon payment",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_paren_interrupted_start_date_reanchors(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, with the start date (as defined herein) dependent on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_shall_be_start_date_reanchors(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, with the start date shall be dependent on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_determiner_between_on_and_event_reanchors(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, with the start date dependent on the acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_paren_comma_does_not_hide_governance(self):
+        # The comma lives inside parens, so depth-aware splitting keeps
+        # the link whole; the stripped form would lose it.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, conditioned upon acceptance (start date dependent on acceptance, as defined)",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_sealed_governance_paren_reanchors(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, conditioned upon acceptance (start date dependent on acceptance)",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_other_event_start_language_keeps_skip(self):
+        # The start-date link names staffing, not the skipped acceptance:
+        # the conditional skip stands and the notice deadline computes.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing to deliver notice, conditioned upon acceptance (service commencement shall be dependent on staffing)",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_plain_approval_anchor_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days after approval", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_conditioned_payment_keeps_signing_anchor(self):
+        # Payment is an agentive act like acceptance: conditional wording
+        # around it reads as conditionality, unlike temporal occurrences.
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing, conditioned upon payment", "2026-01-31"
+        )
+        assert result.verified is True
+
+    def test_subject_to_approval_keeps_signing_anchor(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing, subject to approval", "2026-01-31"
+        )
+        assert result.verified is True
+
+    def test_mixed_signing_and_event_anchors_fail_closed(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing or after delivery, whichever is later",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None
+
+    def test_later_reanchoring_clause_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, provided that the period begins upon receipt of notice",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_event_first_term_fails_closed(self):
+        # Genuinely ambiguous about what starts the period (acceptance
+        # gating vs signing anchor): fail closed, not signing-wins.
+        result = self.guard.verify(
+            "2026-01-01", "upon acceptance, 30 days from signing", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_service_of_process_fails_closed(self):
+        result = self.guard.verify(
+            "2026-01-01", "30 days after service of process", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.to_diagnostic().status is LegalDiagnosticStatus.UNVERIFIABLE
+
+    def test_notice_of_termination_still_verifies(self):
+        # "notice" is the obligation document here, "termination" its
+        # subject — the period still starts at signing.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing to deliver notice of termination",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_of_payment_still_fails_closed(self):
+        # The "of" governor exclusion is narrow: genuine "of <event>"
+        # anchors still fail closed.
+        result = self.guard.verify(
+            "2026-01-01", "within 30 days of payment", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_provision_of_services_still_verifies(self):
+        # "of" after a non-unit noun is descriptive ("provision OF
+        # services" = what is provided), not a temporal anchor: the
+        # period still starts at signing.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing for the provision of services",
+            "2026-01-31",
+        )
+        assert result.verified is True
+
+    def test_signing_mentions_do_not_trigger_event_gate(self):
+        # "notice" here is the obligation, not the anchor: the period
+        # starts at signing, which the guard can compute.
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing to deliver notice", "2026-01-31"
+        )
+        assert result.verified is True
+
+    def test_signing_anchored_terms_still_verify(self):
+        assert self.guard.verify("2026-01-01", "30 days", "2026-01-31").verified is True
+        assert (
+            self.guard.verify("2026-01-01", "30 days from signing", "2026-01-31").verified
+            is True
+        )
+        assert (
+            self.guard.verify("2026-01-01", "15 days after execution", "2026-01-16").verified
+            is True
+        )
+
+
+class TestDateGranularityComparison:
+    """Issue #56."""
+
+    def setup_method(self):
+        self.guard = DeadlineGuard()
+
+    def test_issue_repro_one_day_late_is_mismatch(self):
+        result = self.guard.verify("2026-01-15 23:00", "30 days", "2026-02-15")
+        assert result.verified is False
+        assert result.difference_days == 1
+
+    def test_same_date_sub_daily_noise_verifies(self):
+        # Computed 2026-02-14 23:00 vs claimed 2026-02-14 10:00: same date.
+        result = self.guard.verify("2026-01-15 23:00", "30 days", "2026-02-14 10:00")
+        assert result.verified is True
+        assert result.difference_days == 0
+
+    def test_early_same_date_verifies(self):
+        # 23h early but the same calendar date: not a day-level mismatch.
+        result = self.guard.verify("2026-01-15 23:00", "30 days", "2026-02-14 00:00")
+        assert result.verified is True
+
+    def test_exact_date_still_verifies(self):
+        assert self.guard.verify("2026-01-15", "30 days", "2026-02-14").verified is True
+
+    def test_tolerance_applies_at_date_granularity(self):
+        result = self.guard.verify("2026-01-15", "30 days", "2026-02-15", tolerance_days=1)
+        assert result.verified is True
+        assert result.difference_days == 1
+
+    def test_same_moment_different_offsets_verifies(self):
+        # 2026-02-14 20:00-05:00 == 2026-02-15 01:00+00:00: compared in the
+        # deadline's frame, not UTC, so no false mismatch.
+        result = self.guard.verify(
+            "2026-01-15 20:00-05:00", "30 days", "2026-02-15 01:00+00:00"
+        )
+        assert result.verified is True
+        assert result.difference_days == 0
+
+    def test_next_day_in_deadline_frame_is_mismatch(self):
+        # Same region, next local day: Feb 15 00:00+05:00 is not Feb 14,
+        # even though both fall on Feb 14 in UTC.
+        result = self.guard.verify(
+            "2026-01-15 23:00+05:00", "30 days", "2026-02-15 00:00+05:00"
+        )
+        assert result.verified is False
+        assert result.difference_days == 1
+
+    def test_mismatch_message_reports_compared_days(self):
+        # The message must never show identical dates with a non-zero
+        # difference. The caller's original spelling is kept first, with
+        # the converted comparison day labelled, so wrappers displaying
+        # the raw claim beside this message stay consistent.
+        result = self.guard.verify(
+            "2026-01-15 23:00+05:00", "30 days", "2026-02-14 22:00-08:00"
+        )
+        assert result.verified is False
+        assert "Expected 2026-02-14" in result.message
+        assert "claimed 2026-02-14 (=2026-02-15 in the deadline's timezone)" in result.message
+        assert "Difference: 1 days." in result.message
+
+    def test_mixed_timezone_inputs_fail_closed(self):
+        # Statute parity: aware/naive frames are incomparable, so even
+        # date-granularity comparison would silently mix calendar days.
+        for signing, claimed in (
+            ("2026-01-15", "2026-02-14 22:00-08:00"),
+            ("2026-01-15 23:00+05:00", "2026-02-14"),
+        ):
+            result = self.guard.verify(signing, "30 days", claimed)
+            assert result.verified is False, (signing, claimed)
+            assert result.is_computable is False, (signing, claimed)
+
+    def test_signing_or_event_disjunction_fails_closed(self):
+        # Competing anchors with no provable reading: the delivery date
+        # is unknown, so signing+30 proves nothing.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing or after delivery, whichever is later",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+        assert result.computed_deadline is None
+
+    def test_signing_the_invoice_fails_closed(self):
+        # "signing the invoice" shares one preposition for both anchors,
+        # so both matches start together — and the invoice signing is a
+        # different event from the contract signing with its own unknown
+        # date. Fail closed either way the tie breaks.
+        result = self.guard.verify(
+            "2026-01-01", "30 days from signing the invoice", "2026-01-31"
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_start_date_of_term_governs_event(self):
+        # The start-date link spans an "of the <noun>" bridge: the term
+        # says acceptance starts the period, so its date is required.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, the start date of the term depends on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_notice_period_bridge_governs_event(self):
+        # Multiword period description ("the notice period") still
+        # terminates the bridge at a period word.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, the start date of the notice period depends on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
+    def test_or_joined_negation_covers_both_anchors(self):
+        # "not A or B" rules out both starting points: neither anchor is
+        # usable and no event date is supplied.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days not from signing or after execution",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
