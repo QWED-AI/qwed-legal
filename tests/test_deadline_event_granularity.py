@@ -597,6 +597,17 @@ class TestDateGranularityComparison:
         assert result.verified is False
         assert result.is_computable is False
 
+    def test_notice_period_bridge_governs_event(self):
+        # Multiword period description ("the notice period") still
+        # terminates the bridge at a period word.
+        result = self.guard.verify(
+            "2026-01-01",
+            "30 days from signing, the start date of the notice period depends on acceptance",
+            "2026-01-31",
+        )
+        assert result.verified is False
+        assert result.is_computable is False
+
     def test_or_joined_negation_covers_both_anchors(self):
         # "not A or B" rules out both starting points: neither anchor is
         # usable and no event date is supplied.

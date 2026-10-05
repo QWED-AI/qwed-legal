@@ -39,7 +39,7 @@ def _start_date_link_re(event_noun: str) -> "re.Pattern[str]":
     """
     return re.compile(
         r"\b(?:start|commencement|effective)(?:\s+date)?"
-        r"(?:\s+of\s+(?:the\s+)?[a-z]+)?\s+"
+        r"(?:\s+of\s+(?:the\s+)?(?:[a-z]+\s+)?(?:term|period|deadline)s?)?\s+"
         r"(?:is\s+|are\s+|was\s+|were\s+|shall\s+be\s+|will\s+be\s+)?"
         r"(?:depend(?:ent|s|ed|ing)?\s+on|subject\s+to)\s+(?:[a-z'’]+\s+){0,2}?"
         + re.escape(event_noun)
@@ -557,7 +557,7 @@ class DeadlineGuard:
     # "event" ("in the event of" is conditional, not a temporal anchor).
     _EVENT_ANCHOR_RE = re.compile(
         r"\b(?:after|following|upon|from|within|"
-        r"(?:conditioned|conditional|contingent|dependent|depends)\s+(?:up\s+)?on|"
+        r"(?:conditioned|conditional|contingent|dependent|depends)\s+(?:up)?on|"
         r"subject\s+to|"
         r"(?:commenc(?:e|ing|es|ed)\s+on)|"
         r"(?:day|days|week|weeks|month|months|year|years)\s+(?:of|on))\s+"
