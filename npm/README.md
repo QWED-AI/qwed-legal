@@ -31,7 +31,8 @@ const jurisdiction = new JurisdictionVerifier();
 const jurisdictionResult = await jurisdiction.verifyChoiceOfLaw(
     ["US", "UK"],
     "Delaware",
-    "London"
+    "London",
+    "services" // optional contract type: "services" verifies, goods warns CISG, omitted warns partial coverage
 );
 console.log(jurisdictionResult.conflicts);  // Array of conflicts
 

@@ -51,3 +51,28 @@ jobs:
           pip install ruff==0.16.1
           ruff check .
 
+  npm-test:
+    name: Test npm wrapper
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+
+      - name: Install Python package and npm dependencies
+        run: |
+          pip install -e .
+          npm ci --prefix npm
+
+      - name: Run npm wrapper tests
+        run: npm test --prefix npm
+

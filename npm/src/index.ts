@@ -109,6 +109,19 @@ export interface JurisdictionResult {
     warnings: string[];
     governing_law?: string;
     forum?: string;
+    /**
+     * Contract type as supplied by the caller (null when omitted).
+     * Echoed for convenience — classification comes from
+     * `contractClassification`, read off the verification trace.
+     */
+    contractType?: string | null;
+    /**
+     * Guard-side classification: "goods" | "declared_non_goods" |
+     * "unclassified" (null when the trace carries none). Distinguishes
+     * "warned as goods" from "warned as unclassified" without parsing
+     * messages.
+     */
+    contractClassification?: string | null;
     message: string;
     verification_trace: VerificationStep[];
 }
@@ -381,16 +394,26 @@ export class JurisdictionVerifier {
     async verifyChoiceOfLaw(
         partiesCountries: string[],
         governingLaw: string,
-        forum?: string
+        forum?: string,
+        contractType?: string
     ): Promise<JurisdictionResult> {
         const partiesJson = JSON.stringify(partiesCountries);
         const forumArg = forum ? `"${escapePythonString(forum)}"` : 'None';
+        // Keyword argument: position 4 is forum_selection, not contract_type.
+        // Nullish check: plain-JS callers can pass null, which must mean
+        // None like undefined. JSON.stringify (not escapePythonString):
+        // its double-quoted output is a valid Python literal that also
+        // escapes NUL and other control characters escapePythonString
+        // leaves through (a raw NUL breaks the Python invocation).
+        // Other wrappers keep their existing escaping (see #74).
+        const contractArg =
+            contractType != null ? JSON.stringify(contractType) : 'None';
         const script = `
 from qwed_legal import JurisdictionGuard, trace_to_dict
 import json
 
 guard = JurisdictionGuard()
-result = guard.verify_choice_of_law(${partiesJson}, "${escapePythonString(governingLaw)}", ${forumArg})
+result = guard.verify_choice_of_law(${partiesJson}, "${escapePythonString(governingLaw)}", ${forumArg}, contract_type=${contractArg})
 
 print(json.dumps({
     "verified": result.verified,
@@ -402,7 +425,26 @@ print(json.dumps({
     "verification_trace": trace_to_dict(result.verification_trace)
 }))
 `;
-        return runPythonScript<JurisdictionResult>(script, this.pythonPath);
+        const result = await runPythonScript<JurisdictionResult>(script, this.pythonPath);
+        result.contractType = contractType ?? null;
+        result.contractClassification = JurisdictionVerifier.classificationOf(result);
+        return result;
+    }
+
+    /**
+     * Guard-side contract classification scraped from the trace
+     * ("goods" | "declared_non_goods" | "unclassified"), or null when the
+     * trace carries none. Every return path records it in its inputs.
+     */
+    static classificationOf(result: JurisdictionResult): string | null {
+        for (const step of result.verification_trace ?? []) {
+            const classification = (step.inputs as Record<string, unknown>)
+                ?.contract_classification;
+            if (typeof classification === 'string') {
+                return classification;
+            }
+        }
+        return null;
     }
 
     async checkConvention(
