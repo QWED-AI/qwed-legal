@@ -401,9 +401,13 @@ export class JurisdictionVerifier {
         const forumArg = forum ? `"${escapePythonString(forum)}"` : 'None';
         // Keyword argument: position 4 is forum_selection, not contract_type.
         // Nullish check: plain-JS callers can pass null, which must mean
-        // None like undefined (escapePythonString would throw on null).
+        // None like undefined. JSON.stringify (not escapePythonString):
+        // its double-quoted output is a valid Python literal that also
+        // escapes NUL and other control characters escapePythonString
+        // leaves through (a raw NUL breaks the Python invocation).
+        // Other wrappers keep their existing escaping (see #74).
         const contractArg =
-            contractType != null ? `"${escapePythonString(contractType)}"` : 'None';
+            contractType != null ? JSON.stringify(contractType) : 'None';
         const script = `
 from qwed_legal import JurisdictionGuard, trace_to_dict
 import json

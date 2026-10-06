@@ -102,6 +102,18 @@ describe('verifyChoiceOfLaw contractType (issue #86)', () => {
         assert.equal(result.contractClassification, 'unclassified');
     });
 
+    it('NUL payload completes as unclassified', async () => {
+        const result = await verifier.verifyChoiceOfLaw(
+            ['FR', 'IT'],
+            'Germany',
+            undefined,
+            'a\0b'
+        );
+        assert.equal(result.verified, false);
+        assert.equal(result.contractType, 'a\0b');
+        assert.equal(result.contractClassification, 'unclassified');
+    });
+
     it('classificationOf returns null without trace data', async () => {
         assert.equal(
             JurisdictionVerifier.classificationOf({ verification_trace: [] }),
