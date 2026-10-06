@@ -345,6 +345,7 @@ const jResult = await jurisdiction.verifyChoiceOfLaw(
   ["US", "UK"],
   "Delaware",
   "London",
+  "services" // optional: declared type verifies, goods warns CISG, omitted warns partial coverage
 );
 console.log(jResult.conflicts);
 
