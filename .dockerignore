@@ -1,0 +1,5 @@
+# Keep test/debug files out of the Docker build context (QWED
+# docker-test-context: test files in context block the security gate
+# even though the Dockerfile never COPYs them into the image).
+tests/
+npm/test/
