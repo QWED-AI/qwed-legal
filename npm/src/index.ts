@@ -400,8 +400,10 @@ export class JurisdictionVerifier {
         const partiesJson = JSON.stringify(partiesCountries);
         const forumArg = forum ? `"${escapePythonString(forum)}"` : 'None';
         // Keyword argument: position 4 is forum_selection, not contract_type.
+        // Nullish check: plain-JS callers can pass null, which must mean
+        // None like undefined (escapePythonString would throw on null).
         const contractArg =
-            contractType !== undefined ? `"${escapePythonString(contractType)}"` : 'None';
+            contractType != null ? `"${escapePythonString(contractType)}"` : 'None';
         const script = `
 from qwed_legal import JurisdictionGuard, trace_to_dict
 import json
