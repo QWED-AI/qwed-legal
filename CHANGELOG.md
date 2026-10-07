@@ -71,6 +71,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Build / Tooling
 - Pinned the ruff lint gate to the stable default ruleset (`select = ["E4", "E7", "E9", "F"]` under `[tool.ruff.lint]`). Ruff's default rule selection expanded in newer releases, which flipped CI red on unchanged code.
 - Pinned ruff to `0.16.1` in CI and via `required-version` in pyproject so the gate cannot drift with future ruff releases.
+- CI: new `npm-test` job builds the wrapper from source and runs the dependency-free `node:test` suite (#93).
+
+### Fixed — fail-closed batch (#70, #83–85, #87–88)
+- `ClauseGuard`: empty inputs fail closed instead of verifying vacuously (#70).
+- `LiabilityGuard`: `verify_tiered_liability` refuses empty tier lists before summation — no operands means no proof (#83).
+- `ProvenanceGuard` / `JurisdictionGuard`: explicit emptiness at the provenance gate and convention parties — blank entries are `INCOMPLETE`/`UNVERIFIABLE`, not silent passes (#84).
+- `JurisdictionGuard`: three-way `contract_type` classification for CISG — goods contracts (separator/case variants, bare `"sale"` excluded) warn; declared non-goods (`"services"`, …) do not; missing/blank/unknown values get a partial-coverage warning and are never verified. The US/non-US party pair alone no longer triggers the warning (#85).
+- GitHub Action: runs that execute zero verifications (missing inputs, typo'd modes) fail closed; aggregation is attest-only — only deterministic proofs keep the step green (#87).
+- Diagnostics: `LegalDiagnosticResult.verified()` raises unless the evidence trace contains a `DETERMINISTIC` step — traceless or transport-stripped `"consistent"` verdicts demote to `UNVERIFIABLE` (#88).
+
+### Fixed — statute/date batch (#90–92)
+- `DeadlineGuard` / `StatuteOfLimitationsGuard`: order-ambiguous numeric dates (`"03/04/2026"`) fail closed with `AMBIGUITY_NOTED` instead of certifying the month-first reading; ISO and named-month dates unaffected. Raw strings preserved in the trace (#55, #58 → PR #90).
+- `DeadlineGuard` / `StatuteOfLimitationsGuard`: partial dates (`"March 2024"`, `"Friday"`) fail closed instead of completing from the wall clock — verdicts no longer vary by run day; yearless `"February 29"` and all weekday names covered; parsed datetimes recorded as `None` so clock-filled values never leak into results (#57, #59 → PR #91).
+- `DeadlineGuard`: event-anchored terms (`"within 15 days after receipt of written notice"`) fail closed — only preposition-governed event nouns count, with signing-anchored, conditional (`"conditioned upon acceptance"`), and descriptive (`"notice of termination"`) carve-outs; comparison runs at date granularity (no more floor-to-exact); timezone-aware inputs compare in the deadline's frame; mixed aware/naive inputs fail closed (#54, #56 → PR #92).
+
+### Added — npm SDK (#86 → PR #93)
+- `verifyChoiceOfLaw` accepts an optional 4th parameter `contractType?: string` (passed as a `contract_type=` keyword — position 4 is `forum_selection`), so SDK callers can declare known classifications instead of always landing unclassified. Omitted behaves exactly as before.
+- `JurisdictionResult` gains optional `contractType` (echo) and `contractClassification` (`goods` | `declared_non_goods` | `unclassified`, read off the trace) so callers need not parse messages.
+- First npm wrapper tests (`npm/test/`, dependency-free `node:test`): the services/goods/omitted matrix, quote/backslash/NUL payload escaping, null-handling, plus an `npm-test` CI job. `contractType` serializes as a JSON literal so control characters (including NUL) cannot break the generated Python program.
 
 ## [0.4.0] - 2026-05-30
 

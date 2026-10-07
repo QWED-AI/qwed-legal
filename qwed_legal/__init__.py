@@ -28,7 +28,7 @@ from qwed_legal.diagnostics import (
 from qwed_legal.models import VerificationStep, trace_to_dict
 from qwed_legal.rag.sac_processor import SACProcessor
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "DeadlineGuard",
     "LiabilityGuard",
