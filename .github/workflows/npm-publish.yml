@@ -1,0 +1,52 @@
+name: Publish npm Package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    # Manual dispatches are main-only: publishing selected-branch code
+    # would run that branch's lifecycle scripts with NPM_TOKEN exposed.
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    permissions:
+      contents: read # checkout only; npm publish authenticates with NPM_TOKEN, not GITHUB_TOKEN
+    defaults:
+      run:
+        working-directory: ./npm
+
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Set up Python
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Install Python package (wrapper tests shell out to it)
+        run: pip install -e .
+        working-directory: .
+
+      - name: Test wrapper
+        run: npm test
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
