@@ -71,9 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Build / Tooling
 - Pinned the ruff lint gate to the stable default ruleset (`select = ["E4", "E7", "E9", "F"]` under `[tool.ruff.lint]`). Ruff's default rule selection expanded in newer releases, which flipped CI red on unchanged code.
 - Pinned ruff to `0.16.1` in CI and via `required-version` in pyproject so the gate cannot drift with future ruff releases.
-- CI: npm publish workflow token scoped to `contents: read` (#56); new `npm-test` job builds the wrapper from source and runs the dependency-free `node:test` suite (#93).
+- CI: new `npm-test` job builds the wrapper from source and runs the dependency-free `node:test` suite (#93).
 
-### Fixed — fail-closed batch (#70, #83–85, #87–89)
+### Fixed — fail-closed batch (#70, #83–85, #87–88)
 - `ClauseGuard`: empty inputs fail closed instead of verifying vacuously (#70).
 - `LiabilityGuard`: `verify_tiered_liability` refuses empty tier lists before summation — no operands means no proof (#83).
 - `ProvenanceGuard` / `JurisdictionGuard`: explicit emptiness at the provenance gate and convention parties — blank entries are `INCOMPLETE`/`UNVERIFIABLE`, not silent passes (#84).

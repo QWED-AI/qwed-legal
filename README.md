@@ -342,9 +342,9 @@ console.log(deadlineResult.verified);
 
 const jurisdiction = new JurisdictionVerifier();
 const jResult = await jurisdiction.verifyChoiceOfLaw(
-  ["US", "UK"],
-  "Delaware",
-  "London",
+  ["FR", "IT"],
+  "Germany",
+  undefined,
   "services" // optional: declared type verifies, goods warns CISG, omitted warns partial coverage
 );
 console.log(jResult.conflicts);
