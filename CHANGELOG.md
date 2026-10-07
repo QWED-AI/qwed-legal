@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: breaking changes are released as minor bumps).
 
-## [Unreleased]
+## [0.5.0] - 2026-10-06
 
 ### Added — DiagnosticResult contract (issue #40, Option A per #37)
 - New `qwed_legal.diagnostics` module: `LegalDiagnosticResult` (frozen 3-layer result: `agent_message` / `developer_fields` / `proof_ref`), `LegalDiagnosticStatus` (VERIFIED / UNVERIFIABLE / BLOCKED), an RFC 8785 (JCS) canonicalizer, `compute_proof_ref`, and `resolve_proof_ref`.
