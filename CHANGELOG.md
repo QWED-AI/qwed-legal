@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: breaking changes are released as minor bumps).
 
+## [0.5.1] - Unreleased
+
+Security patch release. Upgrading is recommended for all users of `DeadlineGuard`
+(Python API, npm SDK, and GitHub Action). A security advisory will be published
+alongside this release.
+
+### Security — DeadlineGuard deadline anchoring
+- `DeadlineGuard` now computes a deadline from the signing date **only** when the term is bare-relative (`"30 days"`) or affirmatively anchored to signing/execution (`"30 days from signing"`, `"15 days after execution"`). Every other term fails closed with `UNVERIFIABLE` and an `UNSUPPORTED` trace step, instead of being certified `VERIFIED` against a reference the guard cannot date.
+- Directional terms (`"30 days before signing"`, `"prior to"`, `"ahead of"`, `"preceding"`) previously computed forward from the signing date and could certify the opposite direction. They now fail closed.
+- Event anchors outside the earlier event-noun list (e.g. `"after closing"`, `"after completion"`, `"within 30 days of request"`) and long adjective gaps before a listed noun are now rejected. This replaces the open-ended noun denylist with an allowlist of signing-anchored phrasings, completing the follow-up to #54.
+- The new check runs before date arithmetic, so rejected business-day terms never touch the holiday calendar.
+
+### Behaviour change
+- Terms that previously returned `VERIFIED` because they were silently measured from the signing date — but are actually anchored to another event or measured backward — now return `UNVERIFIABLE`. To keep a deterministic result, supply a term measured forward from the signing date, or provide the anchor event's date as the signing date.
+
+### Tests
+- Added regression coverage for directional and unlisted-event terms, plus the supported terms that must continue to verify. Full suite: 665 passed.
+
 ## [0.5.0] - 2026-10-07
 
 ### Added — DiagnosticResult contract (issue #40, Option A per #37)
