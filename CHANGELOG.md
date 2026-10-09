@@ -20,7 +20,7 @@ alongside this release.
 - The npm `DeadlineVerifier` now refuses to run (rejects) when the importable Python `qwed-legal` is older than 0.5.1, so an npm-only upgrade cannot silently keep the old deadline engine.
 
 ### Behaviour change
-- Terms that previously returned `VERIFIED` because they were silently measured from the signing date — but are actually anchored to another event or measured backward — now return `UNVERIFIABLE`. To keep a deterministic result, supply a term measured forward from the signing date, or provide the anchor event's date as the signing date.
+- Terms that previously returned `VERIFIED` because they were silently measured from the signing date — but are actually anchored to another event or measured backward — now return `UNVERIFIABLE`. To keep a deterministic result, supply a term measured forward from the signing date. For a forward term anchored to another event, first confirm the event's date and direction, then provide that date as `signing_date` and rewrite the term to a supported bare-relative form such as `"30 days"`. Changing the date alone does not make the original event-anchored term supported.
 
 ### Tests
 - Added regression coverage for directional and unlisted-event terms, plus the supported terms that must continue to verify. Full suite: 665 passed.
