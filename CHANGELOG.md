@@ -17,6 +17,7 @@ alongside this release.
 - Directional terms (`"30 days before signing"`, `"prior to"`, `"ahead of"`, `"preceding"`) previously computed forward from the signing date and could certify the opposite direction. They now fail closed.
 - Event anchors outside the earlier event-noun list (e.g. `"after closing"`, `"after completion"`, `"within 30 days of request"`) and long adjective gaps before a listed noun are now rejected. This replaces the open-ended noun denylist with an allowlist of signing-anchored phrasings, completing the follow-up to #54.
 - The new check runs before date arithmetic, so rejected business-day terms never touch the holiday calendar.
+- The npm `DeadlineVerifier` now refuses to run (rejects) when the importable Python `qwed-legal` is older than 0.5.1, so an npm-only upgrade cannot silently keep the old deadline engine.
 
 ### Behaviour change
 - Terms that previously returned `VERIFIED` because they were silently measured from the signing date — but are actually anchored to another event or measured backward — now return `UNVERIFIABLE`. To keep a deterministic result, supply a term measured forward from the signing date, or provide the anchor event's date as the signing date.
