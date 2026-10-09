@@ -227,9 +227,15 @@ class TestDeadlineGuardCompoundTerms:
 
     def test_business_qualifier_must_be_adjacent(self):
         """'business' elsewhere in the sentence must not turn calendar
-        days into business days (previously matched anywhere in term)."""
+        days into business days (previously matched anywhere in term).
+
+        The term must stay signing-anchored to isolate the adjacency rule:
+        the prior "... after the business closes the account" phrasing is
+        itself event-anchored (an unknown-date event) and is now correctly
+        rejected by the allowlist inversion (GHSA-mrv2-8596-cx34, N2), so it
+        can no longer serve as a VERIFIED case."""
         result = self.guard.verify(
-            "2026-01-01", "30 days after the business closes the account", "2026-01-31"
+            "2026-01-01", "30 days business notwithstanding", "2026-01-31"
         )
         assert result.verified is True
         assert result.is_computable is True

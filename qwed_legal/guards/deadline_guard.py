@@ -367,6 +367,24 @@ class DeadlineGuard:
         if anchor_rejection is not None:
             return anchor_rejection
 
+        # Allowlist inversion (GHSA-mrv2-8596-cx34). The event-noun denylist
+        # above rejects only a fixed set of nouns and cannot see directional
+        # wording, so two residual classes still reached signing+N:
+        #   N1 — directional terms ("30 days before/prior to signing") were
+        #        computed forward, certifying the opposite direction.
+        #   N2 — event anchors outside the denylist ("after closing",
+        #        "after completion", "within 30 days of request") were
+        #        computed from the signing date against an unknown reference.
+        # Compute from signing ONLY when the term is bare-relative
+        # ("30 days") or affirmatively anchored to signing/execution
+        # ("30 days from signing"); otherwise fail closed. Runs before date
+        # arithmetic so rejected business-day terms never touch the calendar.
+        term_rejection = self._reject_unsupported_reference(
+            term, signing, claimed
+        )
+        if term_rejection is not None:
+            return term_rejection
+
         # Parse term and calculate deadline
         computed, used_business_days = self._calculate_deadline(signing, term)
 
@@ -757,6 +775,117 @@ class DeadlineGuard:
                 VerificationStep(
                     step=STEP_RULE_IDENTIFIED,
                     description="Checked term for unsupported anchors before computing from signing date.",
+                    inputs={"term": term},
+                    output=output,
+                    evidence_type=EVIDENCE_UNSUPPORTED,
+                )
+            ],
+        )
+
+    # Directional wording that reverses or offsets the measurement relative
+    # to a reference (GHSA-mrv2-8596-cx34, N1). "30 days before signing"
+    # means signing−30, not signing+30, and the forward computation would
+    # certify the opposite date. The quantity/unit parser drops the
+    # direction entirely, so any of these words makes the term unsupported.
+    _DIRECTIONAL_RE = re.compile(
+        r"\b(?:before|prior\s+to|preceding|ahead\s+of|in\s+advance\s+of|"
+        r"earlier\s+than|ago|back)\b"
+    )
+    # Affirmative signing/execution anchor ("from signing", "after
+    # execution", "of the date of signing"). A term carrying one of these
+    # (and not negated — _event_anchor already handles "not from signing")
+    # is genuinely measured from the signing date and may compute forward.
+    _SIGNING_REFERENCE_RE = re.compile(
+        r"\b(?:after|following|upon|from|of|within)\s+"
+        r"(?:the\s+(?:date\s+of\s+)?)?(?:signing|execution)\b"
+    )
+    # Relational prepositions that introduce a reference point ("after X",
+    # "from the date of Y", "within N days of Z"). A term that contains one
+    # of these but does NOT resolve to a signing/execution reference is
+    # anchored to something the guard cannot date — fail closed rather than
+    # silently measuring from signing (GHSA-mrv2-8596-cx34, N2). This is the
+    # allowlist inversion the #54 follow-up called for: the open-ended noun
+    # space is closed by requiring an affirmative signing anchor, not by
+    # enumerating every event noun.
+    _RELATIONAL_REFERENCE_RE = re.compile(
+        r"\b(?:after|following|upon|from|of|since)\s+"
+        r"(?:the\s+)?(?:date\s+)?(?:of\s+)?[a-z]"
+    )
+
+    def _reject_unsupported_reference(
+        self,
+        term: str,
+        signing: datetime,
+        claimed: datetime,
+    ) -> "Optional[DeadlineResult]":
+        """Fail-closed unless the term is bare-relative or signing-anchored.
+
+        Complements the event-noun denylist (_event_anchor): it closes the
+        residual directional (N1) and unlisted-anchor (N2) classes by
+        inverting to an allowlist — compute from signing only for a
+        bare-relative term or one affirmatively anchored to signing/
+        execution. Returns an UNVERIFIABLE result for anything else, or None
+        to allow the computation to proceed.
+        """
+        term_lower = term.lower()
+
+        directional = bool(self._DIRECTIONAL_RE.search(term_lower))
+        signing_anchored = bool(self._SIGNING_REFERENCE_RE.search(term_lower))
+        # A relational preposition that is not the signing anchor marks an
+        # external reference point (an event, another date) the guard cannot
+        # resolve. "30 days" (bare) has no such preposition and is allowed.
+        has_other_reference = (
+            bool(self._RELATIONAL_REFERENCE_RE.search(term_lower))
+            and not signing_anchored
+        )
+
+        # A signing anchor used WITH directional wording ("30 days before
+        # signing") still measures backward — the direction governs, so the
+        # forward computation is wrong. Reject.
+        if not directional and not has_other_reference:
+            return None
+
+        if directional:
+            detail = (
+                "uses directional wording (e.g. 'before', 'prior to', "
+                "'ahead of') that measures the period backward or against a "
+                "reference the signing-date computation does not apply"
+            )
+            output = (
+                "UNSUPPORTED: directional term — period is not measured "
+                "forward from the signing date."
+            )
+        else:
+            detail = (
+                "is anchored to a reference other than the signing or "
+                "execution date, so the real deadline is unknowable from "
+                "these inputs"
+            )
+            output = (
+                "UNSUPPORTED: term references a non-signing anchor with no "
+                "supplied date."
+            )
+
+        return DeadlineResult(
+            verified=False,
+            signing_date=signing,
+            claimed_deadline=claimed,
+            computed_deadline=None,
+            term_parsed=term,
+            difference_days=None,
+            message=(
+                f"⚠️ UNVERIFIABLE: Term '{term}' {detail}. Supply a term "
+                f"measured forward from the signing date (e.g. '30 days', "
+                f"'30 days from signing'), or provide the anchor event's date."
+            ),
+            is_computable=False,
+            verification_trace=[
+                VerificationStep(
+                    step=STEP_RULE_IDENTIFIED,
+                    description=(
+                        "Checked that the term is measured forward from the "
+                        "signing date before computing."
+                    ),
                     inputs={"term": term},
                     output=output,
                     evidence_type=EVIDENCE_UNSUPPORTED,
