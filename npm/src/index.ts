@@ -209,6 +209,9 @@ async function runPythonScript<T>(script: string, pythonPath: string = 'python')
 // DeadlineVerifier
 // ============================================================================
 
+/** Minimum Python qwed_legal release DeadlineVerifier will run against (Python tuple literal). */
+const MIN_DEADLINE_ENGINE_VERSION = '(0, 5, 1)';
+
 /** Verify deadline calculations in contracts. */
 export class DeadlineVerifier {
     private pythonPath: string;
@@ -224,6 +227,19 @@ export class DeadlineVerifier {
         country: string = 'US'
     ): Promise<DeadlineResult> {
         const script = `
+import re
+import qwed_legal
+
+# The npm wrapper runs whichever qwed_legal is importable, so an npm-only
+# upgrade can leave an older engine in place. Refuse (fail closed) on any
+# qwed_legal release without the 0.5.1 deadline-anchoring fix.
+_installed = tuple(int(p) for p in re.findall(r"\\d+", qwed_legal.__version__)[:3])
+if _installed < ${MIN_DEADLINE_ENGINE_VERSION}:
+    raise RuntimeError(
+        "qwed-legal " + qwed_legal.__version__ + " is too old for DeadlineVerifier; "
+        "install qwed-legal>=0.5.1"
+    )
+
 from qwed_legal import DeadlineGuard, trace_to_dict
 import json
 

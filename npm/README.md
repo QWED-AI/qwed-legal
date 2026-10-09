@@ -13,8 +13,12 @@ npm install @qwed-ai/legal
 
 **Prerequisites:** Python 3.10+ with `qwed-legal` installed:
 ```bash
-pip install qwed-legal
+pip install "qwed-legal>=0.5.1"
 ```
+
+The wrapper runs whichever `qwed_legal` your Python interpreter imports, so upgrade the
+Python package alongside this one. `DeadlineVerifier` refuses to run (the promise rejects)
+against `qwed-legal` older than 0.5.1.
 
 ## Quick Start
 

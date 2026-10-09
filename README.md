@@ -141,6 +141,8 @@ print(result.computed_deadline)
 print(result.message)
 ```
 
+`DeadlineGuard` computes from the signing date only when the term is bare-relative (`"30 days"`, `"30 business days"`) or explicitly anchored to signing/execution (`"30 days from signing"`). Terms anchored to another event (`"30 days after closing"`) or measured backward (`"30 days before signing"`) return `UNVERIFIABLE`, because the reference date cannot be derived from the inputs.
+
 ### Verify a liability cap calculation
 
 ```python
