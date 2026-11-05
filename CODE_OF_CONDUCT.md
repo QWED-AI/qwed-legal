@@ -38,7 +38,7 @@ This Code of Conduct applies within all community spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project team at **conduct@qwedai.com**.
+reported to the project team at **rahul@qwedai.tech**.
 
 ## Attribution
 
