@@ -17,7 +17,7 @@ We take security seriously at QWED.
 
 Instead, please report security vulnerabilities by emailing:
 
-📧 **security@qwedai.com**
+📧 **rahul@qwedai.tech**
 
 ### What to Include
 
@@ -84,5 +84,5 @@ Reporters of valid security issues will receive:
 
 ## Contact
 
-- 📧 Email: security@qwedai.com
+- 📧 Email: rahul@qwedai.tech
 - 🔐 GPG Key: Available upon request

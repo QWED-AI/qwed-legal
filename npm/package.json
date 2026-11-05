@@ -22,13 +22,13 @@
         "statute-of-limitations",
         "legal-tech"
     ],
-    "author": "QWED-AI <rahul@qwedai.com>",
+    "author": "QWED-AI <rahul@qwedai.tech>",
     "license": "Apache-2.0",
     "repository": {
         "type": "git",
         "url": "https://github.com/QWED-AI/qwed-legal.git"
     },
-    "homepage": "https://docs.qwedai.com/docs/legal/overview",
+    "homepage": "https://docs.qwedai.tech/docs/legal/overview",
     "bugs": {
         "url": "https://github.com/QWED-AI/qwed-legal/issues"
     },

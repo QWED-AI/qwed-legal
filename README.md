@@ -16,7 +16,7 @@
   </p>
 
   [![Verified by QWED](https://img.shields.io/badge/Verified_by-QWED-00C853?style=flat&logo=checkmarx)](https://github.com/QWED-AI/qwed-legal)
-  [![Deterministic First](https://img.shields.io/badge/Deterministic-First-0066CC?style=flat&logo=checkmarx)](https://docs.qwedai.com/docs/engines/overview#deterministic-first-philosophy)
+  [![Deterministic First](https://img.shields.io/badge/Deterministic-First-0066CC?style=flat&logo=checkmarx)](https://docs.qwedai.tech/docs/engines/overview#deterministic-first-philosophy)
   [![GitHub Developer Program](https://img.shields.io/badge/GitHub_Developer_Program-Member-4c1?style=flat&logo=github)](https://github.com/QWED-AI)
   [![PyPI](https://img.shields.io/pypi/v/qwed-legal?color=blue&cacheSeconds=60)](https://pypi.org/project/qwed-legal/)
   [![npm](https://img.shields.io/npm/v/@qwed-ai/legal?color=red)](https://www.npmjs.com/package/@qwed-ai/legal)
