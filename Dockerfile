@@ -8,6 +8,8 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
+# The installed package carries the licence and the NOTICE attribution.
+COPY LICENSE NOTICE ./
 COPY qwed_legal/ qwed_legal/
 COPY action_entrypoint.py .
 

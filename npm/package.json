@@ -7,7 +7,9 @@
     "scripts": {
         "build": "tsc",
         "test": "npm run build && node --test test/",
-        "prepublishOnly": "npm run build"
+        "prepublishOnly": "npm run build",
+        "prepack": "node -e \"for (const f of ['LICENSE', 'NOTICE']) require('fs').copyFileSync('../' + f, f)\"",
+        "postpack": "node -e \"for (const f of ['LICENSE', 'NOTICE']) require('fs').rmSync(f, { force: true })\""
     },
     "keywords": [
         "qwed",
@@ -44,6 +46,8 @@
     },
     "files": [
         "dist",
-        "README.md"
+        "README.md",
+        "LICENSE",
+        "NOTICE"
     ]
 }
