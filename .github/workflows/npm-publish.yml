@@ -46,10 +46,6 @@ jobs:
       - name: Test wrapper
         run: npm test
 
-      - name: Add the licence files to the package
-        # Both live at the repository root; package.json lists them in "files".
-        run: cp ../LICENSE ../NOTICE .
-
       - name: Publish to npm
         run: npm publish --access public
         env:
