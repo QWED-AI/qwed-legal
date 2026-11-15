@@ -634,6 +634,8 @@ Focus: expanding deterministic verification coverage, not heuristic reasoning.
 
 Apache 2.0 - See [LICENSE](LICENSE)
 
+Redistributions keep the attribution in [NOTICE](https://github.com/QWED-AI/qwed-legal/blob/main/NOTICE), and [TRADEMARKS.md](https://github.com/QWED-AI/qwed-legal/blob/main/TRADEMARKS.md) says how the QWED name and logo may be used.
+
 ---
 
 <div align="center">
